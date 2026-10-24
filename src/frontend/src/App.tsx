@@ -1,95 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, FormEvent } from 'react'
+import type { FormEvent } from 'react'
 import './App.css'
 
 type ProjectStatus = 'active' | 'planning' | 'paused' | 'archived'
 type TaskStatus = 'todo' | 'in_progress' | 'done' | 'blocked'
 type Priority = 'low' | 'medium' | 'high'
-type Project = {
-  id: string
-  name: string
-  description: string
-  status: ProjectStatus
-  owner: string
-  color: string
-}
-type Task = {
-  id: string
-  projectId: string
-  title: string
-  description?: string
-  status: TaskStatus
-  priority: Priority
-  dueDate?: string
-  assignee?: string
-}
-type Overview = {
-  projectCount: number
-  taskCount: number
-  completedCount: number
-  upcomingCount: number
-  aiEnabled: boolean
-}
-type Provider = {
-  id: string
-  label: string
-  provider: string
-  baseURL: string
-  model: string
-  temperature: number
-  maxTokens: number
-  enabled: boolean
-  streaming: boolean
-  toolCalling: boolean
-  apiKeyConfigured: boolean
-}
-type ProviderDraft = Omit<Provider, 'apiKeyConfigured'> & { apiKey: string }
+type Project = { id: string; name: string; description: string; status: ProjectStatus; owner: string; color: string; createdAt: string }
+type Task = { id: string; projectId: string; title: string; description?: string; status: TaskStatus; priority: Priority; dueDate?: string; assignee?: string; createdAt: string; stateId?: string; cycleId?: string; moduleId?: string; estimate?: string; parentId?: string; labelsJson?: string }
+type Overview = { projectCount: number; taskCount: number; completedCount: number; upcomingCount: number; aiEnabled: boolean }
+type Provider = { id: string; label: string; provider: string; baseURL: string; model: string; temperature: number; maxTokens: number; enabled: boolean; streaming: boolean; toolCalling: boolean; apiKeyConfigured: boolean }
 type TaskDraft = { projectId: string; title: string; description: string; status: TaskStatus; priority: Priority; dueDate: string; assignee: string }
 type ChatMessage = { role: 'user' | 'assistant'; content: string; id: string }
-type Approval = {
-  id: string
-  sessionId: string
-  toolName: string
-  arguments: Record<string, unknown>
-  summary: string
-  highRisk: boolean
-  status: string
-}
-type ChatResponse = {
-  sessionId: string
-  response: string
-  pendingApprovals?: Approval[]
-}
-type Session = { id: string; title: string; providerId: string; updatedAt: string; messageCount: number }
-type AuditEvent = { sessionId: string; action: string; details: string; createdAt: string }
-type View = 'overview' | 'projects' | 'board' | 'assistant' | 'settings'
+type Page = { id: string; projectId?: string; workspace: boolean; parentId?: string; title: string; icon?: string; cover?: string; content: string; createdBy: string; createdAt: string; updatedAt: string }
+type Cycle = { id: string; projectId: string; name: string; description?: string; startDate?: string; endDate?: string; status: string; createdAt: string }
+type Module = { id: string; projectId: string; name: string; description?: string; status: string; lead?: string; startDate?: string; endDate?: string; createdAt: string }
+type Notification = { id: string; title: string; body?: string; type: string; read: boolean; createdAt: string }
+type Sticky = { id: string; title: string; body: string; color: string; createdAt: string }
+type Draft = { id: string; kind: string; title: string; content: string; createdAt: string; updatedAt: string }
+type IntakeItem = { id: string; projectId: string; title: string; body?: string; status: string; createdAt: string }
+type ChatResponse = { sessionId: string; response: string; pendingApprovals?: any[] }
+type Approval = { id: string; sessionId: string; toolName: string; arguments: Record<string, unknown>; summary: string; highRisk: boolean; status: string }
 
-const statusColumns: { id: TaskStatus; label: string }[] = [
-  { id: 'todo', label: '待办' },
-  { id: 'in_progress', label: '进行中' },
-  { id: 'done', label: '已完成' },
-  { id: 'blocked', label: '阻塞中' },
-]
-
-const emptyProviderDraft: ProviderDraft = {
-  id: '',
-  label: '',
-  provider: 'openai-compatible',
-  baseURL: 'https://api.openai.com/v1',
-  model: '',
-  temperature: 0.3,
-  maxTokens: 2048,
-  enabled: false,
-  streaming: true,
-  toolCalling: true,
-  apiKey: '',
-}
 
 async function apiFetch<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-  })
+  const response = await fetch(input, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) } })
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Request failed' }))
     throw new Error((error as { error?: string }).error ?? 'Request failed')
@@ -98,736 +32,535 @@ async function apiFetch<T>(input: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-function App() {
-  const [view, setView] = useState<View>('overview')
+const uid = () => Math.random().toString(36).slice(2, 10)
+
+export default function App() {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('theme') as any) || 'light')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('reverie.sidebar.collapsed') === '1')
+  const [view, setView] = useState<string>('home')
+  const [selectedPage, setSelectedPage] = useState<string>('')
+  const [selectedProject, setSelectedProject] = useState<string>('all')
+  const [search, setSearch] = useState('')
+  const [searchResults, setSearchResults] = useState<any>(null)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [overview, setOverview] = useState<Overview | null>(null)
   const [providers, setProviders] = useState<Provider[]>([])
-  const [sessions, setSessions] = useState<Session[]>([])
-  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
-  const [selectedProject, setSelectedProject] = useState('all')
+  const [pages, setPages] = useState<Page[]>([])
+  const [cycles, setCycles] = useState<Cycle[]>([])
+  const [modules, setModules] = useState<Module[]>([])
+  const [intake, setIntake] = useState<IntakeItem[]>([])
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [stickies, setStickies] = useState<Sticky[]>([])
+  const [drafts, setDrafts] = useState<Draft[]>([])
+  const [analytics, setAnalytics] = useState<any>(null)
+  const [workspaces, setWorkspaces] = useState<any[]>([])
+  const [members, setMembers] = useState<any[]>([])
+
+  // dialogs
+  const [taskEditorOpen, setTaskEditorOpen] = useState(false)
+  const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [taskDraft, setTaskDraft] = useState<TaskDraft>({ projectId: '', title: '', description: '', status: 'todo', priority: 'medium', dueDate: '', assignee: '' })
+  const [projectEditorOpen, setProjectEditorOpen] = useState(false)
+  const [editingProject, setEditingProject] = useState<Project | null>(null)
+  const [projectDraft, setProjectDraft] = useState({ name: '', description: '', status: 'planning' as ProjectStatus, owner: 'You', color: 'cyan' })
+  const [pageEditor, setPageEditor] = useState<Page | null>(null)
+  const [pageDraft, setPageDraft] = useState({ title: 'Untitled', icon: '', content: '' })
   const [selectedProvider, setSelectedProvider] = useState('')
   const [sessionId, setSessionId] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [approvals, setApprovals] = useState<Approval[]>([])
   const [prompt, setPrompt] = useState('')
-  const [providerDraft, setProviderDraft] = useState<ProviderDraft>(emptyProviderDraft)
-  const [providerEditing, setProviderEditing] = useState(false)
-  const [editingProject, setEditingProject] = useState<Project | null>(null)
-  const [projectDraft, setProjectDraft] = useState({ name: '', description: '', status: 'planning' as ProjectStatus, owner: 'You', color: 'cyan' })
-  const [editingTask, setEditingTask] = useState<Task | null>(null)
-  const [taskDraft, setTaskDraft] = useState<TaskDraft>({ projectId: '', title: '', description: '', status: 'todo', priority: 'medium', dueDate: '', assignee: '' })
-  const [taskEditorOpen, setTaskEditorOpen] = useState(false)
-  const [projectFilter, setProjectFilter] = useState<'all' | 'active' | 'planning' | 'paused' | 'archived'>('all')
-  const [search, setSearch] = useState('')
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => { try { return localStorage.getItem('reverie.sidebar.collapsed') === '1' } catch { return false } })
+  const [approvals, setApprovals] = useState<Approval[]>([])
   const [dropTarget, setDropTarget] = useState<TaskStatus | ''>('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
-  const controllerRef = useRef<AbortController | null>(null)
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && taskEditorOpen) setTaskEditorOpen(false)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [taskEditorOpen])
   const draggedTaskId = useRef('')
+
+  useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme) }, [theme])
+  useEffect(() => { localStorage.setItem('reverie.sidebar.collapsed', sidebarCollapsed ? '1' : '0') }, [sidebarCollapsed])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setTaskEditorOpen(false); setProjectEditorOpen(false) } }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const refresh = async () => {
     try {
-      const [projectRows, taskRows, overviewData, providerRows, sessionRows, auditRows] = await Promise.all([
+      const [pr, tk, ov, pv, pg, cy, mo, it, nt, sk, dr, an, ws, mb] = await Promise.all([
         apiFetch<Project[]>('/api/projects'),
         apiFetch<Task[]>('/api/tasks'),
         apiFetch<Overview>('/api/overview'),
         apiFetch<Provider[]>('/api/ai/providers'),
-        apiFetch<Session[]>('/api/ai/sessions'),
-        apiFetch<AuditEvent[]>('/api/ai/audit'),
+        apiFetch<Page[]>('/api/pages'),
+        apiFetch<Cycle[]>('/api/cycles'),
+        apiFetch<Module[]>('/api/modules'),
+        apiFetch<IntakeItem[]>('/api/intake'),
+        apiFetch<Notification[]>('/api/notifications'),
+        apiFetch<Sticky[]>('/api/stickies'),
+        apiFetch<Draft[]>('/api/drafts'),
+        apiFetch<any>('/api/analytics'),
+        apiFetch<any[]>('/api/workspaces'),
+        apiFetch<any[]>('/api/members'),
       ])
-      setProjects(projectRows)
-      setTasks(taskRows)
-      setOverview(overviewData)
-      setProviders(providerRows)
-      setSessions(sessionRows)
-      setAuditEvents(auditRows)
-      setSelectedProvider((current) => current || providerRows.find((provider) => provider.enabled)?.id || providerRows[0]?.id || '')
+      setProjects(pr); setTasks(tk); setOverview(ov); setProviders(pv)
+      setPages(pg); setCycles(cy); setModules(mo); setIntake(it); setNotifications(nt); setStickies(sk); setDrafts(dr); setAnalytics(an); setWorkspaces(ws); setMembers(mb)
+      setSelectedProvider((c) => c || pv.find((p) => p.enabled)?.id || pv[0]?.id || '')
       setError('')
-    } catch (err) {
-      setError((err as Error).message)
-    }
+    } catch (e) { setError((e as Error).message) }
   }
+  useEffect(() => { void refresh() }, [])
 
-  useEffect(() => {
-    void refresh()
-  }, [])
-
-  useEffect(() => {
-    try { localStorage.setItem('reverie.sidebar.collapsed', sidebarCollapsed ? '1' : '0') } catch {}
-  }, [sidebarCollapsed])
-
-  const selectedProjectData = projects.find((project) => project.id === selectedProject)
-  const visibleProjects = useMemo(() => {
-    const query = search.trim().toLowerCase()
-    return projects.filter((project) => {
-      const statusMatches = projectFilter === 'all' || project.status === projectFilter
-      const queryMatches = !query || `${project.name} ${project.description} ${project.owner}`.toLowerCase().includes(query)
-      return statusMatches && queryMatches
-    })
-  }, [projects, projectFilter, search])
-  const visibleTasks = useMemo(() => tasks.filter((task) => {
-    const projectMatches = selectedProject === 'all' || task.projectId === selectedProject
-    const queryMatches = !search.trim() || `${task.title} ${task.description ?? ''}`.toLowerCase().includes(search.trim().toLowerCase())
-    return projectMatches && queryMatches
-  }), [tasks, selectedProject, search])
+  const visibleTasks = useMemo(() => tasks.filter((t) => (selectedProject === 'all' || t.projectId === selectedProject)), [tasks, selectedProject])
 
   const openProjectEditor = (project?: Project) => {
     setEditingProject(project ?? null)
-    setProjectDraft(project
-      ? { name: project.name, description: project.description, status: project.status, owner: project.owner, color: project.color }
-      : { name: '', description: '', status: 'planning', owner: 'You', color: 'cyan' })
+    setProjectDraft(project ? { name: project.name, description: project.description, status: project.status, owner: project.owner, color: project.color } : { name: '', description: '', status: 'planning', owner: 'You', color: 'cyan' })
+    setProjectEditorOpen(true)
   }
-
-  const saveProject = async (event: FormEvent) => {
-    event.preventDefault()
+  const saveProject = async (e: FormEvent) => {
+    e.preventDefault()
     if (!projectDraft.name.trim()) return
     try {
-      const updated = await apiFetch<Project>('/api/projects', {
-        method: editingProject ? 'PUT' : 'POST',
-        body: JSON.stringify({ ...projectDraft, id: editingProject?.id }),
-      })
-      setNotice(editingProject ? '项目已更新' : '项目已创建')
-      setEditingProject(null)
-      setProjectDraft({ name: '', description: '', status: 'planning', owner: 'You', color: 'cyan' })
-      await refresh()
-      if (!editingProject) setSelectedProject(updated.id)
-    } catch (err) {
-      setError((err as Error).message)
-    }
+      await apiFetch('/api/projects', { method: editingProject ? 'PUT' : 'POST', body: JSON.stringify({ ...projectDraft, id: editingProject?.id }) })
+      setProjectEditorOpen(false); await refresh()
+    } catch (err) { setError((err as Error).message) }
   }
-
-  const setProjectStatus = async (project: Project, status: ProjectStatus) => {
-    if (status === 'archived' && !window.confirm(`归档项目“${project.name}”？项目可随时恢复。`)) return
-    try {
-      await apiFetch<Project>('/api/projects', {
-        method: 'PUT',
-        body: JSON.stringify({ id: project.id, status }),
-      })
-      setNotice(status === 'archived' ? '项目已归档' : '项目已恢复')
-      await refresh()
-    } catch (err) {
-      setError((err as Error).message)
-    }
+  const deleteProject = async (id: string) => {
+    if (!confirm('Archive this project?')) return
+    try { await apiFetch('/api/projects', { method: 'DELETE', body: JSON.stringify({ id }) }); await refresh() } catch (e) { setError((e as Error).message) }
   }
 
   const openTaskEditor = (task?: Task) => {
     setEditingTask(task ?? null)
+    setTaskDraft(task ? { projectId: task.projectId, title: task.title, description: task.description ?? '', status: task.status, priority: task.priority, dueDate: task.dueDate ?? '', assignee: task.assignee ?? '' } : { projectId: projects[0]?.id ?? '', title: '', description: '', status: 'todo', priority: 'medium', dueDate: '', assignee: '' })
     setTaskEditorOpen(true)
-    setTaskDraft(task
-      ? {
-          projectId: task.projectId,
-          title: task.title,
-          description: task.description ?? '',
-          status: task.status,
-          priority: task.priority,
-          dueDate: task.dueDate ?? '',
-          assignee: task.assignee ?? '',
-        }
-      : {
-          projectId: selectedProject !== 'all' ? selectedProject : projects.find((project) => project.status !== 'archived')?.id ?? '',
-          title: '',
-          description: '',
-          status: 'todo',
-          priority: 'medium',
-          dueDate: '',
-          assignee: '',
-        })
   }
-
-  const saveTask = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!taskDraft.title.trim() || !taskDraft.projectId) return
+  const saveTask = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!taskDraft.title.trim()) return
     try {
-      await apiFetch<Task>('/api/tasks', {
-        method: editingTask ? 'PUT' : 'POST',
-        body: JSON.stringify({ ...taskDraft, id: editingTask?.id }),
-      })
-      setNotice(editingTask ? '任务已更新' : '任务已创建')
-      setEditingTask(null)
-      setTaskEditorOpen(false)
-      await refresh()
-    } catch (err) {
-      setError((err as Error).message)
-    }
+      await apiFetch('/api/tasks', { method: editingTask ? 'PUT' : 'POST', body: JSON.stringify({ ...taskDraft, id: editingTask?.id }) })
+      setTaskEditorOpen(false); await refresh()
+    } catch (err) { setError((err as Error).message) }
+  }
+  const deleteTask = async (id: string) => {
+    if (!confirm('Delete this task?')) return
+    try { await apiFetch('/api/tasks', { method: 'DELETE', body: JSON.stringify({ id }) }); await refresh() } catch (e) { setError((e as Error).message) }
+  }
+  const moveTask = async (taskId: string, status: TaskStatus) => {
+    const task = tasks.find((t) => t.id === taskId)
+    if (!task) return
+    try { await apiFetch('/api/tasks', { method: 'PUT', body: JSON.stringify({ ...task, status }) }); await refresh() } catch (e) { setError((e as Error).message) }
   }
 
-  const removeTask = async (task: Task) => {
-    if (!window.confirm(`删除任务“${task.title}”？此操作无法撤销。`)) return
+  const openPageEditor = (page?: Page) => {
+    if (page) { setPageEditor(page); setPageDraft({ title: page.title, icon: page.icon ?? '', content: page.content }) }
+    else { setPageEditor(null); setPageDraft({ title: 'Untitled', icon: '', content: '' }) }
+    setView('page')
+  }
+  const savePage = async () => {
     try {
-      await apiFetch<void>(`/api/tasks?id=${encodeURIComponent(task.id)}`, { method: 'DELETE' })
-      setNotice('任务已删除')
-      await refresh()
-    } catch (err) {
-      setError((err as Error).message)
-    }
+      const body = { id: pageEditor?.id, title: pageDraft.title, icon: pageDraft.icon, content: pageDraft.content, workspace: pageEditor ? pageEditor.workspace : true, projectId: pageEditor?.projectId }
+      const res = await apiFetch<Page>('/api/pages', { method: pageEditor ? 'PUT' : 'POST', body: JSON.stringify(body) })
+      setPageEditor(res); await refresh()
+      setNotice('Saved')
+      setTimeout(() => setNotice(''), 1500)
+    } catch (e) { setError((e as Error).message) }
+  }
+  const deletePage = async (id: string) => {
+    if (!confirm('Delete this page?')) return
+    try { await apiFetch('/api/pages', { method: 'DELETE', body: JSON.stringify({ id }) }); setView('home'); await refresh() } catch (e) { setError((e as Error).message) }
   }
 
-  const moveTask = async (task: Task, status: TaskStatus) => {
-    if (task.status === status) return
-    try {
-      await apiFetch<Task>('/api/tasks', { method: 'PUT', body: JSON.stringify({ id: task.id, status }) })
-      await refresh()
-    } catch (err) {
-      setError((err as Error).message)
-    }
+  const createCycle = async () => {
+    const name = window.prompt('Cycle name')
+    if (!name) return
+    try { await apiFetch('/api/cycles', { method: 'POST', body: JSON.stringify({ projectId: selectedProject === 'all' ? projects[0]?.id : selectedProject, name }) }); await refresh() } catch (e) { setError((e as Error).message) }
+  }
+  const createModule = async () => {
+    const name = window.prompt('Module name')
+    if (!name) return
+    try { await apiFetch('/api/modules', { method: 'POST', body: JSON.stringify({ projectId: selectedProject === 'all' ? projects[0]?.id : selectedProject, name }) }); await refresh() } catch (e) { setError((e as Error).message) }
+  }
+  const createSticky = async () => {
+    const title = window.prompt('Sticky title')
+    if (!title) return
+    const body = window.prompt('Sticky body') || ''
+    try { await apiFetch('/api/stickies', { method: 'POST', body: JSON.stringify({ title, body, color: 'yellow' }) }); await refresh() } catch (e) { setError((e as Error).message) }
+  }
+  const createDraft = async () => {
+    const title = window.prompt('Draft title')
+    if (!title) return
+    try { await apiFetch('/api/drafts', { method: 'POST', body: JSON.stringify({ kind: 'note', title, content: '' }) }); await refresh() } catch (e) { setError((e as Error).message) }
+  }
+  const createIntake = async () => {
+    const title = window.prompt('Intake title')
+    if (!title) return
+    const pid = selectedProject === 'all' ? projects[0]?.id : selectedProject
+    if (!pid) return
+    try { await apiFetch('/api/intake', { method: 'POST', body: JSON.stringify({ projectId: pid, title }) }); await refresh() } catch (e) { setError((e as Error).message) }
+  }
+  const markAllRead = async () => {
+    try { await apiFetch('/api/notifications', { method: 'PUT', body: JSON.stringify({ markAllRead: true }) }); await refresh() } catch (e) { setError((e as Error).message) }
+  }
+  const doSearch = async (q: string) => {
+    setSearch(q)
+    if (!q.trim()) { setSearchResults(null); return }
+    try { const r = await apiFetch<any>(`/api/search?q=${encodeURIComponent(q)}`); setSearchResults(r) } catch (e) { setError((e as Error).message) }
   }
 
-  const beginDrag = (event: DragEvent<HTMLElement>, taskId: string) => {
-    draggedTaskId.current = taskId
-    event.dataTransfer.setData('text/plain', taskId)
-    event.dataTransfer.effectAllowed = 'move'
-  }
-
-  const endDrag = () => {
-    draggedTaskId.current = ''
-    setDropTarget('')
-  }
-
-  const dropOnColumn = (event: DragEvent<HTMLDivElement>, status: TaskStatus) => {
-    event.preventDefault()
-    const taskId = event.dataTransfer.getData('text/plain') || draggedTaskId.current
-    const task = tasks.find((item) => item.id === taskId)
-    if (task) void moveTask(task, status)
-    endDrag()
-  }
-
-  const editProvider = (provider?: Provider) => {
-    setProviderEditing(true)
-    setProviderDraft(provider
-      ? {
-          id: provider.id,
-          label: provider.label,
-          provider: provider.provider,
-          baseURL: provider.baseURL,
-          model: provider.model,
-          temperature: provider.temperature,
-          maxTokens: provider.maxTokens,
-          enabled: provider.enabled,
-          streaming: provider.streaming,
-          toolCalling: provider.toolCalling,
-          apiKey: '',
-        }
-      : { ...emptyProviderDraft, id: `provider-${Date.now()}`, enabled: providers.length === 0 })
-  }
-
-  const saveProvider = async (event: FormEvent) => {
-    event.preventDefault()
-    try {
-      const updated = await apiFetch<Provider[]>('/api/ai/providers', {
-        method: 'POST',
-        body: JSON.stringify([...providers.filter((provider) => provider.id !== providerDraft.id), providerDraft]),
-      })
-      setProviders(updated)
-      setSelectedProvider(providerDraft.id)
-      setProviderEditing(false)
-      setProviderDraft(emptyProviderDraft)
-      setNotice('Provider 配置已保存；密钥仅发送并保存在本机加密配置中。')
-    } catch (err) {
-      setError((err as Error).message)
-    }
-  }
-
-  const testProvider = async () => {
-    if (!selectedProvider) return
-    setBusy(true)
-    try {
-      const result = await apiFetch<{ ok: boolean; provider: string; model: string }>('/api/ai/test-connection', {
-        method: 'POST',
-        body: JSON.stringify({ providerId: selectedProvider }),
-      })
-      setNotice(`模型响应验证成功：${result.provider} · ${result.model}`)
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const selectSession = async (id: string) => {
-    try {
-      const history = await apiFetch<Array<{ role: string; content: string }>>(`/api/ai/sessions/${encodeURIComponent(id)}`)
-      setSessionId(id)
-      setMessages(history.filter((item) => item.role === 'user' || item.role === 'assistant')
-        .map((item, index) => {
-          let content = item.content
-          try {
-            const parsed = JSON.parse(content) as { content?: string; role?: string }
-            if (parsed.content !== undefined) content = parsed.content
-          } catch {
-            // Older sessions stored plain message content.
-          }
-          return { id: `${id}-${index}`, role: item.role as ChatMessage['role'], content }
-        }))
-      setApprovals(await apiFetch<Approval[]>(`/api/ai/approvals?sessionId=${encodeURIComponent(id)}`).catch(() => []))
-      setView('assistant')
-    } catch (err) {
-      setError((err as Error).message)
-    }
-  }
-
-  const handleChat = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!prompt.trim() || busy || !selectedProvider) return
-    const content = prompt.trim()
-    const userMessage: ChatMessage = { id: `user-${Date.now()}`, role: 'user', content }
-    const assistantID = `assistant-${Date.now()}`
+  // AI
+  const sendChat = async () => {
+    if (!prompt.trim() || !selectedProvider) return
+    const userMsg: ChatMessage = { role: 'user', content: prompt, id: uid() }
+    setMessages((m) => [...m, userMsg])
     setPrompt('')
-    setBusy(true)
-    setMessages((current) => [...current, userMessage, { id: assistantID, role: 'assistant', content: '' }])
-    const controller = new AbortController()
-    controllerRef.current = controller
     try {
-      const response = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: content, sessionId, providerId: selectedProvider, streaming: true }),
-        signal: controller.signal,
-      })
-      if (!response.ok) {
-        const result = await response.json().catch(() => ({ error: 'Chat request failed' }))
-        throw new Error(result.error ?? 'Chat request failed')
-      }
-      setSessionId((await readAgentStream(response, (delta) => {
-        setMessages((current) => current.map((message) => message.id === assistantID ? { ...message, content: message.content + delta } : message))
-      }, (approval) => {
-        setApprovals((current) => current.some((item) => item.id === approval.id) ? current : [...current, approval])
-      }, (result) => {
-        setSessionId(result.sessionId)
-        if (result.response) {
-          setMessages((current) => current.map((message) => message.id === assistantID ? { ...message, content: result.response } : message))
-        }
-        setApprovals(result.pendingApprovals ?? [])
-      }, controller.signal)))
+      const res = await apiFetch<ChatResponse>('/api/ai/chat', { method: 'POST', body: JSON.stringify({ message: userMsg.content, sessionId: sessionId || undefined, providerId: selectedProvider, streaming: false }) })
+      setSessionId(res.sessionId)
+      setMessages((m) => [...m, { role: 'assistant', content: res.response, id: uid() }])
+      if (res.pendingApprovals) setApprovals(res.pendingApprovals)
       await refresh()
-    } catch (err) {
-      if ((err as Error).name === 'AbortError') {
-        setMessages((current) => current.map((message) => message.id === assistantID
-          ? { ...message, content: `${message.content}${message.content ? '\n' : ''}（已停止生成）` }
-          : message))
-      } else {
-        setError((err as Error).message)
-        setMessages((current) => current.map((message) => message.id === assistantID ? { ...message, content: (err as Error).message } : message))
-      }
-    } finally {
-      controllerRef.current = null
-      setBusy(false)
-      void refresh()
-    }
+    } catch (e) { setError((e as Error).message) }
   }
 
-  const resolveApproval = async (approval: Approval, approve: boolean, confirmText = '') => {
-    try {
-      const result = await apiFetch<ChatResponse>('/api/ai/approvals', {
-        method: 'POST',
-        body: JSON.stringify({ id: approval.id, approve, confirmText, streaming: false }),
-      })
-      setSessionId(result.sessionId)
-      setApprovals(result.pendingApprovals ?? [])
-      if (result.response) setMessages((current) => [...current, { id: `approval-${Date.now()}`, role: 'assistant', content: result.response }])
-      setNotice(approve ? '操作已获批准并提交' : '操作已拒绝，未修改数据')
-      await refresh()
-    } catch (err) {
-      setError((err as Error).message)
-    }
-  }
+  const unreadCount = notifications.filter((n) => !n.read).length
 
-  const startNewSession = () => {
-    setSessionId('')
-    setMessages([])
-    setApprovals([])
-  }
-
-  const currentProvider = providers.find((provider) => provider.id === selectedProvider)
-
-  return (
-    <div className="shell">
-      <aside className={sidebarCollapsed ? 'sidebar collapsed' : 'sidebar'}>
-        <div className="brand-block">
-          <div className="brand-mark">R</div>
-          {!sidebarCollapsed && <div>
-            <p className="eyebrow">本地工作区</p>
-            <h1>Reverie Planner</h1>
-          </div>}
-          <button type="button" className="sidebar-toggle" aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed((value) => !value)}>
-            {sidebarCollapsed ? '›' : '‹'}
-          </button>
+  const sidebar = (
+    <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+      <div className="workspace-name">🚀 {workspaces[0]?.name || 'Reverie'}</div>
+      <div style={{ padding: '4px 8px' }}>
+        <input className="search-box" placeholder="Search..." value={search} onChange={(e) => doSearch(e.target.value)} onFocus={() => setView('search')} />
+      </div>
+      <div className="nav-section">Workspace</div>
+      <div className={`nav-item ${view === 'home' ? 'active' : ''}`} onClick={() => setView('home')}>🏠 Home</div>
+      <div className={`nav-item ${view === 'page' && !pageEditor ? 'active' : ''}`} onClick={() => openPageEditor()}>📄 New page</div>
+      <div className={`nav-item ${view === 'notifications' ? 'active' : ''}`} onClick={() => setView('notifications')}>🔔 Notifications {unreadCount > 0 && <span className="notif-dot" />}</div>
+      <div className="nav-section">Planning</div>
+      <div className={`nav-item ${view === 'issues' ? 'active' : ''}`} onClick={() => setView('issues')}>✅ Issues</div>
+      <div className={`nav-item ${view === 'projects' ? 'active' : ''}`} onClick={() => setView('projects')}>📁 Projects</div>
+      <div className={`nav-item ${view === 'cycles' ? 'active' : ''}`} onClick={() => setView('cycles')}>🔄 Cycles</div>
+      <div className={`nav-item ${view === 'modules' ? 'active' : ''}`} onClick={() => setView('modules')}>🧩 Modules</div>
+      <div className={`nav-item ${view === 'intake' ? 'active' : ''}`} onClick={() => setView('intake')}>📥 Intake</div>
+      <div className="nav-section">Knowledge</div>
+      <div className={`nav-item ${view === 'stickies' ? 'active' : ''}`} onClick={() => setView('stickies')}>📌 Stickies</div>
+      <div className={`nav-item ${view === 'drafts' ? 'active' : ''}`} onClick={() => setView('drafts')}>📝 Drafts</div>
+      <div className="nav-section">Pages</div>
+      {pages.filter((p) => p.workspace).map((p) => (
+        <div key={p.id} className={`tree-item ${selectedPage === p.id ? 'active' : ''}`} onClick={() => { setSelectedPage(p.id); openPageEditor(p) }}>
+          <span>{p.icon || '📄'}</span><span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
         </div>
-        <nav className="nav-section" aria-label="主导航">
-          {([
-            ['overview', '工作概览'],
-            ['projects', '项目'],
-            ['board', '任务看板'],
-            ['assistant', 'AI 助手'],
-            ['settings', '模型设置'],
-          ] as [View, string][]).map(([id, label]) => (
-            <button key={id} type="button" aria-label={label} className={view === id ? 'nav-item active' : 'nav-item'} onClick={() => setView(id)}>
-              {!sidebarCollapsed && <span>{label}</span>}
-              {id === 'projects' && <strong>{projects.filter((item) => item.status !== 'archived').length}</strong>}
-              {id === 'assistant' && approvals.length > 0 && <strong>{approvals.length}</strong>}
-            </button>
-          ))}
-        </nav>
-        {!sidebarCollapsed && <div className="sidebar-panel">
-          <div className="panel-head"><span>项目快捷入口</span><button type="button" className="ghost-btn" onClick={() => { openProjectEditor(); setView('projects') }}>新建</button></div>
-          <div className="project-list">
-            <button type="button" className={selectedProject === 'all' ? 'project-pill active' : 'project-pill'} onClick={() => setSelectedProject('all')}>
-              <span className="dot dot-all" />全部项目
-            </button>
-            {projects.filter((project) => project.status !== 'archived').slice(0, 8).map((project) => (
-              <button key={project.id} type="button" className={selectedProject === project.id ? 'project-pill active' : 'project-pill'} onClick={() => { setSelectedProject(project.id); setView('board') }}>
-                <span className={`dot dot-${project.color}`} />{project.name}
-              </button>
-            ))}
+      ))}
+      <div className="nav-section">AI</div>
+      <div className={`nav-item ${view === 'assistant' ? 'active' : ''}`} onClick={() => setView('assistant')}>🤖 Assistant</div>
+      <div className={`nav-item ${view === 'settings' ? 'active' : ''}`} onClick={() => setView('settings')}>⚙️ Settings</div>
+      <div className="nav-section">Analytics</div>
+      <div className={`nav-item ${view === 'analytics' ? 'active' : ''}`} onClick={() => setView('analytics')}>📊 Analytics</div>
+    </aside>
+  )
+
+  const renderContent = () => {
+    if (view === 'home') return (
+      <div className="page-wrap">
+        <h1 style={{ fontSize: 32 }}>Welcome back</h1>
+        <p className="empty">Overview of your workspace</p>
+        {overview && (
+          <div className="row" style={{ gap: 16, marginTop: 24, flexWrap: 'wrap' }}>
+            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{overview.projectCount}</div><div className="empty">Projects</div></div>
+            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{overview.taskCount}</div><div className="empty">Issues</div></div>
+            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{overview.completedCount}</div><div className="empty">Completed</div></div>
+            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{overview.upcomingCount}</div><div className="empty">Upcoming</div></div>
           </div>
-        </div>}
-        <div className="sidebar-foot">
-          <span className="status-indicator" />
-          {!sidebarCollapsed && <span>本机 SQLite 工作区</span>}
+        )}
+        <h2 style={{ marginTop: 32 }}>Recent pages</h2>
+        {pages.slice(0, 6).map((p) => (
+          <div key={p.id} className="tree-item" onClick={() => { setSelectedPage(p.id); openPageEditor(p) }} style={{ padding: '8px 0' }}>
+            <span>{p.icon || '📄'}</span><span>{p.title}</span>
+          </div>
+        ))}
+        <h2 style={{ marginTop: 32 }}>Stickies</h2>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 12 }}>
+          {stickies.map((s) => <div key={s.id} className="card" style={{ width: 200, background: s.color === 'yellow' ? '#fff9c4' : 'var(--card)' }}><b>{s.title}</b><div style={{ fontSize: 13 }}>{s.body}</div></div>)}
+          <button className="btn" onClick={createSticky}>+ Sticky</button>
         </div>
-      </aside>
+      </div>
+    )
 
-      <main className="main-panel">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">REVERIE · PLANNER</p>
-            <h2>{view === 'overview' ? '工作概览' : view === 'projects' ? '项目空间' : view === 'board' ? selectedProjectData?.name ?? '任务看板' : view === 'assistant' ? 'AI 助手' : '模型与连接'}</h2>
+    if (view === 'page') return (
+      <div className="page-wrap">
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
+          <button className="btn" onClick={() => setView('home')}>← Back</button>
+          <div className="row">
+            {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
+            <button className="btn primary" onClick={savePage}>Save</button>
           </div>
-          <div className="toolbar">
-            <input className="search-input" aria-label="搜索" placeholder="搜索项目或任务…" value={search} onChange={(event) => setSearch(event.target.value)} />
-            {view === 'board' && <button type="button" className="primary" onClick={() => openTaskEditor()}>新建任务</button>}
-            {view === 'assistant' && <button type="button" className="toolbar-btn" onClick={startNewSession}>新会话</button>}
+        </div>
+        <div className="page-icon" onClick={() => { const ic = window.prompt('Icon emoji'); if (ic !== null) setPageDraft((d) => ({ ...d, icon: ic })) }}>{pageDraft.icon || '📄'}</div>
+        <input className="page-title" value={pageDraft.title} onChange={(e) => setPageDraft((d) => ({ ...d, title: e.target.value }))} placeholder="Untitled" />
+        <textarea className="block" style={{ width: '100%', minHeight: 400, border: 'none', outline: 'none', background: 'transparent', resize: 'none' }} value={pageDraft.content} onChange={(e) => setPageDraft((d) => ({ ...d, content: e.target.value }))} placeholder="Start writing..." />
+      </div>
+    )
+
+    if (view === 'issues') return (
+      <div style={{ padding: 16 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+          <h2>Issues</h2>
+          <div className="row">
+            <select className="input" value={selectedProject} onChange={(e) => setSelectedProject(e.target.value)}>
+              <option value="all">All projects</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <button className="btn primary" onClick={() => openTaskEditor()}>+ New issue</button>
           </div>
-        </header>
-
-        {error && <div className="error-banner" role="alert">{error}<button type="button" onClick={() => setError('')}>关闭</button></div>}
-        {notice && <div className="notice-banner" role="status">{notice}<button type="button" onClick={() => setNotice('')}>关闭</button></div>}
-        {overview === null && <div className="loading-indicator">正在载入本地工作区…</div>}
-
-        {view === 'overview' && overview && (
-          <>
-            <section className="metrics-row" aria-label="工作区指标">
-              <Metric label="活跃项目" value={projects.filter((project) => project.status !== 'archived').length} detail={`${projects.filter((project) => project.status === 'archived').length} 个已归档`} />
-              <Metric label="任务总量" value={overview.taskCount} detail={`${overview.completedCount} 个已完成`} />
-              <Metric label="近期到期" value={overview.upcomingCount} detail="未完成并设置了截止日期" />
-              <Metric label="可用模型" value={providers.filter((provider) => provider.enabled).length} detail={currentProvider?.label ?? '尚未选择 Provider'} />
-            </section>
-            <section className="content-grid">
-              <div className="board-panel">
-                <div className="panel-header"><div><p className="eyebrow">执行状态</p><h3>任务流</h3></div><button type="button" className="text-button" onClick={() => setView('board')}>打开看板 →</button></div>
-                <div className="board">
-                  {statusColumns.map((column) => <TaskColumn key={column.id} column={column} tasks={visibleTasks.filter((task) => task.status === column.id)} projects={projects} onEdit={openTaskEditor} onDelete={removeTask} onDrag={beginDrag} onDragEnd={endDrag} onDrop={dropOnColumn} onDragEnter={(status) => setDropTarget(status)} dropTarget={dropTarget} onStatus={moveTask} />)}
+        </div>
+        <div className="kanban">
+          {(['todo', 'in_progress', 'done', 'blocked'] as TaskStatus[]).map((status) => (
+            <div key={status} className="column" onDragOver={(e) => { e.preventDefault(); setDropTarget(status) }} onDrop={(e) => { e.preventDefault(); const id = draggedTaskId.current; if (id) moveTask(id, status); setDropTarget('') }} style={dropTarget === status ? { outline: '2px solid var(--accent)' } : {}}>
+              <div className="column-title">{status.replace('_', ' ')} ({visibleTasks.filter((t) => t.status === status).length})</div>
+              {visibleTasks.filter((t) => t.status === status).map((t) => (
+                <div key={t.id} className="task-card" draggable onDragStart={() => { draggedTaskId.current = t.id }} onClick={() => openTaskEditor(t)}>
+                  <div>{t.title}</div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{t.priority} {t.dueDate ? `· ${t.dueDate}` : ''}</div>
                 </div>
-              </div>
-              <aside className="side-panel">
-                <div className="panel-header"><div><p className="eyebrow">最近更新</p><h3>项目动态</h3></div></div>
-                {projects.filter((project) => project.status !== 'archived').slice(0, 5).map((project) => (
-                  <button key={project.id} className="project-summary" type="button" onClick={() => { setSelectedProject(project.id); setView('projects') }}>
-                    <span className={`dot dot-${project.color}`} />
-                    <span><strong>{project.name}</strong><small>{project.status} · {tasks.filter((task) => task.projectId === project.id).length} tasks</small></span>
-                    <span aria-hidden>›</span>
-                  </button>
-                ))}
-                {projects.length === 0 && <div className="empty-state">还没有项目，创建一个开始规划。</div>}
-              </aside>
-            </section>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+
+    if (view === 'projects') return (
+      <div style={{ padding: 24 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
+          <h2>Projects</h2>
+          <button className="btn primary" onClick={() => openProjectEditor()}>+ New project</button>
+        </div>
+        <table className="table">
+          <thead><tr><th>Name</th><th>Status</th><th>Owner</th><th></th></tr></thead>
+          <tbody>
+            {projects.map((p) => (
+              <tr key={p.id}>
+                <td><span style={{ color: p.color === 'cyan' ? 'var(--accent)' : 'inherit' }}>●</span> {p.name}<div style={{ fontSize: 12, color: 'var(--muted)' }}>{p.description}</div></td>
+                <td>{p.status}</td>
+                <td>{p.owner}</td>
+                <td className="row"><button className="btn" onClick={() => openProjectEditor(p)}>Edit</button><button className="btn" onClick={() => deleteProject(p.id)}>Archive</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+
+    if (view === 'cycles') return (
+      <div style={{ padding: 24 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}><h2>Cycles</h2><button className="btn primary" onClick={createCycle}>+ New cycle</button></div>
+        <table className="table"><thead><tr><th>Name</th><th>Project</th><th>Dates</th><th>Status</th></tr></thead><tbody>
+          {cycles.map((c) => <tr key={c.id}><td>{c.name}</td><td>{projects.find((p) => p.id === c.projectId)?.name}</td><td>{c.startDate} → {c.endDate}</td><td>{c.status}</td></tr>)}
+        </tbody></table>
+      </div>
+    )
+    if (view === 'modules') return (
+      <div style={{ padding: 24 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}><h2>Modules</h2><button className="btn primary" onClick={createModule}>+ New module</button></div>
+        <table className="table"><thead><tr><th>Name</th><th>Project</th><th>Status</th><th>Lead</th></tr></thead><tbody>
+          {modules.map((m) => <tr key={m.id}><td>{m.name}<div style={{ fontSize: 12, color: 'var(--muted)' }}>{m.description}</div></td><td>{projects.find((p) => p.id === m.projectId)?.name}</td><td>{m.status}</td><td>{m.lead}</td></tr>)}
+        </tbody></table>
+      </div>
+    )
+    if (view === 'intake') return (
+      <div style={{ padding: 24 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}><h2>Intake</h2><button className="btn primary" onClick={createIntake}>+ New intake</button></div>
+        <table className="table"><thead><tr><th>Title</th><th>Project</th><th>Status</th></tr></thead><tbody>
+          {intake.map((i) => <tr key={i.id}><td>{i.title}<div style={{ fontSize: 12, color: 'var(--muted)' }}>{i.body}</div></td><td>{projects.find((p) => p.id === i.projectId)?.name}</td><td>{i.status}</td></tr>)}
+        </tbody></table>
+      </div>
+    )
+    if (view === 'stickies') return (
+      <div style={{ padding: 24 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}><h2>Stickies</h2><button className="btn primary" onClick={createSticky}>+ New sticky</button></div>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 12 }}>
+          {stickies.map((s) => <div key={s.id} className="card" style={{ width: 220 }}><b>{s.title}</b><div style={{ fontSize: 13, marginTop: 4 }}>{s.body}</div></div>)}
+        </div>
+      </div>
+    )
+    if (view === 'drafts') return (
+      <div style={{ padding: 24 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}><h2>Drafts</h2><button className="btn primary" onClick={createDraft}>+ New draft</button></div>
+        <table className="table"><thead><tr><th>Title</th><th>Kind</th><th>Updated</th></tr></thead><tbody>
+          {drafts.map((d) => <tr key={d.id}><td>{d.title}</td><td>{d.kind}</td><td>{d.updatedAt}</td></tr>)}
+        </tbody></table>
+      </div>
+    )
+    if (view === 'notifications') return (
+      <div style={{ padding: 24 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}><h2>Notifications</h2><button className="btn" onClick={markAllRead}>Mark all read</button></div>
+        {notifications.map((n) => (
+          <div key={n.id} className="card" style={{ marginBottom: 8, opacity: n.read ? 0.6 : 1 }}>
+            <b>{n.title}</b> {n.read ? '' : <span className="notif-dot" />}
+            <div style={{ fontSize: 13, color: 'var(--muted)' }}>{n.body}</div>
+          </div>
+        ))}
+      </div>
+    )
+    if (view === 'analytics') return (
+      <div style={{ padding: 24 }}>
+        <h2>Analytics</h2>
+        {analytics && (
+          <div className="row" style={{ gap: 16, flexWrap: 'wrap', marginTop: 16 }}>
+            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{analytics.totalProjects}</div><div className="empty">Projects</div></div>
+            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{analytics.totalTasks}</div><div className="empty">Issues</div></div>
+            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{analytics.totalPages}</div><div className="empty">Pages</div></div>
+            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{analytics.totalCycles}</div><div className="empty">Cycles</div></div>
+            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{analytics.totalModules}</div><div className="empty">Modules</div></div>
+          </div>
+        )}
+        {analytics?.taskStatusCounts && (
+          <div style={{ marginTop: 24 }}>
+            <h3>Issue status</h3>
+            <table className="table"><tbody>
+              {Object.entries(analytics.taskStatusCounts).map(([k, v]) => <tr key={k}><td>{k}</td><td>{v as number}</td></tr>)}
+            </tbody></table>
+          </div>
+        )}
+      </div>
+    )
+    if (view === 'search') return (
+      <div style={{ padding: 24 }}>
+        <h2>Search results for "{search}"</h2>
+        {searchResults && (
+          <>
+            <h3>Projects</h3>
+            {searchResults.projects?.map((p: Project) => <div key={p.id} className="tree-item" onClick={() => setView('projects')}>{p.name}</div>)}
+            <h3>Issues</h3>
+            {searchResults.tasks?.map((t: Task) => <div key={t.id} className="tree-item" onClick={() => { openTaskEditor(t); }}>{t.title}</div>)}
+            <h3>Pages</h3>
+            {searchResults.pages?.map((p: Page) => <div key={p.id} className="tree-item" onClick={() => { setSelectedPage(p.id); openPageEditor(p) }}>{p.title}</div>)}
           </>
         )}
+      </div>
+    )
+    if (view === 'settings') return (
+      <div style={{ padding: 24, maxWidth: 720 }}>
+        <h2>Settings</h2>
+        <div className="form-row"><label>Theme</label>
+          <select className="input" value={theme} onChange={(e) => setTheme(e.target.value as any)}>
+            <option value="light">Light</option><option value="dark">Dark</option>
+          </select>
+        </div>
+        <h3 style={{ marginTop: 24 }}>AI Providers</h3>
+        <div className="row" style={{ marginBottom: 12 }}>
+          <select className="input" value={selectedProvider} onChange={(e) => setSelectedProvider(e.target.value)}>
+            {providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+        </div>
+        <p className="empty">Provider configuration available via existing controls.</p>
+        <h3 style={{ marginTop: 24 }}>Members</h3>
+        {members.map((m: any) => <div key={m.id}>{m.name} — {m.role}</div>)}
+        <h3 style={{ marginTop: 24 }}>Workspaces</h3>
+        {workspaces.map((w: any) => <div key={w.id}>{w.name}</div>)}
+      </div>
+    )
+    if (view === 'assistant') return (
+      <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
+        <h2>Assistant</h2>
+        <div className="row" style={{ marginBottom: 12 }}>
+          <select className="input" value={selectedProvider} onChange={(e) => setSelectedProvider(e.target.value)}>
+            {providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+        </div>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, minHeight: 300, maxHeight: 400, overflowY: 'auto', marginBottom: 12 }}>
+          {messages.map((m) => <div key={m.id} style={{ marginBottom: 8 }}><b>{m.role}:</b> {m.content}</div>)}
+        </div>
+        <div className="row">
+          <input className="input" style={{ flex: 1 }} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendChat() }} placeholder="Ask anything..." />
+          <button className="btn primary" onClick={sendChat}>Send</button>
+        </div>
+        {approvals.length > 0 && <div style={{ marginTop: 12 }}><b>Pending approvals:</b> {approvals.length}</div>}
+      </div>
+    )
+    return <div className="page-wrap"><p className="empty">Not found</p></div>
+  }
 
-        {view === 'projects' && (
-          <section className="workspace-grid">
-            <div className="board-panel">
-              <div className="panel-header">
-                <div><p className="eyebrow">项目组合</p><h3>{visibleProjects.length} 个项目</h3></div>
-                <div className="filter-row">
-                  <select aria-label="按状态筛选项目" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value as typeof projectFilter)}>
-                    <option value="all">全部状态</option><option value="active">进行中</option><option value="planning">规划中</option><option value="paused">已暂停</option><option value="archived">已归档</option>
-                  </select>
-                  <button type="button" className="primary" onClick={() => openProjectEditor()}>新建项目</button>
-                </div>
-              </div>
-              <div className="project-grid">
-                {visibleProjects.map((project) => (
-                  <article className="project-card" key={project.id}>
-                    <div className="project-card-top"><span className={`dot dot-${project.color}`} /><span className={`state-badge state-${project.status}`}>{projectStatusLabel(project.status)}</span></div>
-                    <button type="button" className="project-card-title" onClick={() => { setSelectedProject(project.id); setView('board') }}>{project.name}</button>
-                    <p>{project.description || '暂无项目描述'}</p>
-                    <div className="project-card-meta"><span>{project.owner || '未分配负责人'}</span><span>{tasks.filter((task) => task.projectId === project.id).length} 个任务</span></div>
-                    <div className="project-actions">
-                      <button type="button" className="toolbar-btn" onClick={() => openProjectEditor(project)}>编辑</button>
-                      {project.status === 'archived'
-                        ? <button type="button" className="toolbar-btn" onClick={() => void setProjectStatus(project, 'active')}>恢复</button>
-                        : <button type="button" className="toolbar-btn" onClick={() => void setProjectStatus(project, 'archived')}>归档</button>}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-            <aside className="side-panel">
-              <div className="panel-header"><div><p className="eyebrow">{editingProject ? '编辑项目' : '快速创建'}</p><h3>{editingProject ? editingProject.name : '项目详情'}</h3></div></div>
-              <form className="task-form" onSubmit={saveProject}>
-                <label htmlFor="project-title">项目名称</label><input id="project-title" required value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} />
-                <label htmlFor="project-description">描述</label><textarea id="project-description" rows={3} value={projectDraft.description} onChange={(event) => setProjectDraft({ ...projectDraft, description: event.target.value })} />
-                <label htmlFor="project-status">状态</label><select id="project-status" value={projectDraft.status} onChange={(event) => setProjectDraft({ ...projectDraft, status: event.target.value as ProjectStatus })}>
-                  <option value="planning">规划中</option><option value="active">进行中</option><option value="paused">已暂停</option>{editingProject?.status === 'archived' && <option value="archived">已归档</option>}
-                </select>
-                <label htmlFor="project-owner">负责人</label><input id="project-owner" value={projectDraft.owner} onChange={(event) => setProjectDraft({ ...projectDraft, owner: event.target.value })} />
-                <button type="submit" className="primary full-width">{editingProject ? '保存项目' : '创建项目'}</button>
-                {editingProject && <button type="button" className="toolbar-btn full-width" onClick={() => openProjectEditor()}>取消编辑</button>}
-              </form>
-            </aside>
-          </section>
-        )}
-
-        {view === 'board' && (
-          <section className="board-panel">
-            <div className="panel-header"><div><p className="eyebrow">拖放任务卡片以更新状态</p><h3>{visibleTasks.length} 个任务</h3></div>
-              <select aria-label="选择项目" value={selectedProject} onChange={(event) => setSelectedProject(event.target.value)}><option value="all">全部项目</option>{projects.filter((project) => project.status !== 'archived').map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
-            </div>
-            <div className="board board-wide">{statusColumns.map((column) => <TaskColumn key={column.id} column={column} tasks={visibleTasks.filter((task) => task.status === column.id)} projects={projects} onEdit={openTaskEditor} onDelete={removeTask} onDrag={beginDrag} onDragEnd={endDrag} onDrop={dropOnColumn} onDragEnter={(status) => setDropTarget(status)} dropTarget={dropTarget} onStatus={moveTask} />)}</div>
-            {taskEditorOpen && (
-              <div className="modal-backdrop" role="presentation" onClick={() => setTaskEditorOpen(false)}>
-                <div className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="task-dialog-title" onClick={(event) => event.stopPropagation()}>
-                  <div className="panel-header"><div><p className="eyebrow">任务</p><h3 id="task-dialog-title">{editingTask?.title ?? '新建任务'}</h3></div><button type="button" className="text-button" onClick={() => setTaskEditorOpen(false)}>关闭</button></div>
-                  <TaskEditor draft={taskDraft} setDraft={setTaskDraft} projects={projects} onSubmit={saveTask} editing={Boolean(editingTask)} />
-                </div>
-              </div>
-            )}
-            {!taskEditorOpen && (
-              <div className="inline-create">
-                <button type="button" className="toolbar-btn" onClick={() => openTaskEditor()}>＋ 新建任务</button>
-              </div>
-            )}
-          </section>
-        )}
-
-        {view === 'assistant' && (
-          <section className="assistant-layout">
-            <aside className="session-panel">
-              <div className="panel-header"><div><p className="eyebrow">历史记录</p><h3>会话</h3></div><button type="button" className="text-button" onClick={startNewSession}>新建</button></div>
-              {sessions.map((session) => <button key={session.id} type="button" className={session.id === sessionId ? 'session-item active' : 'session-item'} onClick={() => void selectSession(session.id)}>
-                <strong>{session.title || '新对话'}</strong><small>{session.messageCount} 条消息 · {new Date(session.updatedAt).toLocaleDateString()}</small>
-              </button>)}
-              {sessions.length === 0 && <p className="muted-copy">对话会自动保存在本机。</p>}
-            </aside>
-            <div className="chat-panel">
-              <div className="chat-heading">
-                <div><p className="eyebrow">OpenAI-compatible Agent</p><h3>与工作区协作</h3><small>{currentProvider ? `${currentProvider.label} · ${currentProvider.model}` : '请先在模型设置中配置 Provider'}</small></div>
-                <select aria-label="选择 AI Provider" value={selectedProvider} onChange={(event) => setSelectedProvider(event.target.value)}>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.enabled ? '' : '（已停用）'}</option>)}</select>
-              </div>
-              {currentProvider && !currentProvider.toolCalling && <div className="warning-banner">当前 Provider 已禁用工具调用，对话不会读取或修改项目数据。</div>}
-              <div className="chat-transcript" aria-live="polite">
-                {messages.length === 0 && <div className="chat-empty"><strong>你的项目工作台，随时可以提问。</strong><span>例如：“请创建一个项目，名称为中文项目。”写入操作在执行前都会请求批准。</span></div>}
-                {messages.map((message) => <div key={message.id} className={`chat-message ${message.role}`}><span className="chat-role">{message.role === 'user' ? '你' : 'Reverie Agent'}</span><p>{message.content || (busy ? '正在思考…' : '')}</p></div>)}
-              </div>
-              {approvals.length > 0 && <div className="approval-list">
-                <div className="panel-header"><div><p className="eyebrow">需要你确认</p><h3>待审批操作</h3></div></div>
-                {approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} onResolve={resolveApproval} />)}
-              </div>}
-              <section className="audit-panel" aria-label="AI 操作历史">
-                <div className="panel-header"><div><p className="eyebrow">审计记录</p><h3>最近工具执行</h3></div></div>
-                {auditEvents.length === 0
-                  ? <p className="muted-copy">尚无工具执行记录。</p>
-                  : auditEvents.slice(0, 8).map((event, index) => <div className="audit-row" key={`${event.sessionId}-${event.createdAt}-${index}`}>
-                    <strong>{event.details || event.action}</strong><span>{auditActionLabel(event.action)}</span><time>{new Date(event.createdAt).toLocaleString()}</time>
-                  </div>)}
-              </section>
-              <form className="chat-composer" onSubmit={handleChat}>
-                <label className="sr-only" htmlFor="chat-prompt">向 AI 助手提问</label>
-                <textarea id="chat-prompt" rows={3} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="用中文描述你想查找或修改的项目…" disabled={busy || !selectedProvider} />
-                <div className="composer-footer"><span>AI 写入需审批 · API Key 保存在本机，不会返回浏览器</span>{busy
-                  ? <button type="button" className="toolbar-btn danger" onClick={() => controllerRef.current?.abort()}>停止生成</button>
-                  : <button type="submit" className="primary" disabled={!selectedProvider || !prompt.trim()}>发送 ↑</button>}</div>
-              </form>
-            </div>
-          </section>
-        )}
-
-        {view === 'settings' && (
-          <section className="settings-layout">
-            <div className="board-panel">
-              <div className="panel-header"><div><p className="eyebrow">模型服务</p><h3>Provider 管理</h3></div><button type="button" className="primary" onClick={() => editProvider()}>添加 Provider</button></div>
-              <p className="muted-copy">支持 OpenAI-compatible API 与本地 Ollama。远程地址要求 HTTPS；本地环回地址可使用 HTTP。密钥采用系统凭据保护加密存储。</p>
-              <div className="provider-cards">{providers.map((provider) => <article key={provider.id} className={provider.id === selectedProvider ? 'provider-card selected' : 'provider-card'}>
-                <div><strong>{provider.label}</strong><span className={`state-badge ${provider.enabled ? 'state-active' : 'state-paused'}`}>{provider.enabled ? '已启用' : '已停用'}</span></div>
-                <p>{provider.model}</p><small>{provider.baseURL} · {provider.apiKeyConfigured ? '密钥已保存' : '未配置密钥'}</small>
-                <div className="project-actions"><button type="button" className="toolbar-btn" onClick={() => { setSelectedProvider(provider.id); editProvider(provider) }}>编辑</button><button type="button" className="toolbar-btn" onClick={() => setSelectedProvider(provider.id)}>选择</button></div>
-              </article>)}</div>
-              {providerEditing && <form className="provider-form" onSubmit={saveProvider}>
-                <div className="panel-header"><div><p className="eyebrow">Provider 配置</p><h3>{providerDraft.id}</h3></div><button type="button" className="text-button" onClick={() => setProviderEditing(false)}>取消</button></div>
-                <div className="form-grid">
-                  <label>显示名称<input required value={providerDraft.label} onChange={(event) => setProviderDraft({ ...providerDraft, label: event.target.value })} /></label>
-                  <label>模型 ID<input required value={providerDraft.model} onChange={(event) => setProviderDraft({ ...providerDraft, model: event.target.value })} placeholder="gpt-4o-mini" /></label>
-                  <label className="span-two">API Base URL<input required value={providerDraft.baseURL} onChange={(event) => setProviderDraft({ ...providerDraft, baseURL: event.target.value })} placeholder="https://api.openai.com/v1" /></label>
-                  <label className="span-two">API Key<input type="password" autoComplete="new-password" value={providerDraft.apiKey} onChange={(event) => setProviderDraft({ ...providerDraft, apiKey: event.target.value })} placeholder={providers.find((provider) => provider.id === providerDraft.id)?.apiKeyConfigured ? '已保存；留空以保留当前密钥' : '仅在本次保存时发送'} /></label>
-                  <label>Temperature<input type="number" min="0" max="2" step="0.1" value={providerDraft.temperature} onChange={(event) => setProviderDraft({ ...providerDraft, temperature: Number(event.target.value) })} /></label>
-                  <label>最大输出 Token<input type="number" min="1" max="32768" value={providerDraft.maxTokens} onChange={(event) => setProviderDraft({ ...providerDraft, maxTokens: Number(event.target.value) })} /></label>
-                </div>
-                <div className="toggle-row"><label><input type="checkbox" checked={providerDraft.enabled} onChange={(event) => setProviderDraft({ ...providerDraft, enabled: event.target.checked })} />启用 Provider</label><label><input type="checkbox" checked={providerDraft.streaming} onChange={(event) => setProviderDraft({ ...providerDraft, streaming: event.target.checked })} />SSE 流式输出</label><label><input type="checkbox" checked={providerDraft.toolCalling} onChange={(event) => setProviderDraft({ ...providerDraft, toolCalling: event.target.checked })} />工具调用</label></div>
-                <button type="submit" className="primary">安全保存</button>
-              </form>}
-              <button type="button" className="toolbar-btn" disabled={busy || !selectedProvider} onClick={() => void testProvider()}>{busy ? '正在验证模型响应…' : '发送测试提示并验证模型响应'}</button>
-            </div>
-            <aside className="side-panel">
-              <div className="panel-header"><div><p className="eyebrow">本地运行</p><h3>安全与隐私</h3></div></div>
-              <ul className="settings-facts"><li>业务数据持久化在项目目录的 SQLite 数据库中。</li><li>Provider 密钥不会由 GET 接口返回。</li><li>Windows 使用当前用户 DPAPI 加密密钥。</li><li>远程 Provider 必须 HTTPS，且 DNS 解析地址会被逐次校验。</li><li>Agent 只能调用注册的项目与任务工具，不执行任意 SQL。</li></ul>
-              <div className="panel-header compact"><div><p className="eyebrow">当前状态</p><h3>{overview?.aiEnabled ? 'AI 功能已开启' : 'AI 功能已关闭'}</h3></div></div>
-              <p className="muted-copy">模型能力验证会实际发送一个短提示并确认返回生成内容；不会只检查模型列表接口。</p>
-            </aside>
-          </section>
-        )}
+  return (
+    <div className="app" data-theme={theme}>
+      <button className="btn" style={{ position: 'fixed', top: 8, left: 8, zIndex: 20 }} onClick={() => setSidebarCollapsed((c) => !c)}>☰</button>
+      {sidebar}
+      <main className="main">
+        <div className="topbar">
+          <span style={{ cursor: 'pointer' }} onClick={() => setView('home')}>Home</span>
+          <span>/</span>
+          <span>{view}</span>
+          <span style={{ flex: 1 }} />
+          <button className="btn" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? '🌙' : '☀️'}</button>
+        </div>
+        <div className="content">{renderContent()}</div>
       </main>
+
+      {taskEditorOpen && (
+        <div className="modal-backdrop" onClick={() => setTaskEditorOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{editingTask ? 'Edit issue' : 'New issue'}</h3>
+            <form onSubmit={saveTask}>
+              <div className="form-row"><label>Title</label><input className="input" value={taskDraft.title} onChange={(e) => setTaskDraft({ ...taskDraft, title: e.target.value })} required /></div>
+              <div className="form-row"><label>Description</label><textarea className="input" value={taskDraft.description} onChange={(e) => setTaskDraft({ ...taskDraft, description: e.target.value })} /></div>
+              <div className="form-row"><label>Project</label>
+                <select className="input" value={taskDraft.projectId} onChange={(e) => setTaskDraft({ ...taskDraft, projectId: e.target.value })}>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div className="row">
+                <div className="form-row" style={{ flex: 1 }}><label>Status</label>
+                  <select className="input" value={taskDraft.status} onChange={(e) => setTaskDraft({ ...taskDraft, status: e.target.value as TaskStatus })}>
+                    <option value="todo">Todo</option><option value="in_progress">In progress</option><option value="done">Done</option><option value="blocked">Blocked</option>
+                  </select>
+                </div>
+                <div className="form-row" style={{ flex: 1 }}><label>Priority</label>
+                  <select className="input" value={taskDraft.priority} onChange={(e) => setTaskDraft({ ...taskDraft, priority: e.target.value as Priority })}>
+                    <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+                  </select>
+                </div>
+              </div>
+              <div className="row">
+                <div className="form-row" style={{ flex: 1 }}><label>Due date</label><input className="input" type="date" value={taskDraft.dueDate} onChange={(e) => setTaskDraft({ ...taskDraft, dueDate: e.target.value })} /></div>
+                <div className="form-row" style={{ flex: 1 }}><label>Assignee</label><input className="input" value={taskDraft.assignee} onChange={(e) => setTaskDraft({ ...taskDraft, assignee: e.target.value })} /></div>
+              </div>
+              <div className="row" style={{ justifyContent: 'flex-end' }}>
+                {editingTask && <button type="button" className="btn" onClick={() => { deleteTask(editingTask.id); setTaskEditorOpen(false) }}>Delete</button>}
+                <button type="button" className="btn" onClick={() => setTaskEditorOpen(false)}>Cancel</button>
+                <button type="submit" className="btn primary">Save</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {projectEditorOpen && (
+        <div className="modal-backdrop" onClick={() => setProjectEditorOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{editingProject ? 'Edit project' : 'New project'}</h3>
+            <form onSubmit={saveProject}>
+              <div className="form-row"><label>Name</label><input className="input" value={projectDraft.name} onChange={(e) => setProjectDraft({ ...projectDraft, name: e.target.value })} required /></div>
+              <div className="form-row"><label>Description</label><textarea className="input" value={projectDraft.description} onChange={(e) => setProjectDraft({ ...projectDraft, description: e.target.value })} /></div>
+              <div className="row">
+                <div className="form-row" style={{ flex: 1 }}><label>Status</label>
+                  <select className="input" value={projectDraft.status} onChange={(e) => setProjectDraft({ ...projectDraft, status: e.target.value as ProjectStatus })}>
+                    <option value="planning">Planning</option><option value="active">Active</option><option value="paused">Paused</option><option value="archived">Archived</option>
+                  </select>
+                </div>
+                <div className="form-row" style={{ flex: 1 }}><label>Owner</label><input className="input" value={projectDraft.owner} onChange={(e) => setProjectDraft({ ...projectDraft, owner: e.target.value })} /></div>
+              </div>
+              <div className="row" style={{ justifyContent: 'flex-end' }}>
+                <button type="button" className="btn" onClick={() => setProjectEditorOpen(false)}>Cancel</button>
+                <button type="submit" className="btn primary">Save</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {error && <div style={{ position: 'fixed', bottom: 16, right: 16, background: '#eb5757', color: 'white', padding: '8px 12px', borderRadius: 8 }}>{error}<button style={{ marginLeft: 8, background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }} onClick={() => setError('')}>×</button></div>}
+      {notice && <div style={{ position: 'fixed', bottom: 16, right: 16, background: '#4caf50', color: 'white', padding: '8px 12px', borderRadius: 8 }}>{notice}</div>}
     </div>
   )
 }
-
-async function readAgentStream(
-  response: Response,
-  onDelta: (content: string) => void,
-  onApproval: (approval: Approval) => void,
-  onDone: (result: ChatResponse) => void,
-  signal: AbortSignal,
-) {
-  const contentType = response.headers.get('Content-Type') ?? ''
-  if (!contentType.includes('text/event-stream')) {
-    const result = await response.json() as ChatResponse
-    onDone(result)
-    return result.sessionId
-  }
-  if (!response.body) throw new Error('Streaming response body is unavailable')
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let session = ''
-  while (!signal.aborted) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const frames = buffer.split(/\r?\n\r?\n/)
-    buffer = frames.pop() ?? ''
-    for (const frame of frames) {
-      const event = frame.match(/^event:\s*(.+)$/m)?.[1]
-      const data = frame.match(/^data:\s*(.+)$/m)?.[1]
-      if (!data) continue
-      const payload = JSON.parse(data) as Approval & ChatResponse & { content?: string; error?: string }
-      if (event === 'delta') onDelta(payload.content ?? '')
-      if (event === 'approval_required') onApproval(payload)
-      if (event === 'done') {
-        session = payload.sessionId
-        onDone(payload)
-      }
-      if (event === 'error') throw new Error(payload.error ?? 'AI request failed')
-    }
-  }
-  if (signal.aborted) throw new DOMException('Request aborted', 'AbortError')
-  return session
-}
-
-function Metric({ label, value, detail }: { label: string; value: string | number; detail: string }) {
-  return <div className="metric-card"><span className="metric-label">{label}</span><strong className="tabular-nums">{value}</strong><small>{detail}</small></div>
-}
-
-function TaskColumn({
-  column,
-  tasks,
-  projects,
-  onEdit,
-  onDelete,
-  onDrag,
-  onDragEnd,
-  onDrop,
-  onDragEnter,
-  dropTarget,
-  onStatus,
-}: {
-  column: { id: TaskStatus; label: string }
-  tasks: Task[]
-  projects: Project[]
-  onEdit: (task: Task) => void
-  onDelete: (task: Task) => void
-  onDrag: (event: DragEvent<HTMLElement>, taskId: string) => void
-  onDragEnd: () => void
-  onDrop: (event: DragEvent<HTMLDivElement>, status: TaskStatus) => void
-  onDragEnter: (status: TaskStatus) => void
-  dropTarget: TaskStatus | ''
-  onStatus: (task: Task, status: TaskStatus) => void
-}) {
-  return <div className={dropTarget === column.id ? 'column drag-over' : 'column'} onDragOver={(event) => event.preventDefault()} onDragEnter={() => onDragEnter(column.id)} onDrop={(event) => onDrop(event, column.id)}>
-    <div className="column-header"><span>{column.label}</span><strong>{tasks.length}</strong></div>
-    <div className="task-stack">
-      {tasks.map((task) => <article key={task.id} className="task-card" draggable onDragStart={(event) => onDrag(event, task.id)} onDragEnd={onDragEnd}>
-        <div className="task-topline"><span className={`priority priority-${task.priority}`}>{task.priority}</span><span className="task-project">{projects.find((project) => project.id === task.projectId)?.name ?? '项目'}</span></div>
-        <h4>{task.title}</h4><p>{task.description || '暂无描述'}</p>
-        <div className="task-meta"><span>{task.assignee || '未分配'}</span><span>{task.dueDate || '无截止日期'}</span></div>
-        <div className="task-actions"><button type="button" className="text-button" onClick={() => onEdit(task)}>编辑</button>
-          <select aria-label={`更新 ${task.title} 状态`} value={task.status} onChange={(event) => onStatus(task, event.target.value as TaskStatus)}>{statusColumns.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
-          <button type="button" className="text-button danger-text" onClick={() => onDelete(task)}>删除</button></div>
-      </article>)}
-      {tasks.length === 0 && <div className="empty-state">拖入任务，或在此状态创建任务。</div>}
-    </div>
-  </div>
-}
-
-
-function TaskEditor({
-  draft,
-  setDraft,
-  projects,
-  onSubmit,
-  editing = false,
-}: {
-  draft: TaskDraft
-  setDraft: (draft: TaskDraft) => void
-  projects: Project[]
-  onSubmit: (event: FormEvent) => void
-  editing?: boolean
-}) {
-  return <form className="task-form form-grid" onSubmit={onSubmit}>
-    <label className="span-two">任务名称<input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
-    <label className="span-two">描述<textarea rows={3} value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
-    <label className="span-two">所属项目<select required value={draft.projectId} onChange={(event) => setDraft({ ...draft, projectId: event.target.value })}>{projects.filter((project) => project.status !== 'archived').map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
-    <label>状态<select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as TaskStatus })}>{statusColumns.map((status) => <option key={status.id} value={status.id}>{status.label}</option>)}</select></label>
-    <label>优先级<select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as Priority })}><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
-    <label>截止日期<input type="date" value={draft.dueDate} onChange={(event) => setDraft({ ...draft, dueDate: event.target.value })} /></label>
-    <label>负责人<input value={draft.assignee} onChange={(event) => setDraft({ ...draft, assignee: event.target.value })} /></label>
-    <button type="submit" className="primary span-two">{editing ? '保存任务' : '创建任务'}</button>
-  </form>
-}
-
-function ApprovalCard({ approval, onResolve }: { approval: Approval; onResolve: (approval: Approval, approve: boolean, confirmText?: string) => void }) {
-  const [confirmText, setConfirmText] = useState('')
-  return <article className={approval.highRisk ? 'approval-card high-risk' : 'approval-card'}>
-    <strong>{approval.summary}</strong>
-    <p>{approval.highRisk ? '高影响操作：归档项目可恢复，但会影响项目的活跃列表。' : '此操作会写入本机数据库，执行前请核对参数。'}</p>
-    <pre>{JSON.stringify(approval.arguments, null, 2)}</pre>
-    {approval.highRisk && <label>输入 ARCHIVE 确认<input value={confirmText} onChange={(event) => setConfirmText(event.target.value)} /></label>}
-    <div className="project-actions"><button type="button" className="primary" disabled={approval.highRisk && confirmText !== 'ARCHIVE'} onClick={() => onResolve(approval, true, confirmText)}>批准并执行</button><button type="button" className="toolbar-btn" onClick={() => onResolve(approval, false)}>拒绝</button></div>
-  </article>
-}
-
-function projectStatusLabel(status: ProjectStatus) {
-  return ({ active: '进行中', planning: '规划中', paused: '已暂停', archived: '已归档' })[status]
-}
-
-function auditActionLabel(action: string) {
-  return ({
-    approval_requested: '等待审批',
-    tool_write: '已执行写入',
-    tool_read: '只读工具',
-    tool_denied: '操作已拒绝',
-    tool_error: '工具错误',
-  } as Record<string, string>)[action] ?? action
-}
-
-export default App

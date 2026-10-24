@@ -219,6 +219,22 @@ func main() {
 	mux.HandleFunc("/api/ai/sessions/", ctx.handleAISessionMessages)
 	mux.HandleFunc("/api/backup", ctx.handleBackup)
 	mux.HandleFunc("/api/shutdown", ctx.handleShutdown)
+	mux.HandleFunc("/api/labels", ctx.handleLabels)
+	mux.HandleFunc("/api/states", ctx.handleStates)
+	mux.HandleFunc("/api/cycles", ctx.handleCycles)
+	mux.HandleFunc("/api/modules", ctx.handleModules)
+	mux.HandleFunc("/api/pages", ctx.handlePages)
+	mux.HandleFunc("/api/comments", ctx.handleComments)
+	mux.HandleFunc("/api/activity", ctx.handleActivity)
+	mux.HandleFunc("/api/notifications", ctx.handleNotifications)
+	mux.HandleFunc("/api/stickies", ctx.handleStickies)
+	mux.HandleFunc("/api/drafts", ctx.handleDrafts)
+	mux.HandleFunc("/api/views", ctx.handleViews)
+	mux.HandleFunc("/api/intake", ctx.handleIntake)
+	mux.HandleFunc("/api/search", ctx.handleSearch)
+	mux.HandleFunc("/api/analytics", ctx.handleAnalytics)
+	mux.HandleFunc("/api/workspaces", ctx.handleWorkspaces)
+	mux.HandleFunc("/api/members", ctx.handleMembers)
 	mux.HandleFunc("/api/echo", ctx.handleEcho)
 
 	if _, err := os.Stat(staticRoot); err == nil {
@@ -447,6 +463,22 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 			FOREIGN KEY(session_id) REFERENCES ai_sessions(id)
 		);`}},
 		{version: 4, statements: []string{`CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);`}},
+		{version: 5, statements: []string{
+			`CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT, description TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
+			`CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, role TEXT NOT NULL DEFAULT 'member', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
+			`CREATE TABLE IF NOT EXISTS labels (id TEXT PRIMARY KEY, project_id TEXT, name TEXT NOT NULL, color TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
+			`CREATE TABLE IF NOT EXISTS states (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, color TEXT, group_name TEXT, sequence INTEGER DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
+			`CREATE TABLE IF NOT EXISTS cycles (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT, start_date TEXT, end_date TEXT, status TEXT NOT NULL DEFAULT 'draft', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
+			`CREATE TABLE IF NOT EXISTS modules (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT, status TEXT NOT NULL DEFAULT 'backlog', lead TEXT, start_date TEXT, end_date TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
+			`CREATE TABLE IF NOT EXISTS pages (id TEXT PRIMARY KEY, project_id TEXT, workspace BOOLEAN NOT NULL DEFAULT 0, parent_id TEXT, title TEXT NOT NULL, icon TEXT, cover TEXT, content TEXT, created_by TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
+			`CREATE TABLE IF NOT EXISTS comments (id TEXT PRIMARY KEY, entity TEXT NOT NULL, entity_id TEXT NOT NULL, author TEXT, body TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
+			`CREATE TABLE IF NOT EXISTS activity (id TEXT PRIMARY KEY, entity TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, actor TEXT, details TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
+			`CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT, type TEXT NOT NULL DEFAULT 'info', read INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
+			`CREATE TABLE IF NOT EXISTS stickies (id TEXT PRIMARY KEY, title TEXT, body TEXT, color TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
+			`CREATE TABLE IF NOT EXISTS drafts (id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT, content TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
+			`CREATE TABLE IF NOT EXISTS views (id TEXT PRIMARY KEY, project_id TEXT, name TEXT NOT NULL, filters TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
+			`CREATE TABLE IF NOT EXISTS intake (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
+		}},
 	}
 	for _, migration := range migrations {
 		var exists int
@@ -478,6 +510,19 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 			_ = db.Close()
 			return nil, err
 		}
+	}
+	// Ensure extended task columns exist (idempotent).
+	for _, stmt := range []string{
+		`ALTER TABLE tasks ADD COLUMN state_id TEXT`,
+		`ALTER TABLE tasks ADD COLUMN cycle_id TEXT`,
+		`ALTER TABLE tasks ADD COLUMN module_id TEXT`,
+		`ALTER TABLE tasks ADD COLUMN estimate TEXT`,
+		`ALTER TABLE tasks ADD COLUMN parent_id TEXT`,
+		`ALTER TABLE tasks ADD COLUMN sequence_no INTEGER DEFAULT 0`,
+		`ALTER TABLE tasks ADD COLUMN labels_json TEXT`,
+		`ALTER TABLE tasks ADD COLUMN deleted_at TEXT`,
+	} {
+		_, _ = db.Exec(stmt)
 	}
 	return db, nil
 }
