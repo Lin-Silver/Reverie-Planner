@@ -79,19 +79,19 @@ export default function App() {
   const pageEditorRef = useRef<Page | null>(null)
   const pageTitleRef = useRef('')
   useEffect(() => { pageEditorRef.current = pageEditor; pageTitleRef.current = pageDraft.title }, [pageEditor, pageDraft.title])
-  const savePageContent = async (content: string) => {
-    const pe = pageEditorRef.current
+  const savePageContent = async (pageId: string, content: string) => {
+    const pe = pages.find((p) => p.id === pageId) || (pageEditorRef.current?.id === pageId ? pageEditorRef.current : null)
     if (!pe) return
+    const title = pageEditorRef.current?.id === pageId ? pageTitleRef.current : pe.title
     try {
-      const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pe, title: pageTitleRef.current, icon: pe.icon, content, version: pe.version }) })
-      if (pageEditorRef.current && res.version) pageEditorRef.current.version = res.version
+      const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pe, title, icon: pe.icon, content, version: pe.version }) })
+      if (pageEditorRef.current?.id === pageId && res.version) pageEditorRef.current.version = res.version
     } catch (e) {
-      // on conflict, reload latest
-      if ((e as Error).message.includes('version conflict') && pe.id) {
+      if ((e as Error).message.includes('version conflict') && pageId) {
         try {
-          const latest = await apiFetch<Page>(`/api/pages?id=${pe.id}`)
-          pageEditorRef.current = latest
-          setPageEditor(latest)
+          const latest = await apiFetch<Page>(`/api/pages?id=${pageId}`)
+          if (pageEditorRef.current?.id === pageId) pageEditorRef.current = latest
+          setPageEditor((cur) => (cur?.id === pageId ? latest : cur))
         } catch {}
       }
       throw e
@@ -350,13 +350,15 @@ export default function App() {
           </div>
         </div>
         <div className="page-icon" onClick={() => { if (!pageEditor) return; setIconDraft(pageEditor.icon || ''); setIconTarget(pageEditor) }}>{pageDraft.icon || '📄'}</div>
-        <input className="page-title" value={pageDraft.title} onChange={(e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor) savePageContent(pageDraft.content || pageEditor.content).catch(() => {}) }} placeholder="Untitled" />
+        <input className="page-title" value={pageDraft.title} onChange={(e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor) savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch(() => {}) }} placeholder="Untitled" />
   {pageEditor && (
     <PageEditor
       key={pageEditor.id}
+      pageId={pageEditor.id}
       initialContent={pageEditor.content}
       theme={theme}
       onSave={savePageContent}
+      onContentChange={(c) => setPageDraft((d) => ({ ...d, content: c }))}
       onStatus={() => {}}
     />
   )}

@@ -6,9 +6,11 @@ import type { Block } from '@blocknote/core'
 
 type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
 type Props = {
+  pageId: string
   initialContent: string
   theme: 'light' | 'dark'
-  onSave: (content: string) => Promise<void>
+  onSave: (pageId: string, content: string) => Promise<void>
+  onContentChange?: (content: string) => void
   onStatus: (s: SaveStatus) => void
 }
 
@@ -21,7 +23,7 @@ function parseBlocks(content: string): Block[] | undefined {
   return [{ type: 'paragraph', content: [{ type: 'text', text: content, styles: {} }] } as Block]
 }
 
-export default function PageEditor({ initialContent, theme, onSave, onStatus }: Props) {
+export default function PageEditor({ pageId, initialContent, theme, onSave, onContentChange, onStatus }: Props) {
   const blocks = useMemo(() => parseBlocks(initialContent), [initialContent])
   const editor = useCreateBlockNote({ initialContent: blocks })
   const latestReq = useRef(0)
@@ -42,7 +44,7 @@ export default function PageEditor({ initialContent, theme, onSave, onStatus }: 
     const reqId = ++latestReq.current
     updateStatus('saving')
     try {
-      await onSaveRef.current(content)
+      await onSaveRef.current(pageId, content)
       if (reqId === latestReq.current) {
         updateStatus('saved')
         pendingContent.current = null
@@ -60,6 +62,7 @@ export default function PageEditor({ initialContent, theme, onSave, onStatus }: 
 
   const scheduleSave = useCallback((content: string) => {
     pendingContent.current = content
+    onContentChange?.(content)
     updateStatus('unsaved')
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
@@ -93,7 +96,7 @@ export default function PageEditor({ initialContent, theme, onSave, onStatus }: 
   useEffect(() => {
     const handler = () => {
       if (pendingContent.current) {
-        try { onSaveRef.current(pendingContent.current) } catch {}
+        try { onSaveRef.current(pageId, pendingContent.current) } catch {}
       }
     }
     window.addEventListener('beforeunload', handler)
