@@ -305,6 +305,10 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 		if p.ID == "" {
 			p.ID = newID("page")
 		}
+		if err := a.validatePageParent(p.ID, p.ParentID); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
 		if p.Title == "" {
 			p.Title = "Untitled"
 		}
@@ -327,6 +331,10 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&p)
 		if p.ID == "" {
 			writeJSON(w, 400, map[string]string{"error": "id required"})
+			return
+		}
+		if err := a.validatePageParent(p.ID, p.ParentID); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
 		if p.Version <= 0 {

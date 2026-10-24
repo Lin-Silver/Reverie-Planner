@@ -79,25 +79,41 @@ export default function App() {
   const pageEditorRef = useRef<Page | null>(null)
   const pageTitleRef = useRef('')
   useEffect(() => { pageEditorRef.current = pageEditor; pageTitleRef.current = pageDraft.title }, [pageEditor, pageDraft.title])
+  const pageVersions = useRef<Map<string, number>>(new Map())
+  const pageWriteQueues = useRef<Map<string, Promise<void>>>(new Map())
   const savePageContent = async (pageId: string, content: string) => {
-    const pe = pages.find((p) => p.id === pageId) || (pageEditorRef.current?.id === pageId ? pageEditorRef.current : null)
-    if (!pe) return
-    const title = pageEditorRef.current?.id === pageId ? pageTitleRef.current : pe.title
-    try {
-      const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pe, title, icon: pe.icon, content, version: pe.version }) })
-      if (pageEditorRef.current?.id === pageId && res.version) pageEditorRef.current.version = res.version
-    } catch (e) {
-      if ((e as Error).message.includes('version conflict') && pageId) {
-        try {
-          const latest = await apiFetch<Page>(`/api/pages?id=${pageId}`)
-          if (pageEditorRef.current?.id === pageId) {
-            pageEditorRef.current.version = latest.version
-            // keep local content but update base; notify conflict
-          }
-        } catch {}
+    // serialize per page
+    const prev = pageWriteQueues.current.get(pageId) || Promise.resolve()
+    const next = prev.then(async () => {
+      // authoritative version
+      let version = pageVersions.current.get(pageId)
+      if (version == null) {
+        const pe = pages.find((p) => p.id === pageId) || pageEditorRef.current
+        version = pe?.version || 1
       }
-      throw e
-    }
+      const pe = pages.find((p) => p.id === pageId) || pageEditorRef.current
+      if (!pe) return
+      const title = pageEditorRef.current?.id === pageId ? pageTitleRef.current : pe.title
+      try {
+        const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pe, title, icon: pe.icon, content, version }) })
+        if (res.version) {
+          pageVersions.current.set(pageId, res.version)
+          if (pageEditorRef.current?.id === pageId) pageEditorRef.current.version = res.version
+        }
+      } catch (e) {
+        if ((e as Error).message.includes('version conflict') && pageId) {
+          try {
+            const latest = await apiFetch<Page>(`/api/pages?id=${pageId}`)
+            pageVersions.current.set(pageId, latest.version || 1)
+            if (pageEditorRef.current?.id === pageId) pageEditorRef.current.version = latest.version
+            // keep local content; throw conflict for UI
+          } catch {}
+        }
+        throw e
+      }
+    })
+    pageWriteQueues.current.set(pageId, next.catch(() => {}))
+    return next
   }
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme) }, [theme])
@@ -178,12 +194,13 @@ export default function App() {
   }
 
   const openPageEditor = async (page?: Page) => {
-    if (page) {
-      let full = page
-      if (page.content === undefined || page.content === '') {
-        try { full = await apiFetch<Page>(`/api/pages?id=${page.id}`) } catch {}
-      }
-      setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
+      if (page) {
+        let full = page
+        if (page.content === undefined || page.content === '') {
+          try { full = await apiFetch<Page>(`/api/pages?id=${page.id}`) } catch {}
+        }
+        pageVersions.current.set(full.id, full.version || 1)
+        setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
     }
     else {
       try {

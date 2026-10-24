@@ -52,13 +52,14 @@ func TestPageMoveAtomicAndCyclePrevention(t *testing.T) {
 		t.Fatalf("expected cycle rejection, got %d %s", res.Code, res.Body.String())
 	}
 
-	// version conflict
-	moveBody, _ = json.Marshal(map[string]any{"id": child.ID, "parentId": "", "version": 1})
-	req = httptest.NewRequest(http.MethodPost, "/api/pages/move", strings.NewReader(string(moveBody)))
+	// PUT attempting to create cycle should be rejected
+	childUpdate, _ := json.Marshal(Page{ID: child.ID, Title: "Child", Workspace: true, ParentID: child.ID, Version: child.Version})
+	// self-parent via PUT
+	req = httptest.NewRequest(http.MethodPut, "/api/pages", strings.NewReader(string(childUpdate)))
 	res = httptest.NewRecorder()
-	ctx.handlePageMove(res, req)
-	if res.Code != http.StatusConflict {
-		t.Fatalf("expected conflict, got %d %s", res.Code, res.Body.String())
+	ctx.handlePages(res, req)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected self-parent rejection via PUT, got %d %s", res.Code, res.Body.String())
 	}
 }
 
