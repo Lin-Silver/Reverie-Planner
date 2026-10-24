@@ -29,3 +29,9 @@
 - Conflict retry with version refresh.
 - E2E 6 tests, backend 2 new tests.
 - CI: pass.
+
+## Update 837edf7
+- Recursive CTE page validation (no deadlock).
+- Atomic move in transaction.
+- Conflict UI with Reload/Retry.
+- E2E 6 tests, CI pass.
