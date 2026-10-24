@@ -75,3 +75,5 @@ textarea { resize: vertical; }
 @media (max-width: 768px) { .page-wrap { padding: 24px 16px 80px; } .kanban { grid-template-columns: 1fr; } .sidebar { position: absolute; z-index: 10; height: 100%; } }
 
 .nav-item, .tree-item { border: none; background: transparent; width: 100%; text-align: left; font-family: inherit; cursor: pointer; }
+
+.ProseMirror { white-space: pre-wrap; }

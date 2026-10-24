@@ -76,6 +76,14 @@ export default function App() {
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [dropTarget, setDropTarget] = useState<TaskStatus | ''>('')
   const draggedTaskId = useRef('')
+  const pageEditorRef = useRef<Page | null>(null)
+  const pageTitleRef = useRef('')
+  useEffect(() => { pageEditorRef.current = pageEditor; pageTitleRef.current = pageDraft.title }, [pageEditor, pageDraft.title])
+  const savePageContent = async (content: string) => {
+    const pe = pageEditorRef.current
+    if (!pe) return
+    await apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pe, title: pageTitleRef.current, icon: pe.icon, content }) })
+  }
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme) }, [theme])
   useEffect(() => { localStorage.setItem('reverie.sidebar.collapsed', sidebarCollapsed ? '1' : '0') }, [sidebarCollapsed])
@@ -299,15 +307,15 @@ export default function App() {
           </div>
         </div>
         <div className="page-icon" onClick={async () => { if (!pageEditor) return; const ic = window.prompt('Icon emoji'); if (ic === null) return; setPageDraft((d) => ({ ...d, icon: ic })); try { await apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pageEditor, icon: ic }) }); await refresh() } catch (e) { setError((e as Error).message) } }}>{pageDraft.icon || '📄'}</div>
-        <input className="page-title" value={pageDraft.title} onChange={async (e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); if (pageEditor) { try { await apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pageEditor, title: e.target.value }) }) } catch {} } }} placeholder="Untitled" />
-        {pageEditor && (
-          <PageEditor
-            initialContent={pageEditor.content}
-            theme={theme}
-            onChange={(json) => { setPageDraft((d) => ({ ...d, content: json })); if (pageEditor) { apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pageEditor, title: pageDraft.title, icon: pageDraft.icon, content: json }) }).catch(() => {}) } }}
-            onSaveStatus={() => {}}
-          />
-        )}
+        <input className="page-title" value={pageDraft.title} onChange={(e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor) savePageContent(pageDraft.content || pageEditor.content).catch(() => {}) }} placeholder="Untitled" />
+  {pageEditor && (
+    <PageEditor
+      initialContent={pageEditor.content}
+      theme={theme}
+      onSave={savePageContent}
+      onStatus={() => {}}
+    />
+  )}
       </div>
     )
 
@@ -511,28 +519,28 @@ export default function App() {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>{editingTask ? 'Edit issue' : 'New issue'}</h3>
             <form onSubmit={saveTask}>
-              <div className="form-row"><label>Title</label><input className="input" value={taskDraft.title} onChange={(e) => setTaskDraft({ ...taskDraft, title: e.target.value })} required /></div>
-              <div className="form-row"><label>Description</label><textarea className="input" value={taskDraft.description} onChange={(e) => setTaskDraft({ ...taskDraft, description: e.target.value })} /></div>
+              <div className="form-row"><label>Title</label><input className="input" aria-label="Title" value={taskDraft.title} onChange={(e) => setTaskDraft({ ...taskDraft, title: e.target.value })} required /></div>
+              <div className="form-row"><label>Description</label><textarea className="input" aria-label="Description" value={taskDraft.description} onChange={(e) => setTaskDraft({ ...taskDraft, description: e.target.value })} /></div>
               <div className="form-row"><label>Project</label>
-                <select className="input" value={taskDraft.projectId} onChange={(e) => setTaskDraft({ ...taskDraft, projectId: e.target.value })}>
+                <select className="input" aria-label="Project" value={taskDraft.projectId} onChange={(e) => setTaskDraft({ ...taskDraft, projectId: e.target.value })}>
                   {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
               <div className="row">
                 <div className="form-row" style={{ flex: 1 }}><label>Status</label>
-                  <select className="input" value={taskDraft.status} onChange={(e) => setTaskDraft({ ...taskDraft, status: e.target.value as TaskStatus })}>
+                  <select className="input" aria-label="Status" value={taskDraft.status} onChange={(e) => setTaskDraft({ ...taskDraft, status: e.target.value as TaskStatus })}>
                     <option value="todo">Todo</option><option value="in_progress">In progress</option><option value="done">Done</option><option value="blocked">Blocked</option>
                   </select>
                 </div>
                 <div className="form-row" style={{ flex: 1 }}><label>Priority</label>
-                  <select className="input" value={taskDraft.priority} onChange={(e) => setTaskDraft({ ...taskDraft, priority: e.target.value as Priority })}>
+                  <select className="input" aria-label="Priority" value={taskDraft.priority} onChange={(e) => setTaskDraft({ ...taskDraft, priority: e.target.value as Priority })}>
                     <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
                   </select>
                 </div>
               </div>
               <div className="row">
-                <div className="form-row" style={{ flex: 1 }}><label>Due date</label><input className="input" type="date" value={taskDraft.dueDate} onChange={(e) => setTaskDraft({ ...taskDraft, dueDate: e.target.value })} /></div>
-                <div className="form-row" style={{ flex: 1 }}><label>Assignee</label><input className="input" value={taskDraft.assignee} onChange={(e) => setTaskDraft({ ...taskDraft, assignee: e.target.value })} /></div>
+                <div className="form-row" style={{ flex: 1 }}><label>Due date</label><input className="input" type="date" aria-label="Due date" value={taskDraft.dueDate} onChange={(e) => setTaskDraft({ ...taskDraft, dueDate: e.target.value })} /></div>
+                <div className="form-row" style={{ flex: 1 }}><label>Assignee</label><input className="input" aria-label="Assignee" value={taskDraft.assignee} onChange={(e) => setTaskDraft({ ...taskDraft, assignee: e.target.value })} /></div>
               </div>
               <div className="row" style={{ justifyContent: 'flex-end' }}>
                 {editingTask && <button type="button" className="btn" onClick={() => { deleteTask(editingTask.id); setTaskEditorOpen(false) }}>Delete</button>}
@@ -549,15 +557,15 @@ export default function App() {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>{editingProject ? 'Edit project' : 'New project'}</h3>
             <form onSubmit={saveProject}>
-              <div className="form-row"><label>Name</label><input className="input" value={projectDraft.name} onChange={(e) => setProjectDraft({ ...projectDraft, name: e.target.value })} required /></div>
-              <div className="form-row"><label>Description</label><textarea className="input" value={projectDraft.description} onChange={(e) => setProjectDraft({ ...projectDraft, description: e.target.value })} /></div>
+              <div className="form-row"><label>Name</label><input className="input" aria-label="Name" value={projectDraft.name} onChange={(e) => setProjectDraft({ ...projectDraft, name: e.target.value })} required /></div>
+              <div className="form-row"><label>Description</label><textarea className="input" aria-label="Description" value={projectDraft.description} onChange={(e) => setProjectDraft({ ...projectDraft, description: e.target.value })} /></div>
               <div className="row">
                 <div className="form-row" style={{ flex: 1 }}><label>Status</label>
-                  <select className="input" value={projectDraft.status} onChange={(e) => setProjectDraft({ ...projectDraft, status: e.target.value as ProjectStatus })}>
+                  <select className="input" aria-label="Status" value={projectDraft.status} onChange={(e) => setProjectDraft({ ...projectDraft, status: e.target.value as ProjectStatus })}>
                     <option value="planning">Planning</option><option value="active">Active</option><option value="paused">Paused</option><option value="archived">Archived</option>
                   </select>
                 </div>
-                <div className="form-row" style={{ flex: 1 }}><label>Owner</label><input className="input" value={projectDraft.owner} onChange={(e) => setProjectDraft({ ...projectDraft, owner: e.target.value })} /></div>
+                <div className="form-row" style={{ flex: 1 }}><label>Owner</label><input className="input" aria-label="Owner" value={projectDraft.owner} onChange={(e) => setProjectDraft({ ...projectDraft, owner: e.target.value })} /></div>
               </div>
               <div className="row" style={{ justifyContent: 'flex-end' }}>
                 <button type="button" className="btn" onClick={() => setProjectEditorOpen(false)}>Cancel</button>
