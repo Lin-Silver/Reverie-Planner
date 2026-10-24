@@ -810,69 +810,24 @@ func (a *AppContext) handlePageMove(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "version required"})
 		return
 	}
-	// cycle prevention: target must not be descendant of id
-	var isDescendant func(ancestor, target string) bool
-	isDescendant = func(ancestor, target string) bool {
-		rows, err := a.DB.Query(`SELECT id FROM pages WHERE parent_id=?`, ancestor)
-		if err != nil {
-			return false
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var cid string
-			_ = rows.Scan(&cid)
-			if cid == target {
-				return true
-			}
-			if isDescendant(cid, target) {
-				return true
-			}
-		}
-		return false
-	}
-	if payload.ParentID != "" {
-		if payload.ParentID == payload.ID {
-			writeJSON(w, 400, map[string]string{"error": "cannot move into itself"})
-			return
-		}
-		if isDescendant(payload.ID, payload.ParentID) {
-			writeJSON(w, 400, map[string]string{"error": "circular move"})
-			return
-		}
-		var exists int
-		if err := a.DB.QueryRow(`SELECT COUNT(*) FROM pages WHERE id=?`, payload.ParentID).Scan(&exists); err != nil || exists == 0 {
-			writeJSON(w, 404, map[string]string{"error": "parent not found"})
-			return
-		}
-	}
-	// atomic update
-	var currentVersion int
-	if err := a.DB.QueryRow(`SELECT version FROM pages WHERE id=?`, payload.ID).Scan(&currentVersion); err != nil {
-		writeJSON(w, 404, map[string]string{"error": "not found"})
-		return
-	}
-	if currentVersion != payload.Version {
-		writeJSON(w, 409, map[string]string{"error": "version conflict"})
-		return
-	}
-	newVersion := currentVersion + 1
-	parentVal := any(nil)
-	if payload.ParentID != "" {
-		parentVal = payload.ParentID
-	}
-	res, err := a.DB.Exec(`UPDATE pages SET parent_id=?, updated_at=?, version=? WHERE id=? AND version=?`,
-		parentVal, time.Now().UTC().Format(time.RFC3339), newVersion, payload.ID, payload.Version)
+	newVersion, err := a.movePageAtomic(payload.ID, payload.ParentID, payload.Version)
 	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": "db error"})
-		return
-	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
-		writeJSON(w, 409, map[string]string{"error": "version conflict"})
+		msg := err.Error()
+		switch msg {
+		case "not found", "parent not found":
+			writeJSON(w, 404, map[string]string{"error": msg})
+		case "version conflict":
+			writeJSON(w, 409, map[string]string{"error": msg})
+		case "self parent", "circular":
+			writeJSON(w, 400, map[string]string{"error": msg})
+		default:
+			writeJSON(w, 500, map[string]string{"error": msg})
+		}
 		return
 	}
 	writeJSON(w, 200, map[string]any{"id": payload.ID, "parentId": payload.ParentID, "version": newVersion})
 }
+
 func (a *AppContext) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
