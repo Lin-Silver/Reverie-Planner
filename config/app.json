@@ -1,0 +1,12 @@
+{
+  "appName": "Reverie Planner",
+  "version": "0.1.0",
+  "port": 8765,
+  "host": "127.0.0.1",
+  "defaultProject": "Product Launch",
+  "theme": "dark",
+  "features": {
+    "aiEnabled": true,
+    "localOnly": true
+  }
+}

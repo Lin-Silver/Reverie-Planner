@@ -1,0 +1,36 @@
+# Node / frontend
+src/frontend/node_modules/
+src/frontend/dist/
+src/frontend/.vite/
+
+# Go build outputs
+runtime/*.exe
+**/*.exe
+**/*.test
+
+# Local runtime data
+config/*.local.json
+config/*.secret.json
+config/*.bak
+config/*.env
+data/*.db
+data/*.sqlite*
+logs/*
+logs/*.log
+logs/*.txt
+runtime/*.log
+**/.env
+**/*.pem
+**/*.key
+**/*.crt
+attachments/
+user-uploads/
+workspace-attachments/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# GitHub workflow artifacts
+*.tmp

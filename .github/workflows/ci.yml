@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Build frontend
+        run: |
+          cd src/frontend
+          npm install
+          npm run build
+      - name: Build backend
+        run: |
+          cd src/backend
+          go build -o ../..\runtime\ReveriePlanner.exe .
