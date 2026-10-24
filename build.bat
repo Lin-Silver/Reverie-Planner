@@ -1,5 +1,6 @@
 @echo off
 setlocal
+set "RESULT=0"
 set ROOT=%~dp0
 set FRONTEND_DIR=%ROOT%src\frontend
 set BACKEND_DIR=%ROOT%src\backend
@@ -18,16 +19,16 @@ if exist package-lock.json (
   echo package-lock.json was not found; installing dependencies and generating a lockfile...
   call npm install --no-audit --no-fund
 )
-if errorlevel 1 exit /b 1
+if errorlevel 1 goto command_failed
 call npm run build
-if errorlevel 1 exit /b 1
+if errorlevel 1 goto command_failed
 
 cd /d "%BACKEND_DIR%"
 go build -o "%OUTPUT_DIR%\ReveriePlanner.exe" .
-if errorlevel 1 exit /b 1
+if errorlevel 1 goto command_failed
 
 echo Build complete.
-exit /b 0
+goto finish
 
 :missing_source
 echo.
@@ -37,4 +38,17 @@ echo To rebuild from source, download or clone the full source project, includin
 echo   go.mod
 echo   src\backend\*.go
 echo   src\frontend\package.json
-exit /b 2
+set "RESULT=2"
+goto finish
+
+:command_failed
+set "RESULT=%ERRORLEVEL%"
+
+:finish
+if /i "%CI%"=="true" goto done
+if /i "%REVERIE_NO_PAUSE%"=="1" goto done
+echo.
+pause
+
+:done
+exit /b %RESULT%

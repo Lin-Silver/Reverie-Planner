@@ -68,6 +68,7 @@ jobs:
             config/providers.example.json
             src/frontend/dist/
             README.md
+            build.bat
             start.bat
             stop.bat
             scripts/start.ps1

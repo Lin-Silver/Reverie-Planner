@@ -2,4 +2,10 @@
 setlocal
 set "APP_ROOT=%~dp0"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%APP_ROOT%scripts\stop.ps1"
-exit /b %errorlevel%
+set "RESULT=%ERRORLEVEL%"
+if /i "%CI%"=="true" goto done
+if /i "%REVERIE_NO_PAUSE%"=="1" goto done
+echo.
+pause
+:done
+exit /b %RESULT%
