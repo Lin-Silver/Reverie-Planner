@@ -22,3 +22,10 @@
 - Tests: TestPageMoveAtomicAndCyclePrevention, TestPageUpdateConflict.
 - E2E: 6 tests passing (added child page + Ctrl+K).
 - CI: pass.
+
+## Update 6001f8a
+- Atomic page move endpoint with cycle prevention.
+- Unified parent validation on POST/PUT/move.
+- Conflict retry with version refresh.
+- E2E 6 tests, backend 2 new tests.
+- CI: pass.
