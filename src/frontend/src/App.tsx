@@ -90,8 +90,10 @@ export default function App() {
       if ((e as Error).message.includes('version conflict') && pageId) {
         try {
           const latest = await apiFetch<Page>(`/api/pages?id=${pageId}`)
-          if (pageEditorRef.current?.id === pageId) pageEditorRef.current = latest
-          setPageEditor((cur) => (cur?.id === pageId ? latest : cur))
+          if (pageEditorRef.current?.id === pageId) {
+            pageEditorRef.current.version = latest.version
+            // keep local content but update base; notify conflict
+          }
         } catch {}
       }
       throw e
@@ -249,11 +251,18 @@ export default function App() {
     } catch (e) { setError((e as Error).message) }
   }
 
-  const [iconTarget, setIconTarget] = useState<Page | null>(null)
+  const [expandedPages, setExpandedPages] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('reverie.expanded') || '[]')) } catch { return new Set() }
+  })
+  useEffect(() => { localStorage.setItem('reverie.expanded', JSON.stringify([...expandedPages])) }, [expandedPages])
+  const toggleExpanded = (id: string) => setExpandedPages((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const [iconDraft, setIconDraft] = useState('')
+  const [iconTarget, setIconTarget] = useState<Page | null>(null)
   const [cmdOpen, setCmdOpen] = useState(false)
   const unreadCount = notifications.filter((n) => !n.read).length
+  const [cmdIndex, setCmdIndex] = useState(0)
   const [cmdQuery, setCmdQuery] = useState('')
+  useEffect(() => { setCmdIndex(0) }, [cmdQuery])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setCmdOpen(true) }
@@ -268,6 +277,9 @@ export default function App() {
     pages.forEach((p) => { if (!q || p.title.toLowerCase().includes(q)) items.push({ label: `📄 ${p.title}`, action: () => { setSelectedPage(p.id); openPageEditor(p); setCmdOpen(false) } }) })
     projects.forEach((p) => { if (!q || p.name.toLowerCase().includes(q)) items.push({ label: `📁 ${p.name}`, action: () => { setView('projects'); setCmdOpen(false) } }) })
     tasks.forEach((t) => { if (!q || t.title.toLowerCase().includes(q)) items.push({ label: `✅ ${t.title}`, action: () => { openTaskEditor(t); setCmdOpen(false) } }) })
+    if (q) {
+      items.unshift({ label: `➕ Create page "${cmdQuery}"`, action: () => { apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title: cmdQuery, workspace: true, createdBy: 'You' }) }).then((p) => { refresh(); setSelectedPage(p.id); openPageEditor(p); setCmdOpen(false) }).catch((e) => setError((e as Error).message)) } })
+    }
     return items.slice(0, 20)
   }, [cmdQuery, pages, projects, tasks, openTaskEditor])
 
@@ -294,16 +306,37 @@ export default function App() {
       {(() => {
         const roots = pages.filter((p) => p.workspace && !p.parentId)
         const childrenOf = (pid: string) => pages.filter((p) => p.parentId === pid)
-        const renderNode = (p: Page, depth: number): any => (
-          <div key={p.id}>
-            <div className={`tree-item ${selectedPage === p.id ? 'active' : ''}`} style={{ paddingLeft: 8 + depth * 12 }} onClick={() => { setSelectedPage(p.id); openPageEditor(p) }}>
-              <span>{childrenOf(p.id).length > 0 ? '▾' : '📄'}</span>
-              <span style={{ marginRight: 4 }}>{p.icon || '📄'}</span>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
+        const isDescendant = (ancestor: string, target: string): boolean => {
+          const kids = childrenOf(ancestor)
+          if (kids.some((k) => k.id === target)) return true
+          return kids.some((k) => isDescendant(k.id, target))
+        }
+        const renderNode = (p: Page, depth: number): any => {
+          const kids = childrenOf(p.id)
+          const expanded = expandedPages.has(p.id)
+          return (
+            <div key={p.id}>
+              <div className={`tree-item ${selectedPage === p.id ? 'active' : ''}`} style={{ paddingLeft: 8 + depth * 12 }}
+                draggable
+                onDragStart={(e) => { e.dataTransfer.setData('text/plain', p.id) }}
+                onDragOver={(e) => { e.preventDefault() }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const draggedId = e.dataTransfer.getData('text/plain')
+                  if (!draggedId || draggedId === p.id) return
+                  if (isDescendant(draggedId, p.id)) return
+                  apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ id: draggedId, parentId: p.id, title: pages.find((x) => x.id === draggedId)?.title || 'Untitled', version: pages.find((x) => x.id === draggedId)?.version }) }).then(() => refresh()).catch((err) => setError((err as Error).message))
+                }}
+                onClick={() => { setSelectedPage(p.id); openPageEditor(p) }}>
+                <span onClick={(e) => { e.stopPropagation(); toggleExpanded(p.id) }} style={{ cursor: 'pointer', width: 12, display: 'inline-block' }}>{kids.length > 0 ? (expanded ? '▾' : '▸') : '·'}</span>
+                <span style={{ marginRight: 4 }}>{p.icon || '📄'}</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
+                <button className="btn" style={{ padding: '0 4px', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); apiFetch('/api/pages', { method: 'POST', body: JSON.stringify({ title: 'Untitled', parentId: p.id, workspace: true, createdBy: 'You' }) }).then(() => refresh()).catch((err) => setError((err as Error).message)) }}>+</button>
+              </div>
+              {expanded && kids.map((c) => renderNode(c, depth + 1))}
             </div>
-            {childrenOf(p.id).map((c) => renderNode(c, depth + 1))}
-          </div>
-        )
+          )
+        }
         return roots.map((p) => renderNode(p, 0))
       })()}
       <div className="nav-section">AI</div>
@@ -344,7 +377,14 @@ export default function App() {
   if (view === 'page') return (
       <div className="page-wrap">
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
-          <button className="btn" onClick={() => setView('home')}>← Back</button>
+          <div className="breadcrumb" style={{ color: 'var(--muted)', fontSize: 13 }}>
+            {(() => {
+              const path: Page[] = []
+              let cur = pageEditor
+              while (cur) { path.unshift(cur); cur = pages.find((p) => p.id === cur?.parentId) || null }
+              return path.map((p, i) => <span key={p.id}>{i > 0 && ' / '}{p.title}</span>)
+            })()}
+          </div>
           <div className="row">
             {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
           </div>
@@ -359,6 +399,13 @@ export default function App() {
       theme={theme}
       onSave={savePageContent}
       onContentChange={(c) => setPageDraft((d) => ({ ...d, content: c }))}
+      onReload={async () => {
+        try {
+          const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
+          pageEditorRef.current = latest
+          setPageEditor(latest)
+        } catch (e) { setError((e as Error).message) }
+      }}
       onStatus={() => {}}
     />
   )}
@@ -636,10 +683,18 @@ export default function App() {
       )}
       {cmdOpen && (
         <div className="modal-backdrop" onClick={() => setCmdOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
-            <input className="input" style={{ width: '100%', marginBottom: 8 }} autoFocus placeholder="Search pages, projects, issues..." value={cmdQuery} onChange={(e) => setCmdQuery(e.target.value)} />
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 480 }} onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setCmdIndex((i) => Math.min(i + 1, cmdResults.length - 1)) }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setCmdIndex((i) => Math.max(i - 1, 0)) }
+            else if (e.key === 'Enter') { e.preventDefault(); cmdResults[cmdIndex]?.action() }
+          }}>
+            <input className="input" style={{ width: '100%', marginBottom: 8 }} autoFocus placeholder="Search pages, projects, issues..." value={cmdQuery} onChange={(e) => setCmdQuery(e.target.value)} onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setCmdIndex((i) => Math.min(i + 1, cmdResults.length - 1)) }
+              else if (e.key === 'ArrowUp') { e.preventDefault(); setCmdIndex((i) => Math.max(i - 1, 0)) }
+              else if (e.key === 'Enter') { e.preventDefault(); cmdResults[cmdIndex]?.action() }
+            }} />
             <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-              {cmdResults.map((r, i) => <div key={i} className="tree-item" onClick={r.action}>{r.label}</div>)}
+              {cmdResults.map((r, i) => <div key={i} className="tree-item" style={{ background: i === cmdIndex ? 'var(--hover)' : 'transparent' }} onClick={r.action}>{r.label}</div>)}
               {cmdResults.length === 0 && <div className="empty">No results</div>}
             </div>
           </div>

@@ -4,13 +4,14 @@ import { BlockNoteView } from '@blocknote/mantine'
 import '@blocknote/mantine/style.css'
 import type { Block } from '@blocknote/core'
 
-type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
+type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error' | 'conflict'
 type Props = {
   pageId: string
   initialContent: string
   theme: 'light' | 'dark'
   onSave: (pageId: string, content: string) => Promise<void>
   onContentChange?: (content: string) => void
+  onReload: () => Promise<void>
   onStatus: (s: SaveStatus) => void
 }
 
@@ -23,7 +24,7 @@ function parseBlocks(content: string): Block[] | undefined {
   return [{ type: 'paragraph', content: [{ type: 'text', text: content, styles: {} }] } as Block]
 }
 
-export default function PageEditor({ pageId, initialContent, theme, onSave, onContentChange, onStatus }: Props) {
+export default function PageEditor({ pageId, initialContent, theme, onSave, onContentChange, onReload, onStatus }: Props) {
   const blocks = useMemo(() => parseBlocks(initialContent), [initialContent])
   const editor = useCreateBlockNote({ initialContent: blocks })
   const latestReq = useRef(0)
@@ -49,13 +50,17 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
         updateStatus('saved')
         pendingContent.current = null
       }
-    } catch {
+    } catch (e) {
       if (reqId === latestReq.current) {
-        updateStatus('error')
-        pendingContent.current = content
-        setTimeout(() => {
-          if (pendingContent.current === content) doSaveRef.current(content)
-        }, 3000)
+        if ((e as Error).message.includes('version conflict')) {
+          updateStatus('conflict')
+        } else {
+          updateStatus('error')
+          pendingContent.current = content
+          setTimeout(() => {
+            if (pendingContent.current === content) doSaveRef.current(content)
+          }, 3000)
+        }
       }
     }
   }, [updateStatus])
@@ -106,8 +111,14 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
   return (
     <div>
       <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
-        Status: {status === 'error' ? 'Save failed (retrying…)' : status}
+        Status: {status === 'error' ? 'Save failed (retrying…)' : status === 'conflict' ? 'Version conflict' : status}
       </div>
+      {status === 'conflict' && (
+        <div className="row" style={{ marginBottom: 8, gap: 8 }}>
+          <button className="btn" onClick={async () => { await onReload(); }}>Reload latest</button>
+          <button className="btn primary" onClick={() => { pendingContent.current = JSON.stringify(editor.document); doSave(JSON.stringify(editor.document)) }}>Retry my changes</button>
+        </div>
+      )}
       <BlockNoteView editor={editor} theme={theme} />
     </div>
   )
