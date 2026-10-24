@@ -35,3 +35,9 @@
 - Atomic move in transaction.
 - Conflict UI with Reload/Retry.
 - E2E 6 tests, CI pass.
+
+## Update bc8f8d0
+- True BlockNote reload via remount (key includes reloadToken).
+- Local draft discarded on reload (pendingContent cleared).
+- Retry preserves remote metadata (title/icon/parent).
+- E2E 6 tests, CI pass.
