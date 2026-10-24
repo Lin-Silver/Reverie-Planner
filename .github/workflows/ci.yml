@@ -18,16 +18,11 @@ jobs:
           go-version: '1.24'
       - name: Run backend tests
         run: go test ./...
-      - name: Build and lint frontend
-        run: |
-          cd src/frontend
-          npm ci
-          npm run lint
-          npm run build
-      - name: Build Windows backend
-        run: |
-          cd src/backend
-          go build -o ..\..\runtime\ReveriePlanner.exe .
+      - name: Build app with the Windows build script
+        run: .\build.bat
+      - name: Lint frontend
+        run: npm run lint
+        working-directory: src/frontend
       - name: Install Playwright browser
         run: npx playwright install chromium
         working-directory: src/frontend
@@ -73,7 +68,6 @@ jobs:
             config/providers.example.json
             src/frontend/dist/
             README.md
-            build.bat
             start.bat
             stop.bat
             scripts/start.ps1
