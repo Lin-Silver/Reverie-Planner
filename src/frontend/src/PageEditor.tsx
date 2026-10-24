@@ -9,9 +9,11 @@ type Props = {
   pageId: string
   initialContent: string
   theme: 'light' | 'dark'
+  reloadToken: number
   onSave: (pageId: string, content: string) => Promise<void>
   onContentChange?: (content: string) => void
   onReload: () => Promise<void>
+  onRetry: (content: string) => Promise<void>
   onStatus: (s: SaveStatus) => void
 }
 
@@ -24,7 +26,7 @@ function parseBlocks(content: string): Block[] | undefined {
   return [{ type: 'paragraph', content: [{ type: 'text', text: content, styles: {} }] } as Block]
 }
 
-export default function PageEditor({ pageId, initialContent, theme, onSave, onContentChange, onReload, onStatus }: Props) {
+export default function PageEditor({ pageId, initialContent, theme, reloadToken, onSave, onContentChange, onReload, onRetry, onStatus }: Props) {
   const blocks = useMemo(() => parseBlocks(initialContent), [initialContent])
   const editor = useCreateBlockNote({ initialContent: blocks })
   const latestReq = useRef(0)
@@ -34,6 +36,14 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
   const doSaveRef = useRef<(c: string) => Promise<void>>(async () => {})
   const [status, setStatus] = useState<SaveStatus>('saved')
 
+  const discardRef = useRef(false)
+  useEffect(() => {
+    discardRef.current = true
+    if (timer.current) clearTimeout(timer.current)
+    pendingContent.current = null
+    const t = setTimeout(() => { discardRef.current = false }, 0)
+    return () => clearTimeout(t)
+  }, [reloadToken])
   useEffect(() => { onSaveRef.current = onSave }, [onSave])
 
   const updateStatus = useCallback((s: SaveStatus) => {
@@ -92,9 +102,10 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
   useEffect(() => {
     return () => {
       if (timer.current) clearTimeout(timer.current)
-      if (pendingContent.current) {
+      if (pendingContent.current && !discardRef.current) {
         doSaveRef.current(pendingContent.current)
       }
+      pendingContent.current = null
     }
   }, [])
 
@@ -116,7 +127,7 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
       {status === 'conflict' && (
         <div className="row" style={{ marginBottom: 8, gap: 8 }}>
           <button className="btn" onClick={async () => { await onReload(); }}>Reload latest</button>
-          <button className="btn primary" onClick={() => { pendingContent.current = JSON.stringify(editor.document); doSave(JSON.stringify(editor.document)) }}>Retry my changes</button>
+          <button className="btn primary" onClick={() => { const c = JSON.stringify(editor.document); onRetry(c).then(() => { updateStatus('saved'); pendingContent.current = null }).catch(() => updateStatus('error')) }}>Retry my changes</button>
         </div>
       )}
       <BlockNoteView editor={editor} theme={theme} />

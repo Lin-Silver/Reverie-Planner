@@ -275,6 +275,7 @@ export default function App() {
   const toggleExpanded = (id: string) => setExpandedPages((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const [iconDraft, setIconDraft] = useState('')
   const [iconTarget, setIconTarget] = useState<Page | null>(null)
+  const [reloadToken, setReloadToken] = useState(0)
   const [cmdOpen, setCmdOpen] = useState(false)
   const unreadCount = notifications.filter((n) => !n.read).length
   const [cmdIndex, setCmdIndex] = useState(0)
@@ -411,18 +412,30 @@ export default function App() {
         <input className="page-title" value={pageDraft.title} onChange={(e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor) savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch(() => {}) }} placeholder="Untitled" />
   {pageEditor && (
     <PageEditor
-      key={pageEditor.id}
+      key={`${pageEditor.id}-${reloadToken}`}
       pageId={pageEditor.id}
       initialContent={pageEditor.content}
       theme={theme}
+      reloadToken={reloadToken}
       onSave={savePageContent}
       onContentChange={(c) => setPageDraft((d) => ({ ...d, content: c }))}
       onReload={async () => {
         try {
           const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
+          pageVersions.current.set(pageEditor.id, latest.version || 1)
           pageEditorRef.current = latest
           setPageEditor(latest)
+          setPageDraft({ title: latest.title, icon: latest.icon ?? '', content: latest.content })
+          setReloadToken((t) => t + 1)
         } catch (e) { setError((e as Error).message) }
+      }}
+      onRetry={async (content) => {
+        try {
+          const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
+          await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...latest, content, version: latest.version }) })
+          pageVersions.current.set(pageEditor.id, (latest.version || 0) + 1)
+          if (pageEditorRef.current?.id === pageEditor.id) pageEditorRef.current.version = (latest.version || 0) + 1
+        } catch (e) { setError((e as Error).message); throw e }
       }}
       onStatus={() => {}}
     />
