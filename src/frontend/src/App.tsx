@@ -325,7 +325,8 @@ export default function App() {
                   const draggedId = e.dataTransfer.getData('text/plain')
                   if (!draggedId || draggedId === p.id) return
                   if (isDescendant(draggedId, p.id)) return
-                  apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ id: draggedId, parentId: p.id, title: pages.find((x) => x.id === draggedId)?.title || 'Untitled', version: pages.find((x) => x.id === draggedId)?.version }) }).then(() => refresh()).catch((err) => setError((err as Error).message))
+                  const dragged = pages.find((x) => x.id === draggedId)
+                  apiFetch('/api/pages/move', { method: 'POST', body: JSON.stringify({ id: draggedId, parentId: p.id, version: dragged?.version }) }).then(() => refresh()).catch((err) => setError((err as Error).message))
                 }}
                 onClick={() => { setSelectedPage(p.id); openPageEditor(p) }}>
                 <span onClick={(e) => { e.stopPropagation(); toggleExpanded(p.id) }} style={{ cursor: 'pointer', width: 12, display: 'inline-block' }}>{kids.length > 0 ? (expanded ? '▾' : '▸') : '·'}</span>
@@ -683,11 +684,7 @@ export default function App() {
       )}
       {cmdOpen && (
         <div className="modal-backdrop" onClick={() => setCmdOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 480 }} onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') { e.preventDefault(); setCmdIndex((i) => Math.min(i + 1, cmdResults.length - 1)) }
-            else if (e.key === 'ArrowUp') { e.preventDefault(); setCmdIndex((i) => Math.max(i - 1, 0)) }
-            else if (e.key === 'Enter') { e.preventDefault(); cmdResults[cmdIndex]?.action() }
-          }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
             <input className="input" style={{ width: '100%', marginBottom: 8 }} autoFocus placeholder="Search pages, projects, issues..." value={cmdQuery} onChange={(e) => setCmdQuery(e.target.value)} onKeyDown={(e) => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setCmdIndex((i) => Math.min(i + 1, cmdResults.length - 1)) }
               else if (e.key === 'ArrowUp') { e.preventDefault(); setCmdIndex((i) => Math.max(i - 1, 0)) }

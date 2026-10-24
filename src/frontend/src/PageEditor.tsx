@@ -63,7 +63,7 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
         }
       }
     }
-  }, [updateStatus])
+  }, [updateStatus, pageId])
 
   const scheduleSave = useCallback((content: string) => {
     pendingContent.current = content
@@ -73,7 +73,7 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
     timer.current = setTimeout(() => {
       doSave(content)
     }, 1000)
-  }, [doSave, updateStatus])
+  }, [doSave, updateStatus, onContentChange])
 
   const scheduleSaveRef = useRef(scheduleSave)
   useEffect(() => {
@@ -87,7 +87,7 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
       scheduleSaveRef.current(json)
     })
     return () => { unsub() }
-  }, [editor])
+  }, [editor, pageId])
 
   useEffect(() => {
     return () => {
@@ -106,7 +106,7 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
     }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
-  }, [])
+  }, [pageId])
 
   return (
     <div>

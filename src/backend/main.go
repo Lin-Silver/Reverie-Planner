@@ -223,6 +223,7 @@ func main() {
 	mux.HandleFunc("/api/states", ctx.handleStates)
 	mux.HandleFunc("/api/cycles", ctx.handleCycles)
 	mux.HandleFunc("/api/modules", ctx.handleModules)
+	mux.HandleFunc("/api/pages/move", ctx.handlePageMove)
 	mux.HandleFunc("/api/pages", ctx.handlePages)
 	mux.HandleFunc("/api/comments", ctx.handleComments)
 	mux.HandleFunc("/api/activity", ctx.handleActivity)
