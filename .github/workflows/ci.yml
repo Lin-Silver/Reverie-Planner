@@ -29,6 +29,9 @@ jobs:
       - name: Run browser end-to-end tests
         run: npm run test:e2e
         working-directory: src/frontend
+      - name: Verify launcher rejects unrelated healthy services
+        shell: pwsh
+        run: .\scripts\test-start-conflict.ps1
       - name: Verify Windows start and graceful stop
         shell: pwsh
         run: |
@@ -41,14 +44,29 @@ jobs:
             for ($i = 0; $i -lt 60; $i++) {
               if (Test-Path $serviceFile) {
                 try {
-                  Invoke-WebRequest -Uri 'http://127.0.0.1:8765/api/health' -UseBasicParsing -TimeoutSec 2 | Out-Null
-                  $ready = $true
-                  break
+                  $metadata = Get-Content -Raw $serviceFile | ConvertFrom-Json
+                  $owner = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue |
+                    Where-Object { $_.OwningProcess -eq [int]$metadata.pid }
+                  $health = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/api/health' -UseBasicParsing -TimeoutSec 2
+                  $frontend = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/' -UseBasicParsing -TimeoutSec 2
+                  if ($owner -and $health.Content -match '"status":"ok"' -and
+                      $frontend.Content -match '<div id="root">') {
+                    $ready = $true
+                    break
+                  }
                 } catch {}
               }
               Start-Sleep -Seconds 1
             }
             if (-not $ready) { throw 'Windows service did not become ready.' }
+            $firstPid = [int]$metadata.pid
+            $secondStartLog = Join-Path $env:RUNNER_TEMP 'reverie-second-start.log'
+            $secondStart = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'scripts\start.ps1')) -PassThru -Wait -WindowStyle Hidden -RedirectStandardOutput $secondStartLog
+            if ($secondStart.ExitCode -ne 0 -or (Get-Content -Raw $secondStartLog) -notmatch 'already running') {
+              throw 'A second start did not recognize the existing owned instance.'
+            }
+            $metadata = Get-Content -Raw $serviceFile | ConvertFrom-Json
+            if ([int]$metadata.pid -ne $firstPid) { throw 'A second start replaced the owned service metadata.' }
             & (Join-Path $root 'stop.bat')
             if ($LASTEXITCODE -ne 0) { throw 'Graceful stop script failed.' }
             $start.WaitForExit(15000)
@@ -56,6 +74,9 @@ jobs:
           } finally {
             if (Test-Path (Join-Path $root 'runtime\service.json')) {
               & (Join-Path $root 'stop.bat')
+            }
+            if (Test-Path (Join-Path $env:RUNNER_TEMP 'reverie-second-start.log')) {
+              Remove-Item (Join-Path $env:RUNNER_TEMP 'reverie-second-start.log') -Force
             }
           }
       - name: Package portable Windows app
