@@ -121,10 +121,20 @@ function App() {
   const [taskEditorOpen, setTaskEditorOpen] = useState(false)
   const [projectFilter, setProjectFilter] = useState<'all' | 'active' | 'planning' | 'paused' | 'archived'>('all')
   const [search, setSearch] = useState('')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => { try { return localStorage.getItem('reverie.sidebar.collapsed') === '1' } catch { return false } })
+  const [dropTarget, setDropTarget] = useState<TaskStatus | ''>('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const controllerRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && taskEditorOpen) setTaskEditorOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [taskEditorOpen])
   const draggedTaskId = useRef('')
 
   const refresh = async () => {
@@ -153,6 +163,10 @@ function App() {
   useEffect(() => {
     void refresh()
   }, [])
+
+  useEffect(() => {
+    try { localStorage.setItem('reverie.sidebar.collapsed', sidebarCollapsed ? '1' : '0') } catch {}
+  }, [sidebarCollapsed])
 
   const selectedProjectData = projects.find((project) => project.id === selectedProject)
   const visibleProjects = useMemo(() => {
@@ -276,12 +290,17 @@ function App() {
     event.dataTransfer.effectAllowed = 'move'
   }
 
+  const endDrag = () => {
+    draggedTaskId.current = ''
+    setDropTarget('')
+  }
+
   const dropOnColumn = (event: DragEvent<HTMLDivElement>, status: TaskStatus) => {
     event.preventDefault()
     const taskId = event.dataTransfer.getData('text/plain') || draggedTaskId.current
     const task = tasks.find((item) => item.id === taskId)
     if (task) void moveTask(task, status)
-    draggedTaskId.current = ''
+    endDrag()
   }
 
   const editProvider = (provider?: Provider) => {
@@ -434,13 +453,16 @@ function App() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <aside className={sidebarCollapsed ? 'sidebar collapsed' : 'sidebar'}>
         <div className="brand-block">
           <div className="brand-mark">R</div>
-          <div>
+          {!sidebarCollapsed && <div>
             <p className="eyebrow">本地工作区</p>
             <h1>Reverie Planner</h1>
-          </div>
+          </div>}
+          <button type="button" className="sidebar-toggle" aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed((value) => !value)}>
+            {sidebarCollapsed ? '›' : '‹'}
+          </button>
         </div>
         <nav className="nav-section" aria-label="主导航">
           {([
@@ -450,14 +472,14 @@ function App() {
             ['assistant', 'AI 助手'],
             ['settings', '模型设置'],
           ] as [View, string][]).map(([id, label]) => (
-            <button key={id} type="button" className={view === id ? 'nav-item active' : 'nav-item'} onClick={() => setView(id)}>
-              <span>{label}</span>
+            <button key={id} type="button" aria-label={label} className={view === id ? 'nav-item active' : 'nav-item'} onClick={() => setView(id)}>
+              {!sidebarCollapsed && <span>{label}</span>}
               {id === 'projects' && <strong>{projects.filter((item) => item.status !== 'archived').length}</strong>}
               {id === 'assistant' && approvals.length > 0 && <strong>{approvals.length}</strong>}
             </button>
           ))}
         </nav>
-        <div className="sidebar-panel">
+        {!sidebarCollapsed && <div className="sidebar-panel">
           <div className="panel-head"><span>项目快捷入口</span><button type="button" className="ghost-btn" onClick={() => { openProjectEditor(); setView('projects') }}>新建</button></div>
           <div className="project-list">
             <button type="button" className={selectedProject === 'all' ? 'project-pill active' : 'project-pill'} onClick={() => setSelectedProject('all')}>
@@ -469,10 +491,10 @@ function App() {
               </button>
             ))}
           </div>
-        </div>
+        </div>}
         <div className="sidebar-foot">
           <span className="status-indicator" />
-          <span>本机 SQLite 工作区</span>
+          {!sidebarCollapsed && <span>本机 SQLite 工作区</span>}
         </div>
       </aside>
 
@@ -505,7 +527,7 @@ function App() {
               <div className="board-panel">
                 <div className="panel-header"><div><p className="eyebrow">执行状态</p><h3>任务流</h3></div><button type="button" className="text-button" onClick={() => setView('board')}>打开看板 →</button></div>
                 <div className="board">
-                  {statusColumns.map((column) => <TaskColumn key={column.id} column={column} tasks={visibleTasks.filter((task) => task.status === column.id)} projects={projects} onEdit={openTaskEditor} onDelete={removeTask} onDrag={beginDrag} onDrop={dropOnColumn} onStatus={moveTask} />)}
+                  {statusColumns.map((column) => <TaskColumn key={column.id} column={column} tasks={visibleTasks.filter((task) => task.status === column.id)} projects={projects} onEdit={openTaskEditor} onDelete={removeTask} onDrag={beginDrag} onDragEnd={endDrag} onDrop={dropOnColumn} onDragEnter={(status) => setDropTarget(status)} dropTarget={dropTarget} onStatus={moveTask} />)}
                 </div>
               </div>
               <aside className="side-panel">
@@ -573,7 +595,7 @@ function App() {
             <div className="panel-header"><div><p className="eyebrow">拖放任务卡片以更新状态</p><h3>{visibleTasks.length} 个任务</h3></div>
               <select aria-label="选择项目" value={selectedProject} onChange={(event) => setSelectedProject(event.target.value)}><option value="all">全部项目</option>{projects.filter((project) => project.status !== 'archived').map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
             </div>
-            <div className="board board-wide">{statusColumns.map((column) => <TaskColumn key={column.id} column={column} tasks={visibleTasks.filter((task) => task.status === column.id)} projects={projects} onEdit={openTaskEditor} onDelete={removeTask} onDrag={beginDrag} onDrop={dropOnColumn} onStatus={moveTask} />)}</div>
+            <div className="board board-wide">{statusColumns.map((column) => <TaskColumn key={column.id} column={column} tasks={visibleTasks.filter((task) => task.status === column.id)} projects={projects} onEdit={openTaskEditor} onDelete={removeTask} onDrag={beginDrag} onDragEnd={endDrag} onDrop={dropOnColumn} onDragEnter={(status) => setDropTarget(status)} dropTarget={dropTarget} onStatus={moveTask} />)}</div>
             {taskEditorOpen && (
               <div className="modal-backdrop" role="presentation" onClick={() => setTaskEditorOpen(false)}>
                 <div className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="task-dialog-title" onClick={(event) => event.stopPropagation()}>
@@ -723,7 +745,10 @@ function TaskColumn({
   onEdit,
   onDelete,
   onDrag,
+  onDragEnd,
   onDrop,
+  onDragEnter,
+  dropTarget,
   onStatus,
 }: {
   column: { id: TaskStatus; label: string }
@@ -732,13 +757,16 @@ function TaskColumn({
   onEdit: (task: Task) => void
   onDelete: (task: Task) => void
   onDrag: (event: DragEvent<HTMLElement>, taskId: string) => void
+  onDragEnd: () => void
   onDrop: (event: DragEvent<HTMLDivElement>, status: TaskStatus) => void
+  onDragEnter: (status: TaskStatus) => void
+  dropTarget: TaskStatus | ''
   onStatus: (task: Task, status: TaskStatus) => void
 }) {
-  return <div className="column" onDragOver={(event) => event.preventDefault()} onDrop={(event) => onDrop(event, column.id)}>
+  return <div className={dropTarget === column.id ? 'column drag-over' : 'column'} onDragOver={(event) => event.preventDefault()} onDragEnter={() => onDragEnter(column.id)} onDrop={(event) => onDrop(event, column.id)}>
     <div className="column-header"><span>{column.label}</span><strong>{tasks.length}</strong></div>
     <div className="task-stack">
-      {tasks.map((task) => <article key={task.id} className="task-card" draggable onDragStart={(event) => onDrag(event, task.id)}>
+      {tasks.map((task) => <article key={task.id} className="task-card" draggable onDragStart={(event) => onDrag(event, task.id)} onDragEnd={onDragEnd}>
         <div className="task-topline"><span className={`priority priority-${task.priority}`}>{task.priority}</span><span className="task-project">{projects.find((project) => project.id === task.projectId)?.name ?? '项目'}</span></div>
         <h4>{task.title}</h4><p>{task.description || '暂无描述'}</p>
         <div className="task-meta"><span>{task.assignee || '未分配'}</span><span>{task.dueDate || '无截止日期'}</span></div>
@@ -750,6 +778,7 @@ function TaskColumn({
     </div>
   </div>
 }
+
 
 function TaskEditor({
   draft,
