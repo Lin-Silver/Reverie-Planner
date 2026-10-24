@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PageEditor from './PageEditor'
 import type { FormEvent } from 'react'
 import './App.css'
@@ -152,11 +152,11 @@ export default function App() {
     try { await apiFetch('/api/projects', { method: 'DELETE', body: JSON.stringify({ id }) }); await refresh() } catch (e) { setError((e as Error).message) }
   }
 
-  const openTaskEditor = (task?: Task) => {
+  const openTaskEditor = useCallback((task?: Task) => {
     setEditingTask(task ?? null)
     setTaskDraft(task ? { projectId: task.projectId, title: task.title, description: task.description ?? '', status: task.status, priority: task.priority, dueDate: task.dueDate ?? '', assignee: task.assignee ?? '' } : { projectId: projects[0]?.id ?? '', title: '', description: '', status: 'todo', priority: 'medium', dueDate: '', assignee: '' })
     setTaskEditorOpen(true)
-  }
+  }, [projects])
   const saveTask = async (e: FormEvent) => {
     e.preventDefault()
     if (!taskDraft.title.trim()) return
@@ -269,7 +269,7 @@ export default function App() {
     projects.forEach((p) => { if (!q || p.name.toLowerCase().includes(q)) items.push({ label: `📁 ${p.name}`, action: () => { setView('projects'); setCmdOpen(false) } }) })
     tasks.forEach((t) => { if (!q || t.title.toLowerCase().includes(q)) items.push({ label: `✅ ${t.title}`, action: () => { openTaskEditor(t); setCmdOpen(false) } }) })
     return items.slice(0, 20)
-  }, [cmdQuery, pages, projects, tasks])
+  }, [cmdQuery, pages, projects, tasks, openTaskEditor])
 
   const sidebar = (
     <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>

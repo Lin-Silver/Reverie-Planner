@@ -13,8 +13,8 @@ test('collapsible sidebar and task dialog interactions work', async ({ page }) =
 
   await page.locator('.nav-item').filter({ hasText: 'Issues' }).click()
   await page.getByRole('button', { name: '+ New issue' }).click()
-  const dialog = page.getByRole('dialog').or(page.locator('.modal'))
-  await expect(page.locator('.modal')).toBeVisible()
+  const dialog = page.locator('.modal')
+  await expect(dialog).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.locator('.modal')).toHaveCount(0)
 })

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import '@blocknote/mantine/style.css'
@@ -24,75 +24,81 @@ function parseBlocks(content: string): Block[] | undefined {
 export default function PageEditor({ initialContent, theme, onSave, onStatus }: Props) {
   const blocks = useMemo(() => parseBlocks(initialContent), [initialContent])
   const editor = useCreateBlockNote({ initialContent: blocks })
-  const timer = useRef<any>(null)
-  const pendingContent = useRef<string | null>(null)
   const latestReq = useRef(0)
+  const pendingContent = useRef<string | null>(null)
+  const timer = useRef<any>(null)
+  const onSaveRef = useRef(onSave)
+  const doSaveRef = useRef<(c: string) => Promise<void>>(async () => {})
   const [status, setStatus] = useState<SaveStatus>('saved')
 
-  const updateStatus = (s: SaveStatus) => {
+  useEffect(() => { onSaveRef.current = onSave }, [onSave])
+
+  const updateStatus = useCallback((s: SaveStatus) => {
     setStatus(s)
     onStatus(s)
-  }
+  }, [onStatus])
 
-  const doSave = async (content: string) => {
+  const doSave = useCallback(async (content: string) => {
     const reqId = ++latestReq.current
     updateStatus('saving')
     try {
-      await onSave(content)
+      await onSaveRef.current(content)
       if (reqId === latestReq.current) {
         updateStatus('saved')
         pendingContent.current = null
       }
-    } catch (e) {
+    } catch {
       if (reqId === latestReq.current) {
         updateStatus('error')
         pendingContent.current = content
-        // retry after 3s
         setTimeout(() => {
-          if (pendingContent.current === content) doSave(content)
+          if (pendingContent.current === content) doSaveRef.current(content)
         }, 3000)
       }
     }
-  }
+  }, [updateStatus])
 
-  const scheduleSave = (content: string) => {
+  const scheduleSave = useCallback((content: string) => {
     pendingContent.current = content
     updateStatus('unsaved')
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
       doSave(content)
     }, 1000)
-  }
+  }, [doSave, updateStatus])
+
+  const scheduleSaveRef = useRef(scheduleSave)
+  useEffect(() => {
+    scheduleSaveRef.current = scheduleSave
+    doSaveRef.current = doSave
+  }, [scheduleSave, doSave])
 
   useEffect(() => {
     const unsub = editor.onChange(() => {
       const json = JSON.stringify(editor.document)
-      scheduleSave(json)
+      scheduleSaveRef.current(json)
     })
     return () => { unsub() }
   }, [editor])
 
-  // flush pending on unmount
   useEffect(() => {
     return () => {
       if (timer.current) clearTimeout(timer.current)
       if (pendingContent.current) {
-        doSave(pendingContent.current)
+        doSaveRef.current(pendingContent.current)
       }
     }
   }, [])
 
-  // flush on beforeunload
   useEffect(() => {
     const handler = () => {
       if (pendingContent.current) {
-        // best-effort sync
-        try { onSave(pendingContent.current) } catch {}
+        try { onSaveRef.current(pendingContent.current) } catch {}
       }
     }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
-  }, [onSave])
+  }, [])
 
   return (
     <div>

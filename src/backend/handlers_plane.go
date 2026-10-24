@@ -329,24 +329,37 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "id required"})
 			return
 		}
-		// optimistic concurrency
-		var currentVersion int
-		if err := a.DB.QueryRow(`SELECT version FROM pages WHERE id=?`, p.ID).Scan(&currentVersion); err != nil {
+		if p.Version <= 0 {
+			writeJSON(w, 400, map[string]string{"error": "version required"})
+			return
+		}
+		var exists int
+		if err := a.DB.QueryRow(`SELECT COUNT(*) FROM pages WHERE id=?`, p.ID).Scan(&exists); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "db error"})
+			return
+		}
+		if exists == 0 {
 			writeJSON(w, 404, map[string]string{"error": "not found"})
 			return
 		}
-		if p.Version != 0 && p.Version != currentVersion {
-			writeJSON(w, 409, map[string]string{"error": "version conflict"})
-			return
-		}
 		p.UpdatedAt = time.Now().UTC().Truncate(time.Second)
-		p.Version = currentVersion + 1
+		newVersion := p.Version + 1
 		ws := 0
 		if p.Workspace {
 			ws = 1
 		}
-		_, _ = a.DB.Exec(`UPDATE pages SET title=?, icon=?, cover=?, content=?, project_id=?, parent_id=?, workspace=?, updated_at=?, version=? WHERE id=?`,
-			p.Title, nullStr(p.Icon), nullStr(p.Cover), p.Content, nullStr(p.ProjectID), nullStr(p.ParentID), ws, p.UpdatedAt.Format(time.RFC3339), p.Version, p.ID)
+		res, err := a.DB.Exec(`UPDATE pages SET title=?, icon=?, cover=?, content=?, project_id=?, parent_id=?, workspace=?, updated_at=?, version=? WHERE id=? AND version=?`,
+			p.Title, nullStr(p.Icon), nullStr(p.Cover), p.Content, nullStr(p.ProjectID), nullStr(p.ParentID), ws, p.UpdatedAt.Format(time.RFC3339), newVersion, p.ID, p.Version)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "db error"})
+			return
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			writeJSON(w, 409, map[string]string{"error": "version conflict"})
+			return
+		}
+		p.Version = newVersion
 		writeJSON(w, 200, p)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
