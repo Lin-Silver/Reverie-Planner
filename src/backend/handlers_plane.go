@@ -244,12 +244,13 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		id := r.URL.Query().Get("id")
 		if id != "" {
-			row := a.DB.QueryRow(`SELECT id, project_id, workspace, parent_id, title, icon, cover, content, created_by, created_at, updated_at FROM pages WHERE id=?`, id)
+			row := a.DB.QueryRow(`SELECT id, project_id, workspace, parent_id, title, icon, cover, content, created_by, created_at, updated_at, version FROM pages WHERE id=?`, id)
 			var p Page
 			var created, updated string
 			var pid, parent, icon, cover, content, createdBy sqlNullString
 			var ws int
-			if err := row.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &content, &createdBy, &created, &updated); err != nil {
+			var version int
+			if err := row.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &content, &createdBy, &created, &updated, &version); err != nil {
 				writeJSON(w, 404, map[string]string{"error": "not found"})
 				return
 			}
@@ -262,11 +263,12 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 			p.CreatedBy = createdBy.String
 			p.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			p.UpdatedAt, _ = time.Parse(time.RFC3339, updated)
+			p.Version = version
 			writeJSON(w, 200, p)
 			return
 		}
 		projectID := r.URL.Query().Get("projectId")
-		q := `SELECT id, project_id, workspace, parent_id, title, icon, cover, created_by, created_at, updated_at FROM pages`
+		q := `SELECT id, project_id, workspace, parent_id, title, icon, cover, created_by, created_at, updated_at, version FROM pages`
 		args := []any{}
 		if projectID != "" {
 			q += ` WHERE project_id=?`
@@ -283,7 +285,9 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 			var created, updated string
 			var pid, parent, icon, cover, createdBy sqlNullString
 			var ws int
-			_ = rows.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &createdBy, &created, &updated)
+			var version int
+			_ = rows.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &createdBy, &created, &updated, &version)
+			p.Version = version
 			p.ProjectID = pid.String
 			p.Workspace = ws == 1
 			p.ParentID = parent.String
@@ -314,8 +318,9 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 		if p.Workspace {
 			ws = 1
 		}
-		_, _ = a.DB.Exec(`INSERT INTO pages (id, project_id, workspace, parent_id, title, icon, cover, content, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-			p.ID, nullStr(p.ProjectID), ws, nullStr(p.ParentID), p.Title, nullStr(p.Icon), nullStr(p.Cover), p.Content, p.CreatedBy, p.CreatedAt.Format(time.RFC3339), p.UpdatedAt.Format(time.RFC3339))
+		_, _ = a.DB.Exec(`INSERT INTO pages (id, project_id, workspace, parent_id, title, icon, cover, content, created_by, created_at, updated_at, version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+			p.ID, nullStr(p.ProjectID), ws, nullStr(p.ParentID), p.Title, nullStr(p.Icon), nullStr(p.Cover), p.Content, p.CreatedBy, p.CreatedAt.Format(time.RFC3339), p.UpdatedAt.Format(time.RFC3339), 1)
+		p.Version = 1
 		writeJSON(w, 201, p)
 	case http.MethodPut:
 		var p Page
@@ -324,13 +329,24 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "id required"})
 			return
 		}
+		// optimistic concurrency
+		var currentVersion int
+		if err := a.DB.QueryRow(`SELECT version FROM pages WHERE id=?`, p.ID).Scan(&currentVersion); err != nil {
+			writeJSON(w, 404, map[string]string{"error": "not found"})
+			return
+		}
+		if p.Version != 0 && p.Version != currentVersion {
+			writeJSON(w, 409, map[string]string{"error": "version conflict"})
+			return
+		}
 		p.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+		p.Version = currentVersion + 1
 		ws := 0
 		if p.Workspace {
 			ws = 1
 		}
-		_, _ = a.DB.Exec(`UPDATE pages SET title=?, icon=?, cover=?, content=?, project_id=?, parent_id=?, workspace=?, updated_at=? WHERE id=?`,
-			p.Title, nullStr(p.Icon), nullStr(p.Cover), p.Content, nullStr(p.ProjectID), nullStr(p.ParentID), ws, p.UpdatedAt.Format(time.RFC3339), p.ID)
+		_, _ = a.DB.Exec(`UPDATE pages SET title=?, icon=?, cover=?, content=?, project_id=?, parent_id=?, workspace=?, updated_at=?, version=? WHERE id=?`,
+			p.Title, nullStr(p.Icon), nullStr(p.Cover), p.Content, nullStr(p.ProjectID), nullStr(p.ParentID), ws, p.UpdatedAt.Format(time.RFC3339), p.Version, p.ID)
 		writeJSON(w, 200, p)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")

@@ -479,6 +479,7 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 			`CREATE TABLE IF NOT EXISTS views (id TEXT PRIMARY KEY, project_id TEXT, name TEXT NOT NULL, filters TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
 			`CREATE TABLE IF NOT EXISTS intake (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
 		}},
+		{version: 6, statements: []string{`ALTER TABLE pages ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`}},
 	}
 	for _, migration := range migrations {
 		var exists int

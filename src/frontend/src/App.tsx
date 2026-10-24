@@ -12,7 +12,7 @@ type Overview = { projectCount: number; taskCount: number; completedCount: numbe
 type Provider = { id: string; label: string; provider: string; baseURL: string; model: string; temperature: number; maxTokens: number; enabled: boolean; streaming: boolean; toolCalling: boolean; apiKeyConfigured: boolean }
 type TaskDraft = { projectId: string; title: string; description: string; status: TaskStatus; priority: Priority; dueDate: string; assignee: string }
 type ChatMessage = { role: 'user' | 'assistant'; content: string; id: string }
-type Page = { id: string; projectId?: string; workspace: boolean; parentId?: string; title: string; icon?: string; cover?: string; content: string; createdBy: string; createdAt: string; updatedAt: string }
+type Page = { id: string; projectId?: string; workspace: boolean; parentId?: string; title: string; icon?: string; cover?: string; content: string; version?: number; createdBy: string; createdAt: string; updatedAt: string }
 type Cycle = { id: string; projectId: string; name: string; description?: string; startDate?: string; endDate?: string; status: string; createdAt: string }
 type Module = { id: string; projectId: string; name: string; description?: string; status: string; lead?: string; startDate?: string; endDate?: string; createdAt: string }
 type Notification = { id: string; title: string; body?: string; type: string; read: boolean; createdAt: string }
@@ -82,7 +82,20 @@ export default function App() {
   const savePageContent = async (content: string) => {
     const pe = pageEditorRef.current
     if (!pe) return
-    await apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pe, title: pageTitleRef.current, icon: pe.icon, content }) })
+    try {
+      const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pe, title: pageTitleRef.current, icon: pe.icon, content, version: pe.version }) })
+      if (pageEditorRef.current && res.version) pageEditorRef.current.version = res.version
+    } catch (e) {
+      // on conflict, reload latest
+      if ((e as Error).message.includes('version conflict') && pe.id) {
+        try {
+          const latest = await apiFetch<Page>(`/api/pages?id=${pe.id}`)
+          pageEditorRef.current = latest
+          setPageEditor(latest)
+        } catch {}
+      }
+      throw e
+    }
   }
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme) }, [theme])
@@ -310,6 +323,7 @@ export default function App() {
         <input className="page-title" value={pageDraft.title} onChange={(e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor) savePageContent(pageDraft.content || pageEditor.content).catch(() => {}) }} placeholder="Untitled" />
   {pageEditor && (
     <PageEditor
+      key={pageEditor.id}
       initialContent={pageEditor.content}
       theme={theme}
       onSave={savePageContent}

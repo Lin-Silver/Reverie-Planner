@@ -68,6 +68,7 @@ type Page struct {
 	Icon      string    `json:"icon,omitempty"`
 	Cover     string    `json:"cover,omitempty"`
 	Content   string    `json:"content"`
+	Version   int       `json:"version"`
 	CreatedBy string    `json:"createdBy"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
