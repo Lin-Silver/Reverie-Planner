@@ -16,12 +16,65 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-      - name: Build frontend
+      - name: Run backend tests
+        run: go test ./...
+      - name: Build and lint frontend
         run: |
           cd src/frontend
-          npm install
+          npm ci
+          npm run lint
           npm run build
-      - name: Build backend
+      - name: Build Windows backend
         run: |
           cd src/backend
-          go build -o ../..\runtime\ReveriePlanner.exe .
+          go build -o ..\..\runtime\ReveriePlanner.exe .
+      - name: Install Playwright browser
+        run: npx playwright install chromium
+        working-directory: src/frontend
+      - name: Run browser end-to-end tests
+        run: npm run test:e2e
+        working-directory: src/frontend
+      - name: Verify Windows start and graceful stop
+        shell: pwsh
+        run: |
+          $env:REVERIE_NO_BROWSER = '1'
+          $root = $env:GITHUB_WORKSPACE
+          $start = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'scripts\start.ps1')) -PassThru -WindowStyle Hidden
+          try {
+            $serviceFile = Join-Path $root 'runtime\service.json'
+            $ready = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              if (Test-Path $serviceFile) {
+                try {
+                  Invoke-WebRequest -Uri 'http://127.0.0.1:8765/api/health' -UseBasicParsing -TimeoutSec 2 | Out-Null
+                  $ready = $true
+                  break
+                } catch {}
+              }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $ready) { throw 'Windows service did not become ready.' }
+            & (Join-Path $root 'stop.bat')
+            if ($LASTEXITCODE -ne 0) { throw 'Graceful stop script failed.' }
+            $start.WaitForExit(15000)
+            if (-not $start.HasExited) { throw 'Start console did not exit after graceful shutdown.' }
+          } finally {
+            if (Test-Path (Join-Path $root 'runtime\service.json')) {
+              & (Join-Path $root 'stop.bat')
+            }
+          }
+      - name: Package portable Windows app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reverie-Planner-Windows
+          path: |
+            runtime/ReveriePlanner.exe
+            config/app.json
+            config/providers.example.json
+            src/frontend/dist/
+            README.md
+            build.bat
+            start.bat
+            stop.bat
+            scripts/start.ps1
+            scripts/stop.ps1

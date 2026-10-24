@@ -1,16 +1,21 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,19 +40,54 @@ var defaultTasks = []Task{
 }
 
 type AppConfig struct {
-	AppName        string `json:"appName"`
-	Version        string `json:"version"`
-	Port           int    `json:"port"`
-	Host           string `json:"host"`
-	DefaultProject string `json:"defaultProject"`
-	Theme          string `json:"theme"`
-	Features       struct {
+	AppName         string `json:"appName"`
+	Version         string `json:"version"`
+	Port            int    `json:"port"`
+	Host            string `json:"host"`
+	DefaultProject  string `json:"defaultProject"`
+	Theme           string `json:"theme"`
+	DevelopmentMode bool   `json:"-"`
+	Features        struct {
 		AIEnabled bool `json:"aiEnabled"`
 		LocalOnly bool `json:"localOnly"`
 	} `json:"features"`
 }
 
 type AIProvider struct {
+	ID          string  `json:"id"`
+	Label       string  `json:"label"`
+	Provider    string  `json:"provider"`
+	BaseURL     string  `json:"baseURL"`
+	APIKey      string  `json:"-"`
+	Model       string  `json:"model"`
+	Temperature float64 `json:"temperature"`
+	MaxTokens   int     `json:"maxTokens"`
+	Enabled     bool    `json:"enabled"`
+	Streaming   bool    `json:"streaming"`
+	ToolCalling bool    `json:"toolCalling"`
+}
+
+type providerFileEntry struct {
+	AIProvider
+	LegacyAPIKey    string `json:"apiKey"`
+	EncryptedAPIKey string `json:"apiKeyEncrypted,omitempty"`
+}
+
+type providerDTO struct {
+	ID               string  `json:"id"`
+	Label            string  `json:"label"`
+	Provider         string  `json:"provider"`
+	BaseURL          string  `json:"baseURL"`
+	Model            string  `json:"model"`
+	Temperature      float64 `json:"temperature"`
+	MaxTokens        int     `json:"maxTokens"`
+	Enabled          bool    `json:"enabled"`
+	Streaming        bool    `json:"streaming"`
+	ToolCalling      bool    `json:"toolCalling"`
+	APIKeyConfigured bool    `json:"apiKeyConfigured"`
+}
+
+type providerInput struct {
 	ID          string  `json:"id"`
 	Label       string  `json:"label"`
 	Provider    string  `json:"provider"`
@@ -87,13 +127,15 @@ type AIChatRequest struct {
 	Message    string `json:"message"`
 	SessionID  string `json:"sessionId,omitempty"`
 	ProviderID string `json:"providerId,omitempty"`
+	Streaming  bool   `json:"streaming,omitempty"`
 }
 
 type AIChatResponse struct {
-	SessionID string       `json:"sessionId"`
-	Response  string       `json:"response"`
-	Tools     []ToolResult `json:"tools,omitempty"`
-	Provider  string       `json:"provider,omitempty"`
+	SessionID        string            `json:"sessionId"`
+	Response         string            `json:"response"`
+	Tools            []ToolResult      `json:"tools,omitempty"`
+	PendingApprovals []PendingApproval `json:"pendingApprovals,omitempty"`
+	Provider         string            `json:"provider,omitempty"`
 }
 
 type ToolResult struct {
@@ -103,9 +145,16 @@ type ToolResult struct {
 }
 
 type AppContext struct {
-	DB       *sql.DB
-	RootPath string
-	Config   AppConfig
+	DB            *sql.DB
+	RootPath      string
+	Config        AppConfig
+	Shutdown      chan struct{}
+	ShutdownToken string
+}
+
+type serviceMetadata struct {
+	PID   int    `json:"pid"`
+	Token string `json:"token"`
 }
 
 func main() {
@@ -117,6 +166,15 @@ func main() {
 	cfg, err := ensureAppConfig(rootPath)
 	if err != nil {
 		log.Fatalf("config: %v", err)
+	}
+	if !isLoopbackHost(cfg.Host) || cfg.Port < 1 || cfg.Port > 65535 {
+		log.Fatal("app host must be loopback and port must be between 1 and 65535")
+	}
+	staticRoot := filepath.Join(rootPath, "src", "frontend", "dist")
+	if _, err := os.Stat(staticRoot); errors.Is(err, os.ErrNotExist) {
+		cfg.DevelopmentMode = true
+	} else if err != nil {
+		log.Fatalf("check frontend assets: %v", err)
 	}
 
 	if err := ensureProviderConfig(rootPath); err != nil {
@@ -130,25 +188,42 @@ func main() {
 	defer db.Close()
 
 	ctx := &AppContext{DB: db, RootPath: rootPath, Config: cfg}
-	if err := seedDemoData(ctx); err != nil {
-		log.Fatalf("seed demo data: %v", err)
+	if demoModeRequested() {
+		var seeded string
+		err := db.QueryRow(`SELECT value FROM app_state WHERE key='demo_seeded'`).Scan(&seeded)
+		if errors.Is(err, sql.ErrNoRows) {
+			if err := seedDemoData(ctx); err != nil {
+				log.Fatalf("seed demo data: %v", err)
+			}
+			if _, err := db.Exec(`INSERT INTO app_state (key,value) VALUES ('demo_seeded','true')`); err != nil {
+				log.Fatalf("record demo mode: %v", err)
+			}
+		} else if err != nil {
+			log.Fatalf("check demo mode: %v", err)
+		}
 	}
 
-	http.HandleFunc("/api/health", ctx.handleHealth)
-	http.HandleFunc("/api/overview", ctx.handleOverview)
-	http.HandleFunc("/api/projects", ctx.handleProjects)
-	http.HandleFunc("/api/tasks", ctx.handleTasks)
-	http.HandleFunc("/api/settings", ctx.handleSettings)
-	http.HandleFunc("/api/provider-settings", ctx.handleProviderSettings)
-	http.HandleFunc("/api/ai/providers", ctx.handleProviderSettings)
-	http.HandleFunc("/api/ai/test-connection", ctx.handleAIPing)
-	http.HandleFunc("/api/ai/chat", ctx.handleAIChat)
-	http.HandleFunc("/api/echo", ctx.handleEcho)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/health", ctx.handleHealth)
+	mux.HandleFunc("/api/overview", ctx.handleOverview)
+	mux.HandleFunc("/api/projects", ctx.handleProjects)
+	mux.HandleFunc("/api/tasks", ctx.handleTasks)
+	mux.HandleFunc("/api/settings", ctx.handleSettings)
+	mux.HandleFunc("/api/provider-settings", ctx.handleProviderSettings)
+	mux.HandleFunc("/api/ai/providers", ctx.handleProviderSettings)
+	mux.HandleFunc("/api/ai/test-connection", ctx.handleAIPing)
+	mux.HandleFunc("/api/ai/chat", ctx.handleAIChat)
+	mux.HandleFunc("/api/ai/approvals", ctx.handleAIApproval)
+	mux.HandleFunc("/api/ai/audit", ctx.handleAIAudit)
+	mux.HandleFunc("/api/ai/sessions", ctx.handleAISessions)
+	mux.HandleFunc("/api/ai/sessions/", ctx.handleAISessionMessages)
+	mux.HandleFunc("/api/backup", ctx.handleBackup)
+	mux.HandleFunc("/api/shutdown", ctx.handleShutdown)
+	mux.HandleFunc("/api/echo", ctx.handleEcho)
 
-	staticRoot := filepath.Join(rootPath, "src", "frontend", "dist")
 	if _, err := os.Stat(staticRoot); err == nil {
 		fileServer := http.FileServer(http.Dir(staticRoot))
-		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/favicon.ico" {
 				http.NotFound(w, r)
 				return
@@ -156,7 +231,7 @@ func main() {
 			fileServer.ServeHTTP(w, r)
 		})
 	} else {
-		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, `{"status":"frontend_not_built","message":"Build the frontend with build.bat or npm run build before starting the app."}`)
@@ -167,8 +242,49 @@ func main() {
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("listen on %s: %v", addr, err)
+	}
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		_ = listener.Close()
+		log.Fatalf("create shutdown credential: %v", err)
+	}
+	ctx.ShutdownToken = hex.EncodeToString(token)
+	ctx.Shutdown = make(chan struct{}, 1)
+	servicePath := filepath.Join(rootPath, "runtime", "service.json")
+	if err := os.MkdirAll(filepath.Dir(servicePath), 0o700); err != nil {
+		_ = listener.Close()
+		log.Fatalf("create runtime directory: %v", err)
+	}
+	metadata, err := json.Marshal(serviceMetadata{PID: os.Getpid(), Token: ctx.ShutdownToken})
+	if err != nil {
+		_ = listener.Close()
+		log.Fatalf("create service metadata: %v", err)
+	}
+	if err := os.WriteFile(servicePath, metadata, 0o600); err != nil {
+		_ = listener.Close()
+		log.Fatalf("write service metadata: %v", err)
+	}
+	server := &http.Server{Addr: addr, Handler: localSecurityMiddleware(cfg, mux)}
+	serveResult := make(chan error, 1)
+	go func() { serveResult <- server.Serve(listener) }()
 	log.Printf("Reverie Planner listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	select {
+	case <-ctx.Shutdown:
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Printf("graceful shutdown failed: %v", err)
+			_ = server.Close()
+		}
+	case err := <-serveResult:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("server stopped: %v", err)
+		}
+	}
+	_ = os.Remove(servicePath)
 }
 
 func resolveRootPath() (string, error) {
@@ -225,30 +341,29 @@ func ensureAppConfig(rootPath string) (AppConfig, error) {
 
 func ensureProviderConfig(rootPath string) error {
 	cfgPath := filepath.Join(rootPath, "config", "providers.json")
-	if _, err := os.Stat(cfgPath); err == nil {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
+		examplePath := filepath.Join(rootPath, "config", "providers.example.json")
+		content, readErr := os.ReadFile(examplePath)
+		if readErr != nil {
+			return readErr
+		}
+		if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(cfgPath, content, 0o600); err != nil {
+			return err
+		}
+	} else if err != nil {
 		return err
 	}
-	providers := []AIProvider{{
-		ID:          "default",
-		Label:       "Local Ollama",
-		Provider:    "openai-compatible",
-		BaseURL:     "http://127.0.0.1:11434/v1",
-		APIKey:      "ollama",
-		Model:       "llama3.1",
-		Temperature: 0.3,
-		MaxTokens:   2048,
-		Enabled:     true,
-		Streaming:   true,
-		ToolCalling: true,
-	}}
-	content, err := json.MarshalIndent(providers, "", "  ")
+	providers, migrated, err := loadProviderFile(rootPath)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cfgPath, content, 0o644)
+	if migrated {
+		return writeProviders(rootPath, providers)
+	}
+	return nil
 }
 
 func initializeDatabase(rootPath string) (*sql.DB, error) {
@@ -264,9 +379,21 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
-	migrations := []string{
-		`CREATE TABLE IF NOT EXISTS projects (
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL)`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	migrations := []struct {
+		version    int
+		statements []string
+	}{
+		{version: 1, statements: []string{`CREATE TABLE IF NOT EXISTS projects (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			description TEXT,
@@ -275,7 +402,7 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 			color TEXT,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
-		`CREATE TABLE IF NOT EXISTS tasks (
+			`CREATE TABLE IF NOT EXISTS tasks (
 			id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
 			title TEXT NOT NULL,
@@ -286,15 +413,15 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 			assignee TEXT,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY(project_id) REFERENCES projects(id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS ai_sessions (
+		);`}},
+		{version: 2, statements: []string{`CREATE TABLE IF NOT EXISTS ai_sessions (
 			id TEXT PRIMARY KEY,
 			provider_id TEXT,
 			title TEXT,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
-		`CREATE TABLE IF NOT EXISTS ai_messages (
+			`CREATE TABLE IF NOT EXISTS ai_messages (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
 			role TEXT NOT NULL,
@@ -302,21 +429,108 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY(session_id) REFERENCES ai_sessions(id)
 		);`,
-		`CREATE TABLE IF NOT EXISTS ai_audit_log (
+			`CREATE TABLE IF NOT EXISTS ai_audit_log (
 			id TEXT PRIMARY KEY,
 			session_id TEXT,
 			action TEXT NOT NULL,
 			details TEXT NOT NULL,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);`,
+		);`}},
+		{version: 3, statements: []string{`CREATE TABLE IF NOT EXISTS ai_pending_actions (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			tool_call_id TEXT NOT NULL,
+			tool_name TEXT NOT NULL,
+			arguments TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(session_id) REFERENCES ai_sessions(id)
+		);`}},
+		{version: 4, statements: []string{`CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);`}},
 	}
-	for _, stmt := range migrations {
-		if _, err := db.Exec(stmt); err != nil {
+	for _, migration := range migrations {
+		var exists int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version=?`, migration.version).Scan(&exists); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		if exists != 0 {
+			continue
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		for _, stmt := range migration.statements {
+			if _, err := tx.Exec(stmt); err != nil {
+				_ = tx.Rollback()
+				_ = db.Close()
+				return nil, err
+			}
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_migrations (version,applied_at) VALUES (?,?)`, migration.version, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			_ = tx.Rollback()
+			_ = db.Close()
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
 			_ = db.Close()
 			return nil, err
 		}
 	}
 	return db, nil
+}
+
+func demoModeRequested() bool {
+	for _, arg := range os.Args[1:] {
+		if arg == "--demo" {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *AppContext) handleBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	path, err := createDatabaseBackup(r.Context(), a.DB, a.RootPath)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "database backup failed")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"file": filepath.Base(path), "status": "created"})
+}
+
+func (a *AppContext) handleShutdown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if a.ShutdownToken == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(a.ShutdownToken)) != 1 {
+		writeJSONError(w, http.StatusUnauthorized, "invalid shutdown credential")
+		return
+	}
+	select {
+	case a.Shutdown <- struct{}{}:
+	default:
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func createDatabaseBackup(ctx context.Context, db *sql.DB, rootPath string) (string, error) {
+	directory := filepath.Join(rootPath, "data", "backups")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(directory, "planner-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".sqlite")
+	if _, err := db.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func seedDemoData(ctx *AppContext) error {
@@ -360,11 +574,11 @@ func (a *AppContext) handleOverview(w http.ResponseWriter, r *http.Request) {
 	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status = 'done'`).Scan(&doneTasks)
 	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM tasks WHERE due_date IS NOT NULL AND status != 'done'`).Scan(&upcomingTasks)
 	payload := map[string]any{
-		"projectCount": totalProjects,
-		"taskCount": openTasks,
+		"projectCount":   totalProjects,
+		"taskCount":      openTasks,
 		"completedCount": doneTasks,
-		"upcomingCount": upcomingTasks,
-		"aiEnabled": a.Config.Features.AIEnabled,
+		"upcomingCount":  upcomingTasks,
+		"aiEnabled":      a.Config.Features.AIEnabled,
 	}
 	_ = json.NewEncoder(w).Encode(payload)
 }
@@ -378,7 +592,7 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer rows.Close()
-		var out []Project
+		out := make([]Project, 0)
 		for rows.Next() {
 			var project Project
 			var created string
@@ -388,6 +602,10 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 			}
 			project.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			out = append(out, project)
+		}
+		if err := rows.Err(); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "projects could not be read")
+			return
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
@@ -399,8 +617,9 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 		if project.ID == "" {
 			project.ID = "proj-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 		}
-		if strings.TrimSpace(project.Name) == "" {
-			writeJSONError(w, http.StatusBadRequest, "project name is required")
+		project.Name = strings.TrimSpace(project.Name)
+		if project.Name == "" || len(project.Name) > 160 || len(project.Description) > 2000 || len(project.Owner) > 160 || len(project.Color) > 32 {
+			writeJSONError(w, http.StatusBadRequest, "project fields are missing or too long")
 			return
 		}
 		if project.Status == "" {
@@ -411,6 +630,10 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		if project.Color == "" {
 			project.Color = "cyan"
+		}
+		if !validProjectStatus(project.Status) {
+			writeJSONError(w, http.StatusBadRequest, "invalid project status")
+			return
 		}
 		project.CreatedAt = time.Now().UTC().Truncate(time.Second)
 		_, err := a.DB.Exec(`INSERT INTO projects (id, name, description, status, owner, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, project.ID, project.Name, project.Description, project.Status, project.Owner, project.Color, project.CreatedAt.Format(time.RFC3339))
@@ -423,7 +646,8 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(project)
 	case http.MethodPut:
 		var project Project
-		if err := json.NewDecoder(r.Body).Decode(&project); err != nil {
+		fields, err := decodeJSONRequest(r, &project)
+		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid project payload")
 			return
 		}
@@ -436,22 +660,32 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		if strings.TrimSpace(project.Name) != "" {
-			existing.Name = project.Name
+		if _, ok := fields["name"]; ok {
+			existing.Name = strings.TrimSpace(project.Name)
+			if existing.Name == "" || len(existing.Name) > 160 {
+				writeJSONError(w, http.StatusBadRequest, "project name is required and must be at most 160 characters")
+				return
+			}
 		}
-		if project.Description != "" || project.Status != "" || project.Owner != "" || project.Color != "" {
-			if project.Description != "" || existing.Description == "" {
-				existing.Description = project.Description
+		if _, ok := fields["description"]; ok {
+			existing.Description = project.Description
+		}
+		if _, ok := fields["status"]; ok {
+			if !validProjectStatus(project.Status) {
+				writeJSONError(w, http.StatusBadRequest, "invalid project status")
+				return
 			}
-			if project.Status != "" {
-				existing.Status = project.Status
-			}
-			if project.Owner != "" {
-				existing.Owner = project.Owner
-			}
-			if project.Color != "" {
-				existing.Color = project.Color
-			}
+			existing.Status = project.Status
+		}
+		if _, ok := fields["owner"]; ok {
+			existing.Owner = project.Owner
+		}
+		if _, ok := fields["color"]; ok {
+			existing.Color = project.Color
+		}
+		if len(existing.Description) > 2000 || len(existing.Owner) > 160 || len(existing.Color) > 32 {
+			writeJSONError(w, http.StatusBadRequest, "project fields are too long")
+			return
 		}
 		_, err = a.DB.Exec(`UPDATE projects SET name = ?, description = ?, status = ?, owner = ?, color = ? WHERE id = ?`, existing.Name, existing.Description, existing.Status, existing.Owner, existing.Color, existing.ID)
 		if err != nil {
@@ -473,18 +707,30 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "project id is required")
 			return
 		}
-		if _, err := a.DB.Exec(`DELETE FROM tasks WHERE project_id = ?`, id); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		result, err := a.DB.Exec(`DELETE FROM projects WHERE id = ?`, id)
+		tx, err := a.DB.BeginTx(r.Context(), nil)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		rows, _ := result.RowsAffected()
+		result, err := tx.ExecContext(r.Context(), `UPDATE projects SET status='archived' WHERE id=?`, id)
+		if err != nil {
+			_ = tx.Rollback()
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			_ = tx.Rollback()
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		if rows == 0 {
+			_ = tx.Rollback()
 			writeJSONError(w, http.StatusNotFound, "project not found")
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "project could not be archived")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -510,7 +756,7 @@ func (a *AppContext) handleTasks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer rows.Close()
-		var out []Task
+		out := make([]Task, 0)
 		for rows.Next() {
 			var task Task
 			var created string
@@ -520,6 +766,10 @@ func (a *AppContext) handleTasks(w http.ResponseWriter, r *http.Request) {
 			}
 			task.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			out = append(out, task)
+		}
+		if err := rows.Err(); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "tasks could not be read")
+			return
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
@@ -531,11 +781,13 @@ func (a *AppContext) handleTasks(w http.ResponseWriter, r *http.Request) {
 		if task.ID == "" {
 			task.ID = "task-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 		}
-		if task.ProjectID == "" || strings.TrimSpace(task.Title) == "" {
-			writeJSONError(w, http.StatusBadRequest, "project id and title are required")
+		task.Title = strings.TrimSpace(task.Title)
+		if task.ProjectID == "" || task.Title == "" || len(task.Title) > 240 || len(task.Description) > 4000 || len(task.Assignee) > 160 {
+			writeJSONError(w, http.StatusBadRequest, "task fields are missing or too long")
 			return
 		}
-		if _, err := a.projectByID(task.ProjectID); err != nil {
+		project, err := a.projectByID(task.ProjectID)
+		if err != nil || project.Status == "archived" {
 			writeJSONError(w, http.StatusBadRequest, "project not found")
 			return
 		}
@@ -545,8 +797,12 @@ func (a *AppContext) handleTasks(w http.ResponseWriter, r *http.Request) {
 		if task.Priority == "" {
 			task.Priority = "medium"
 		}
+		if !validTaskStatus(task.Status) || !validPriority(task.Priority) || (task.DueDate != "" && !validISODate(task.DueDate)) {
+			writeJSONError(w, http.StatusBadRequest, "invalid task status, priority, or due date")
+			return
+		}
 		task.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, err := a.DB.Exec(`INSERT INTO tasks (id, project_id, title, description, status, priority, due_date, assignee, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, task.ID, task.ProjectID, task.Title, task.Description, task.Status, task.Priority, task.DueDate, task.Assignee, task.CreatedAt.Format(time.RFC3339))
+		_, err = a.DB.Exec(`INSERT INTO tasks (id, project_id, title, description, status, priority, due_date, assignee, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, task.ID, task.ProjectID, task.Title, task.Description, task.Status, task.Priority, task.DueDate, task.Assignee, task.CreatedAt.Format(time.RFC3339))
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -556,7 +812,8 @@ func (a *AppContext) handleTasks(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(task)
 	case http.MethodPut:
 		var task Task
-		if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+		fields, err := decodeJSONRequest(r, &task)
+		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid task payload")
 			return
 		}
@@ -569,28 +826,40 @@ func (a *AppContext) handleTasks(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		if task.ProjectID != "" {
+		if _, ok := fields["projectId"]; ok {
 			existing.ProjectID = task.ProjectID
 		}
-		if strings.TrimSpace(task.Title) != "" {
-			existing.Title = task.Title
+		if _, ok := fields["title"]; ok {
+			existing.Title = strings.TrimSpace(task.Title)
+			if existing.Title == "" {
+				writeJSONError(w, http.StatusBadRequest, "task title is required")
+				return
+			}
 		}
-		if task.Description != "" || task.Status != "" || task.Priority != "" || task.DueDate != "" || task.Assignee != "" {
-			if task.Description != "" || existing.Description == "" {
-				existing.Description = task.Description
-			}
-			if task.Status != "" {
-				existing.Status = task.Status
-			}
-			if task.Priority != "" {
-				existing.Priority = task.Priority
-			}
-			if task.DueDate != "" {
-				existing.DueDate = task.DueDate
-			}
-			if task.Assignee != "" {
-				existing.Assignee = task.Assignee
-			}
+		if _, ok := fields["description"]; ok {
+			existing.Description = task.Description
+		}
+		if _, ok := fields["status"]; ok {
+			existing.Status = task.Status
+		}
+		if _, ok := fields["priority"]; ok {
+			existing.Priority = task.Priority
+		}
+		if _, ok := fields["dueDate"]; ok {
+			existing.DueDate = task.DueDate
+		}
+		if _, ok := fields["assignee"]; ok {
+			existing.Assignee = task.Assignee
+		}
+		if len(existing.Title) > 240 || len(existing.Description) > 4000 || len(existing.Assignee) > 160 ||
+			!validTaskStatus(existing.Status) || !validPriority(existing.Priority) || (existing.DueDate != "" && !validISODate(existing.DueDate)) {
+			writeJSONError(w, http.StatusBadRequest, "invalid task fields")
+			return
+		}
+		project, projectErr := a.projectByID(existing.ProjectID)
+		if projectErr != nil || project.Status == "archived" {
+			writeJSONError(w, http.StatusBadRequest, "active project was not found")
+			return
 		}
 		_, err = a.DB.Exec(`UPDATE tasks SET project_id = ?, title = ?, description = ?, status = ?, priority = ?, due_date = ?, assignee = ? WHERE id = ?`, existing.ProjectID, existing.Title, existing.Description, existing.Status, existing.Priority, existing.DueDate, existing.Assignee, existing.ID)
 		if err != nil {
@@ -663,35 +932,58 @@ func (a *AppContext) handleSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AppContext) handleProviderSettings(w http.ResponseWriter, r *http.Request) {
-	cfgPath := filepath.Join(a.RootPath, "config", "providers.json")
 	if r.Method == http.MethodGet {
-		content, err := os.ReadFile(cfgPath)
+		providers, _, err := loadProviderFile(a.RootPath)
 		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			writeJSONError(w, http.StatusInternalServerError, "provider configuration could not be read")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(content)
+		_ = json.NewEncoder(w).Encode(toProviderDTOs(providers))
 		return
 	}
 	if r.Method == http.MethodPost {
-		var providers []AIProvider
-		if err := json.NewDecoder(r.Body).Decode(&providers); err != nil {
+		var inputs []providerInput
+		if err := json.NewDecoder(r.Body).Decode(&inputs); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid provider payload")
 			return
 		}
-		content, err := json.MarshalIndent(providers, "", "  ")
+		current, _, err := loadProviderFile(a.RootPath)
 		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			writeJSONError(w, http.StatusInternalServerError, "provider configuration could not be read")
 			return
 		}
-		if err := os.WriteFile(cfgPath, content, 0o644); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
+		existingByID := make(map[string]AIProvider, len(current))
+		for _, provider := range current {
+			existingByID[provider.ID] = provider
+		}
+		providers := make([]AIProvider, 0, len(inputs))
+		for _, input := range inputs {
+			provider := AIProvider{
+				ID: input.ID, Label: input.Label, Provider: input.Provider, BaseURL: input.BaseURL,
+				APIKey: input.APIKey, Model: input.Model, Temperature: input.Temperature,
+				MaxTokens: input.MaxTokens, Enabled: input.Enabled, Streaming: input.Streaming,
+				ToolCalling: input.ToolCalling,
+			}
+			if provider.ID == "" || strings.TrimSpace(provider.Label) == "" || strings.TrimSpace(provider.Model) == "" {
+				writeJSONError(w, http.StatusBadRequest, "provider id, label, and model are required")
+				return
+			}
+			if provider.APIKey == "" {
+				provider.APIKey = existingByID[provider.ID].APIKey
+			}
+			if err := validateProviderURL(provider.BaseURL); err != nil {
+				writeJSONError(w, http.StatusBadRequest, "invalid provider baseURL")
+				return
+			}
+			providers = append(providers, provider)
+		}
+		if err := writeProviders(a.RootPath, providers); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "provider configuration could not be saved")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write(content)
+		_ = json.NewEncoder(w).Encode(toProviderDTOs(providers))
 		return
 	}
 	writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -703,8 +995,8 @@ func (a *AppContext) handleAIPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ProviderID string      `json:"providerId"`
-		Provider   AIProvider  `json:"provider"`
+		ProviderID string     `json:"providerId"`
+		Provider   AIProvider `json:"provider"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid connection test payload")
@@ -712,9 +1004,9 @@ func (a *AppContext) handleAIPing(w http.ResponseWriter, r *http.Request) {
 	}
 	provider := req.Provider
 	if provider.ID == "" && req.ProviderID != "" {
-		cfg, err := readProviders(a.RootPath)
+		cfg, _, err := loadProviderFile(a.RootPath)
 		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			writeJSONError(w, http.StatusInternalServerError, "provider configuration could not be read")
 			return
 		}
 		for _, item := range cfg {
@@ -725,9 +1017,9 @@ func (a *AppContext) handleAIPing(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if provider.ID == "" {
-		cfg, err := readProviders(a.RootPath)
+		cfg, _, err := loadProviderFile(a.RootPath)
 		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			writeJSONError(w, http.StatusInternalServerError, "provider configuration could not be read")
 			return
 		}
 		if len(cfg) == 0 {
@@ -741,119 +1033,6 @@ func (a *AppContext) handleAIPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "provider": provider.Label, "model": provider.Model})
-}
-
-func (a *AppContext) handleAIChat(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req AIChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid chat payload")
-		return
-	}
-	req.Message = strings.TrimSpace(req.Message)
-	if req.Message == "" {
-		writeJSONError(w, http.StatusBadRequest, "message is required")
-		return
-	}
-	sessionID := strings.TrimSpace(req.SessionID)
-	if sessionID == "" {
-		sessionID = "session-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	}
-	if _, err := a.DB.Exec(`INSERT OR IGNORE INTO ai_sessions (id, provider_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`, sessionID, req.ProviderID, "AI Chat", time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339)); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if _, err := a.DB.Exec(`INSERT INTO ai_messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)`, "msg-"+strconv.FormatInt(time.Now().UnixNano(), 10), sessionID, "user", req.Message, time.Now().UTC().Format(time.RFC3339)); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	response, tools, err := a.handleAICommand(req.Message)
-	if err != nil {
-		response = err.Error()
-	}
-	if _, err := a.DB.Exec(`INSERT INTO ai_audit_log (id, session_id, action, details, created_at) VALUES (?, ?, ?, ?, ?)`, "audit-"+strconv.FormatInt(time.Now().UnixNano(), 10), sessionID, "assistant_response", fmt.Sprintf("tool_count=%d", len(tools)), time.Now().UTC().Format(time.RFC3339)); err != nil {
-		log.Printf("audit log failed: %v", err)
-	}
-	if _, err := a.DB.Exec(`INSERT INTO ai_messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)`, "msg-"+strconv.FormatInt(time.Now().UnixNano(), 10), sessionID, "assistant", response, time.Now().UTC().Format(time.RFC3339)); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	payload := AIChatResponse{SessionID: sessionID, Response: response, Tools: tools}
-	_ = json.NewEncoder(w).Encode(payload)
-}
-
-func (a *AppContext) handleAICommand(message string) (string, []ToolResult, error) {
-	command := strings.ToLower(strings.TrimSpace(message))
-	if command == "" {
-		return "", nil, errors.New("message is required")
-	}
-	if command == "list projects" || strings.Contains(command, "list projects") {
-		projects, err := a.listProjects()
-		if err != nil {
-			return "", nil, err
-		}
-		if len(projects) == 0 {
-			return "No projects found.", nil, nil
-		}
-		names := make([]string, 0, len(projects))
-		for _, project := range projects {
-			names = append(names, fmt.Sprintf("%s (%s)", project.Name, project.Status))
-		}
-		return "Projects: " + strings.Join(names, "; "), []ToolResult{{Name: "list_projects", Summary: "Listed projects", Data: projects}}, nil
-	}
-	if command == "list tasks" || strings.Contains(command, "list tasks") {
-		tasks, err := a.listTasks("")
-		if err != nil {
-			return "", nil, err
-		}
-		if len(tasks) == 0 {
-			return "No tasks found.", nil, nil
-		}
-		details := make([]string, 0, len(tasks))
-		for _, task := range tasks {
-			details = append(details, fmt.Sprintf("%s [%s]", task.Title, task.Status))
-		}
-		return "Tasks: " + strings.Join(details, "; "), []ToolResult{{Name: "list_tasks", Summary: "Listed tasks", Data: tasks}}, nil
-	}
-	if matches := regexp.MustCompile(`(?i)create project\s+(.+)`).FindStringSubmatch(message); len(matches) > 1 {
-		projectName := strings.TrimSpace(matches[1])
-		project, err := a.createProject(projectName)
-		if err != nil {
-			return "", nil, err
-		}
-		return fmt.Sprintf("Project '%s' created successfully.", project.Name), []ToolResult{{Name: "create_project", Summary: "Created project", Data: project}}, nil
-	}
-	if matches := regexp.MustCompile(`(?i)create task\s+(?:in\s+)?(.+?)\s*[:\-]\s*(.+)`).FindStringSubmatch(message); len(matches) > 2 {
-		projectName := strings.TrimSpace(matches[1])
-		taskTitle := strings.TrimSpace(matches[2])
-		task, err := a.createTaskByName(projectName, taskTitle)
-		if err != nil {
-			return "", nil, err
-		}
-		return fmt.Sprintf("Task '%s' created in project '%s'.", task.Title, projectName), []ToolResult{{Name: "create_task", Summary: "Created task", Data: task}}, nil
-	}
-	if matches := regexp.MustCompile(`(?i)(?:complete|finish|mark done) task\s+([A-Za-z0-9-]+)`).FindStringSubmatch(message); len(matches) > 1 {
-		taskID := strings.TrimSpace(matches[1])
-		task, err := a.completeTask(taskID)
-		if err != nil {
-			return "", nil, err
-		}
-		return fmt.Sprintf("Task '%s' marked as done.", task.Title), []ToolResult{{Name: "complete_task", Summary: "Completed task", Data: task}}, nil
-	}
-	if matches := regexp.MustCompile(`(?i)search\s+(.+)`).FindStringSubmatch(message); len(matches) > 1 {
-		query := strings.TrimSpace(matches[1])
-		results, err := a.searchWorkspace(query)
-		if err != nil {
-			return "", nil, err
-		}
-		return fmt.Sprintf("Search results for '%s': %d match(es).", query, len(results)), []ToolResult{{Name: "search_workspace", Summary: "Searched workspace", Data: results}}, nil
-	}
-	return "I can help manage projects and tasks. Try 'list projects', 'create project Alpha', 'create task in Galaxy Draft roadmap', or 'complete task task-1'.", nil, nil
 }
 
 func (a *AppContext) createProject(name string) (Project, error) {
@@ -903,7 +1082,7 @@ func (a *AppContext) listTasks(projectID string) ([]Task, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Task
+	out := make([]Task, 0)
 	for rows.Next() {
 		var item Task
 		var created string
@@ -922,7 +1101,7 @@ func (a *AppContext) fetchProjects() ([]Project, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Project
+	out := make([]Project, 0)
 	for rows.Next() {
 		var item Project
 		var created string
@@ -1033,53 +1212,225 @@ func (a *AppContext) taskByID(id string) (Task, error) {
 	return t, nil
 }
 
-func sanitizeProviders(providers []AIProvider) []AIProvider {
-	sanitized := make([]AIProvider, 0, len(providers))
+func toProviderDTOs(providers []AIProvider) []providerDTO {
+	result := make([]providerDTO, 0, len(providers))
 	for _, provider := range providers {
-		item := provider
-		item.APIKey = ""
-		sanitized = append(sanitized, item)
+		result = append(result, providerDTO{
+			ID: provider.ID, Label: provider.Label, Provider: provider.Provider, BaseURL: provider.BaseURL,
+			Model: provider.Model, Temperature: provider.Temperature, MaxTokens: provider.MaxTokens,
+			Enabled: provider.Enabled, Streaming: provider.Streaming, ToolCalling: provider.ToolCalling,
+			APIKeyConfigured: provider.APIKey != "",
+		})
 	}
-	return sanitized
+	return result
 }
 
-func readProviders(rootPath string) ([]AIProvider, error) {
+func loadProviderFile(rootPath string) ([]AIProvider, bool, error) {
 	cfgPath := filepath.Join(rootPath, "config", "providers.json")
 	content, err := os.ReadFile(cfgPath)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var providers []AIProvider
-	if err := json.Unmarshal(content, &providers); err != nil {
-		return nil, err
+	var stored []providerFileEntry
+	if err := json.Unmarshal(content, &stored); err != nil {
+		return nil, false, err
 	}
-	return providers, nil
+	providers := make([]AIProvider, 0, len(stored))
+	migrated := false
+	for _, item := range stored {
+		provider := item.AIProvider
+		if item.EncryptedAPIKey != "" {
+			provider.APIKey, err = unprotectSecret(rootPath, item.EncryptedAPIKey)
+			if err != nil {
+				return nil, false, fmt.Errorf("decrypt provider credential: %w", err)
+			}
+		} else if item.LegacyAPIKey != "" {
+			provider.APIKey = item.LegacyAPIKey
+			migrated = true
+		}
+		providers = append(providers, provider)
+	}
+	return providers, migrated, nil
+}
+
+func writeProviders(rootPath string, providers []AIProvider) error {
+	entries := make([]providerFileEntry, 0, len(providers))
+	for _, provider := range providers {
+		entry := providerFileEntry{AIProvider: provider}
+		if provider.APIKey != "" {
+			encrypted, err := protectSecret(rootPath, provider.APIKey)
+			if err != nil {
+				return fmt.Errorf("encrypt provider credential: %w", err)
+			}
+			entry.EncryptedAPIKey = encrypted
+		}
+		entries = append(entries, entry)
+	}
+	content, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return err
+	}
+	configDir := filepath.Join(rootPath, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(configDir, "providers-*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := file.Name()
+	defer os.Remove(tempPath)
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err := file.Write(content); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, filepath.Join(configDir, "providers.json"))
+}
+
+func validateProviderURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("invalid base URL")
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return errors.New("provider URL must use HTTP or HTTPS")
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "localhost" || host == "localhost.localdomain" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() {
+			return nil
+		}
+		if parsed.Scheme != "https" || !isPublicProviderIP(ip) {
+			return errors.New("remote providers must use HTTPS and a public address")
+		}
+		return nil
+	}
+	if parsed.Scheme != "https" {
+		return errors.New("remote providers must use HTTPS")
+	}
+	return nil
+}
+
+func isPublicProviderIP(ip net.IP) bool {
+	return ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() &&
+		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsMulticast() && !ip.IsUnspecified()
+}
+
+func providerHTTPClient(timeout time.Duration) *http.Client {
+	transport := &http.Transport{
+		Proxy:       nil,
+		DialContext: providerDialContext(net.DefaultResolver.LookupIPAddr),
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func providerDialContext(lookup func(context.Context, string) ([]net.IPAddr, error)) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := lookup(ctx, host)
+		if err != nil || len(ips) == 0 {
+			return nil, errors.New("provider host resolution failed")
+		}
+		hostIP := net.ParseIP(host)
+		allowLoopback := strings.EqualFold(strings.TrimSuffix(host, "."), "localhost") || (hostIP != nil && hostIP.IsLoopback())
+		for _, candidate := range ips {
+			if allowLoopback && candidate.IP.IsLoopback() {
+				continue
+			}
+			if !allowLoopback && isPublicProviderIP(candidate.IP) {
+				continue
+			}
+			return nil, errors.New("provider host resolved to a restricted network")
+		}
+		var lastErr error
+		for _, candidate := range ips {
+			if allowLoopback && !candidate.IP.IsLoopback() {
+				continue
+			}
+			if !allowLoopback && !isPublicProviderIP(candidate.IP) {
+				continue
+			}
+			conn, dialErr := (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+			if dialErr == nil {
+				return conn, nil
+			}
+			lastErr = dialErr
+		}
+		if lastErr != nil {
+			return nil, errors.New("provider connection failed")
+		}
+		return nil, errors.New("provider address is restricted")
+	}
 }
 
 func testProviderConnectivity(provider AIProvider) error {
-	if provider.BaseURL == "" {
-		return errors.New("baseURL is required")
+	if err := validateProviderURL(provider.BaseURL); err != nil {
+		return errors.New("provider URL is not allowed")
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	endpoints := []string{strings.TrimRight(provider.BaseURL, "/") + "/models", strings.TrimRight(provider.BaseURL, "/") + "/chat/completions"}
-	for _, endpoint := range endpoints {
-		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
-		if err != nil {
-			return err
-		}
-		if provider.APIKey != "" {
-			req.Header.Set("Authorization", "Bearer "+provider.APIKey)
-		}
-		resp, err := client.Do(req)
-		if err == nil {
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				_ = resp.Body.Close()
-				return nil
-			}
-			_ = resp.Body.Close()
-		}
+	payload := map[string]any{
+		"model": provider.Model,
+		"messages": []map[string]string{
+			{"role": "user", "content": "Reply with exactly: Reverie Planner connection verified"},
+		},
+		"max_tokens":  32,
+		"temperature": 0,
 	}
-	return fmt.Errorf("provider connectivity check failed for %s", provider.Label)
+	content, err := json.Marshal(payload)
+	if err != nil {
+		return errors.New("provider request could not be created")
+	}
+	endpoint := strings.TrimRight(provider.BaseURL, "/") + "/chat/completions"
+	req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(string(content)))
+	if err != nil {
+		return errors.New("provider request could not be created")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if provider.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	}
+	resp, err := providerHTTPClient(20 * time.Second).Do(req)
+	if err != nil {
+		return errors.New("provider model request failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("provider model request returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil ||
+		len(result.Choices) == 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
+		return errors.New("provider returned no model response")
+	}
+	return nil
 }
 
 func (a *AppContext) handleEcho(w http.ResponseWriter, r *http.Request) {
@@ -1096,6 +1447,33 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": msg})
+}
+
+func decodeJSONRequest(r *http.Request, target any) (map[string]json.RawMessage, error) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, (4<<20)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > 4<<20 {
+		return nil, errors.New("request body is too large")
+	}
+	fields := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
+		return nil, errors.New("request payload must be an object")
+	}
+	if err := json.Unmarshal(body, target); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+func validProjectStatus(status string) bool {
+	return status == "active" || status == "planning" || status == "paused" || status == "archived"
+}
+
+func validISODate(value string) bool {
+	parsed, err := time.Parse("2006-01-02", value)
+	return err == nil && parsed.Format("2006-01-02") == value
 }
 
 func normalizeStatus(tasks []Task) map[string]int {
@@ -1134,4 +1512,3 @@ func statusWeight(status string) int {
 		return 3
 	}
 }
-

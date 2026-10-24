@@ -1,63 +1,55 @@
 # Reverie Planner
 
-Reverie Planner is a privacy-first, local-first project planner for developers and AI-assisted teams. It combines a polished project dashboard with local SQLite storage, configurable AI providers, and a single-click Windows startup flow.
+Reverie Planner is a local-first project planner. Its Go service stores projects, tasks, AI sessions, approvals, and audit events in SQLite; the React interface talks to that service over a loopback-only HTTP API.
 
-## Features
+## Windows quick start
 
-- Local-first project planning with SQLite persistence
-- Dashboard for project health, task flow, and team momentum
-- Task creation, status tracking, due dates, priorities, and tags
-- AI provider configuration for OpenAI-compatible endpoints
-- Local AI command agent for project/task actions with audit logging
-- Built-in project and workspace settings management
-- Windows startup script and graceful stop flow
-- Optional static frontend served by the Go backend
+1. Download and extract the `Reverie-Planner-Windows` artifact from a successful GitHub Actions run.
+2. Keep the extracted folder together and double-click `start.bat`.
+3. Use `stop.bat` for a graceful stop. The start console stays attached to the service; closing that console ends its process lifetime.
 
-## Project structure
+The portable artifact includes the built frontend and backend and does not require Node.js, Go, Docker, or Python. Keep the folder writable so it can store `data/planner.db`, local configuration, and logs. Moving the whole folder preserves its relative data/configuration paths.
 
-- `src/backend` – Go HTTP API and local database layer
-- `src/frontend` – Vite + React frontend
-- `config` – app configuration and provider settings
-- `data` – SQLite database and exported assets
-- `runtime` – compiled Windows executable output
-- `scripts` – optional helper scripts
+## AI providers and secrets
 
-## Quick start
+On first start, `config/providers.example.json` is copied to the private `config/providers.json` runtime configuration. Existing provider files containing the legacy `apiKey` field are migrated to encrypted storage. Provider API responses never return the key; editing a provider with an empty key retains the saved value.
 
-1. Open a terminal in the project root.
-2. Run `build.bat` to build the frontend and backend.
-3. Run `start.bat` to launch the Windows desktop app.
-4. Browse to `http://127.0.0.1:8765`.
+Windows uses DPAPI tied to the current Windows user. Keep the configuration and data folder private. A DPAPI-protected provider file may not be usable under a different Windows account. Remote provider URLs must use HTTPS; loopback URLs may use HTTP for local services such as Ollama.
 
-## Configuration
+The AI Agent uses registered project/task tools rather than SQL. Write operations require approval; project archiving also requires typing `ARCHIVE`. Chat history and operation audit events are stored in the local SQLite database. Provider tests send an actual short chat completion request; automated tests use a simulated provider and do not verify a real external model.
 
-The backend reads configuration from `config/app.json` and `config/providers.json` relative to the app root. These files are created automatically when the service starts if they do not already exist.
+## Development and tests
 
-## Development
-
-### Frontend
-
-```powershell
-cd src/frontend
-npm install
-npm run dev
-```
-
-### Backend
-
-```powershell
-cd src/backend
-go run .
-```
-
-## Production build
+Development builds require Go 1.24 and Node.js 22:
 
 ```powershell
 build.bat
 ```
 
-This compiles the Go service into `runtime/ReveriePlanner.exe` and builds the frontend bundle for static serving.
+Backend tests:
 
-## License
+```powershell
+go test ./...
+```
 
-MIT
+Frontend checks and Playwright browser tests:
+
+```powershell
+cd src/frontend
+npm ci
+npm run lint
+npm run build
+npx playwright install chromium
+npm run test:e2e
+```
+
+The browser test starts an isolated backend and disposable SQLite workspace; it exercises project/task changes and reload persistence without touching user data.
+
+## Project structure
+
+- `src/backend` — Go API, SQLite migrations, provider client, and AI tools
+- `src/frontend` — React/Vite application and Playwright end-to-end tests
+- `config` — public app settings and provider example; private provider config is ignored by Git
+- `data` — SQLite database and consistent backups
+- `runtime` — built Windows executable and private lifecycle metadata
+- `scripts` — Windows startup and authenticated graceful-stop helpers

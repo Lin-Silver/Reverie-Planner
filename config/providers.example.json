@@ -4,10 +4,11 @@
     "label": "Local Ollama",
     "provider": "openai-compatible",
     "baseURL": "http://127.0.0.1:11434/v1",
-    "apiKey": "ollama",
     "model": "llama3.1",
     "temperature": 0.3,
     "maxTokens": 2048,
-    "enabled": true
+    "enabled": false,
+    "streaming": true,
+    "toolCalling": true
   }
 ]

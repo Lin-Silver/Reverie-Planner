@@ -2,9 +2,12 @@
 src/frontend/node_modules/
 src/frontend/dist/
 src/frontend/.vite/
+src/frontend/test-results/
+src/frontend/playwright-report/
 
 # Go build outputs
 runtime/*.exe
+runtime/*.exe~
 **/*.exe
 **/*.test
 
@@ -13,12 +16,16 @@ config/*.local.json
 config/*.secret.json
 config/*.bak
 config/*.env
+config/providers.json
 data/*.db
 data/*.sqlite*
+data/provider.key
 logs/*
 logs/*.log
 logs/*.txt
 runtime/*.log
+runtime/service.json
+runtime/*.pid
 **/.env
 **/*.pem
 **/*.key

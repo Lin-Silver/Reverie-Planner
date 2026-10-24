@@ -8,7 +8,7 @@ set OUTPUT_DIR=%ROOT%runtime
 if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%"
 
 cd /d "%FRONTEND_DIR%"
-call npm install
+call npm ci
 if errorlevel 1 exit /b 1
 call npm run build
 if errorlevel 1 exit /b 1
