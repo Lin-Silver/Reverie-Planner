@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import PageEditor from './PageEditor'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -43,7 +44,6 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState<any>(null)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
 
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
@@ -154,19 +154,22 @@ export default function App() {
     try { await apiFetch('/api/tasks', { method: 'PUT', body: JSON.stringify({ ...task, status }) }); await refresh() } catch (e) { setError((e as Error).message) }
   }
 
-  const openPageEditor = (page?: Page) => {
-    if (page) { setPageEditor(page); setPageDraft({ title: page.title, icon: page.icon ?? '', content: page.content }) }
-    else { setPageEditor(null); setPageDraft({ title: 'Untitled', icon: '', content: '' }) }
+  const openPageEditor = async (page?: Page) => {
+    if (page) {
+      let full = page
+      if (page.content === undefined || page.content === '') {
+        try { full = await apiFetch<Page>(`/api/pages?id=${page.id}`) } catch {}
+      }
+      setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
+    }
+    else {
+      try {
+        const created = await apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title: 'Untitled', workspace: true, createdBy: 'You' }) })
+        setPageEditor(created); setPageDraft({ title: created.title, icon: created.icon ?? '', content: created.content })
+        await refresh()
+      } catch (e) { setError((e as Error).message) }
+    }
     setView('page')
-  }
-  const savePage = async () => {
-    try {
-      const body = { id: pageEditor?.id, title: pageDraft.title, icon: pageDraft.icon, content: pageDraft.content, workspace: pageEditor ? pageEditor.workspace : true, projectId: pageEditor?.projectId }
-      const res = await apiFetch<Page>('/api/pages', { method: pageEditor ? 'PUT' : 'POST', body: JSON.stringify(body) })
-      setPageEditor(res); await refresh()
-      setNotice('Saved')
-      setTimeout(() => setNotice(''), 1500)
-    } catch (e) { setError((e as Error).message) }
   }
   const deletePage = async (id: string) => {
     if (!confirm('Delete this page?')) return
@@ -287,18 +290,24 @@ export default function App() {
       </div>
     )
 
-    if (view === 'page') return (
+  if (view === 'page') return (
       <div className="page-wrap">
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
           <button className="btn" onClick={() => setView('home')}>← Back</button>
           <div className="row">
             {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
-            <button className="btn primary" onClick={savePage}>Save</button>
           </div>
         </div>
-        <div className="page-icon" onClick={() => { const ic = window.prompt('Icon emoji'); if (ic !== null) setPageDraft((d) => ({ ...d, icon: ic })) }}>{pageDraft.icon || '📄'}</div>
-        <input className="page-title" value={pageDraft.title} onChange={(e) => setPageDraft((d) => ({ ...d, title: e.target.value }))} placeholder="Untitled" />
-        <textarea className="block" style={{ width: '100%', minHeight: 400, border: 'none', outline: 'none', background: 'transparent', resize: 'none' }} value={pageDraft.content} onChange={(e) => setPageDraft((d) => ({ ...d, content: e.target.value }))} placeholder="Start writing..." />
+        <div className="page-icon" onClick={async () => { if (!pageEditor) return; const ic = window.prompt('Icon emoji'); if (ic === null) return; setPageDraft((d) => ({ ...d, icon: ic })); try { await apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pageEditor, icon: ic }) }); await refresh() } catch (e) { setError((e as Error).message) } }}>{pageDraft.icon || '📄'}</div>
+        <input className="page-title" value={pageDraft.title} onChange={async (e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); if (pageEditor) { try { await apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pageEditor, title: e.target.value }) }) } catch {} } }} placeholder="Untitled" />
+        {pageEditor && (
+          <PageEditor
+            initialContent={pageEditor.content}
+            theme={theme}
+            onChange={(json) => { setPageDraft((d) => ({ ...d, content: json })); if (pageEditor) { apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pageEditor, title: pageDraft.title, icon: pageDraft.icon, content: json }) }).catch(() => {}) } }}
+            onSaveStatus={() => {}}
+          />
+        )}
       </div>
     )
 
@@ -560,7 +569,7 @@ export default function App() {
       )}
 
       {error && <div style={{ position: 'fixed', bottom: 16, right: 16, background: '#eb5757', color: 'white', padding: '8px 12px', borderRadius: 8 }}>{error}<button style={{ marginLeft: 8, background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }} onClick={() => setError('')}>×</button></div>}
-      {notice && <div style={{ position: 'fixed', bottom: 16, right: 16, background: '#4caf50', color: 'white', padding: '8px 12px', borderRadius: 8 }}>{notice}</div>}
+
     </div>
   )
 }
