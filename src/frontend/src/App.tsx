@@ -249,7 +249,27 @@ export default function App() {
     } catch (e) { setError((e as Error).message) }
   }
 
+  const [iconTarget, setIconTarget] = useState<Page | null>(null)
+  const [iconDraft, setIconDraft] = useState('')
+  const [cmdOpen, setCmdOpen] = useState(false)
   const unreadCount = notifications.filter((n) => !n.read).length
+  const [cmdQuery, setCmdQuery] = useState('')
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setCmdOpen(true) }
+      if (e.key === 'Escape') setCmdOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  const cmdResults = useMemo(() => {
+    const q = cmdQuery.toLowerCase()
+    const items: { label: string; action: () => void }[] = []
+    pages.forEach((p) => { if (!q || p.title.toLowerCase().includes(q)) items.push({ label: `📄 ${p.title}`, action: () => { setSelectedPage(p.id); openPageEditor(p); setCmdOpen(false) } }) })
+    projects.forEach((p) => { if (!q || p.name.toLowerCase().includes(q)) items.push({ label: `📁 ${p.name}`, action: () => { setView('projects'); setCmdOpen(false) } }) })
+    tasks.forEach((t) => { if (!q || t.title.toLowerCase().includes(q)) items.push({ label: `✅ ${t.title}`, action: () => { openTaskEditor(t); setCmdOpen(false) } }) })
+    return items.slice(0, 20)
+  }, [cmdQuery, pages, projects, tasks])
 
   const sidebar = (
     <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -271,11 +291,21 @@ export default function App() {
       <div className={`nav-item ${view === 'stickies' ? 'active' : ''}`} onClick={() => setView('stickies')}>📌 Stickies</div>
       <div className={`nav-item ${view === 'drafts' ? 'active' : ''}`} onClick={() => setView('drafts')}>📝 Drafts</div>
       <div className="nav-section">Pages</div>
-      {pages.filter((p) => p.workspace).map((p) => (
-        <div key={p.id} className={`tree-item ${selectedPage === p.id ? 'active' : ''}`} onClick={() => { setSelectedPage(p.id); openPageEditor(p) }}>
-          <span>{p.icon || '📄'}</span><span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
-        </div>
-      ))}
+      {(() => {
+        const roots = pages.filter((p) => p.workspace && !p.parentId)
+        const childrenOf = (pid: string) => pages.filter((p) => p.parentId === pid)
+        const renderNode = (p: Page, depth: number): any => (
+          <div key={p.id}>
+            <div className={`tree-item ${selectedPage === p.id ? 'active' : ''}`} style={{ paddingLeft: 8 + depth * 12 }} onClick={() => { setSelectedPage(p.id); openPageEditor(p) }}>
+              <span>{childrenOf(p.id).length > 0 ? '▾' : '📄'}</span>
+              <span style={{ marginRight: 4 }}>{p.icon || '📄'}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
+            </div>
+            {childrenOf(p.id).map((c) => renderNode(c, depth + 1))}
+          </div>
+        )
+        return roots.map((p) => renderNode(p, 0))
+      })()}
       <div className="nav-section">AI</div>
       <div className={`nav-item ${view === 'assistant' ? 'active' : ''}`} onClick={() => setView('assistant')}>🤖 Assistant</div>
       <div className={`nav-item ${view === 'settings' ? 'active' : ''}`} onClick={() => setView('settings')}>⚙️ Settings</div>
@@ -319,7 +349,7 @@ export default function App() {
             {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
           </div>
         </div>
-        <div className="page-icon" onClick={async () => { if (!pageEditor) return; const ic = window.prompt('Icon emoji'); if (ic === null) return; setPageDraft((d) => ({ ...d, icon: ic })); try { await apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pageEditor, icon: ic }) }); await refresh() } catch (e) { setError((e as Error).message) } }}>{pageDraft.icon || '📄'}</div>
+        <div className="page-icon" onClick={() => { if (!pageEditor) return; setIconDraft(pageEditor.icon || ''); setIconTarget(pageEditor) }}>{pageDraft.icon || '📄'}</div>
         <input className="page-title" value={pageDraft.title} onChange={(e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor) savePageContent(pageDraft.content || pageEditor.content).catch(() => {}) }} placeholder="Untitled" />
   {pageEditor && (
     <PageEditor
@@ -586,6 +616,30 @@ export default function App() {
                 <button type="submit" className="btn primary">Save</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {iconTarget && (
+        <div className="modal-backdrop" onClick={() => setIconTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 320 }}>
+            <h3>Page icon</h3>
+            <input className="input" style={{ width: '100%', fontSize: 32, textAlign: 'center' }} value={iconDraft} onChange={(e) => setIconDraft(e.target.value)} autoFocus />
+            <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
+              <button className="btn" onClick={() => setIconTarget(null)}>Cancel</button>
+              <button className="btn primary" onClick={async () => { if (!iconTarget) return; const ic = iconDraft; setPageDraft((d) => ({ ...d, icon: ic })); try { await apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...iconTarget, icon: ic }) }); await refresh(); setIconTarget(null) } catch (e) { setError((e as Error).message) } }}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {cmdOpen && (
+        <div className="modal-backdrop" onClick={() => setCmdOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
+            <input className="input" style={{ width: '100%', marginBottom: 8 }} autoFocus placeholder="Search pages, projects, issues..." value={cmdQuery} onChange={(e) => setCmdQuery(e.target.value)} />
+            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+              {cmdResults.map((r, i) => <div key={i} className="tree-item" onClick={r.action}>{r.label}</div>)}
+              {cmdResults.length === 0 && <div className="empty">No results</div>}
+            </div>
           </div>
         </div>
       )}
