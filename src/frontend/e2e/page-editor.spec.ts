@@ -6,7 +6,6 @@ async function fetchPages(page: any): Promise<any[]> {
 }
 
 test('page editor creates and persists content', async ({ page }) => {
-  page.on('console', (msg) => console.log('PAGE CONSOLE:', msg.text()))
   await page.goto('/')
   await expect(page.getByText('Welcome back')).toBeVisible()
 

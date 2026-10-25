@@ -11,6 +11,8 @@ type Props = {
   theme: 'light' | 'dark'
   reloadToken: number
   discardRef?: { current: boolean }
+  initialStatus?: SaveStatus
+  showConflict?: boolean
   onSave: (pageId: string, content: string) => Promise<void>
   onContentChange?: (content: string) => void
   onReload: () => Promise<void>
@@ -27,7 +29,7 @@ function parseBlocks(content: string): Block[] | undefined {
   return [{ type: 'paragraph', content: [{ type: 'text', text: content, styles: {} }] } as Block]
 }
 
-export default function PageEditor({ pageId, initialContent, theme, reloadToken, discardRef, onSave, onContentChange, onReload, onRetry, onStatus }: Props) {
+export default function PageEditor({ pageId, initialContent, theme, reloadToken, discardRef, initialStatus, showConflict, onSave, onContentChange, onReload, onRetry, onStatus }: Props) {
   const blocks = useMemo(() => parseBlocks(initialContent), [initialContent])
   const editor = useCreateBlockNote({ initialContent: blocks })
   const latestReq = useRef(0)
@@ -36,7 +38,7 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
   const retryTimer = useRef<any>(null)
   const onSaveRef = useRef(onSave)
   const doSaveRef = useRef<(c: string) => Promise<void>>(async () => {})
-  const [status, setStatus] = useState<SaveStatus>('saved')
+  const [status, setStatus] = useState<SaveStatus>(initialStatus || 'saved')
   const isDiscarded = useRef(false)
 
   const updateStatus = useCallback((s: SaveStatus) => {
@@ -52,6 +54,12 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
     const t = setTimeout(() => { isDiscarded.current = false }, 0)
     return () => clearTimeout(t)
   }, [reloadToken])
+
+  useEffect(() => {
+    if (showConflict) {
+      updateStatus('conflict')
+    }
+  }, [showConflict, updateStatus])
 
   useEffect(() => { onSaveRef.current = onSave }, [onSave])
 
@@ -117,7 +125,8 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
       pendingContent.current = null
       const discarding = discardRef ? discardRef.current : false
       if (content && !discarding) {
-        try { onSaveRef.current(pageId, content).catch(() => {}) } catch {}
+        // App-level navigation guard handles save; keep draft preserved on failure by not clearing pageDraft.
+        // Best-effort flush is handled by App; do not swallow here.
       }
     }
   }, [])

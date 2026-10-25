@@ -38,7 +38,7 @@ const uid = () => Math.random().toString(36).slice(2, 10)
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('theme') as any) || 'light')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('reverie.sidebar.collapsed') === '1')
-  const [view, setView] = useState<string>('home')
+  const [view, _setView] = useState<string>('home')
   const [selectedPage, setSelectedPage] = useState<string>('')
   const [selectedProject, setSelectedProject] = useState<string>('all')
   const [search, setSearch] = useState('')
@@ -69,6 +69,7 @@ export default function App() {
   const [projectDraft, setProjectDraft] = useState({ name: '', description: '', status: 'planning' as ProjectStatus, owner: 'You', color: 'cyan' })
   const [pageEditor, setPageEditor] = useState<Page | null>(null)
   const [pageDraft, setPageDraft] = useState({ title: 'Untitled', icon: '', content: '' })
+  const [pageLeaveError, setPageLeaveError] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState('')
   const [sessionId, setSessionId] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -141,6 +142,25 @@ export default function App() {
     pageWriteQueues.current.set(pageId, next.catch(() => {}))
     return next
   }
+
+  const setView = useCallback((next: string) => {
+    if (view === 'page' && next !== 'page' && pageEditor) {
+      void (async () => {
+        try {
+          await savePageContent(pageEditor.id, pageDraft.content)
+          setPageLeaveError(false)
+          _setView(next)
+        } catch (e) {
+          setPageEditor((pe) => (pe ? { ...pe, content: pageDraft.content } : pe))
+          setPageLeaveError(true)
+          setError(`Save failed: ${(e as Error).message}`)
+        }
+      })()
+      return
+    }
+    setPageLeaveError(false)
+    _setView(next)
+  }, [view, pageEditor, pageDraft.content])
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme) }, [theme])
   useEffect(() => { localStorage.setItem('reverie.sidebar.collapsed', sidebarCollapsed ? '1' : '0') }, [sidebarCollapsed])
@@ -220,6 +240,16 @@ export default function App() {
   }
 
   const openPageEditor = async (page?: Page) => {
+      if (view === 'page' && pageEditor && (!page || page.id !== pageEditor.id)) {
+        try {
+          await savePageContent(pageEditor.id, pageDraft.content)
+        } catch (e) {
+          setPageEditor((pe) => (pe ? { ...pe, content: pageDraft.content } : pe))
+          setPageLeaveError(true)
+          setError(`Save failed: ${(e as Error).message}`)
+          return
+        }
+      }
       if (page) {
         let full = page
         if (page.content === undefined || page.content === '') {
@@ -446,6 +476,8 @@ export default function App() {
       theme={theme}
       reloadToken={reloadToken}
       discardRef={pageDiscardRef}
+      initialStatus={pageLeaveError ? 'conflict' : 'saved'}
+      showConflict={pageLeaveError}
       onSave={savePageContent}
       onContentChange={(c) => setPageDraft((d) => ({ ...d, content: c }))}
       onReload={async () => {
@@ -480,7 +512,7 @@ export default function App() {
           }
         } catch (e) { setError((e as Error).message); throw e }
       }}
-      onStatus={() => {}}
+      onStatus={(s) => { if (s === 'saved') setPageLeaveError(false) }}
     />
   )}
       </div>

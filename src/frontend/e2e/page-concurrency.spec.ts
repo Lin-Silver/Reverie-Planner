@@ -233,3 +233,65 @@ test('navigation: unsaved content persists after leaving before debounce', async
     return p.content
   }, { timeout: 10000 }).toContain('Unsaved navigation content')
 })
+
+test('navigation: conflict on leave preserves draft and shows failure', async ({ browser }) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+
+    const uniqueTitle = `NavConflict-${Date.now()}`
+    const pageId = await (async () => {
+      await pageA.goto('/')
+      await expect(pageA.getByText('Welcome back')).toBeVisible()
+      const before = await fetchPages(pageA)
+      const beforeIds = new Set(before.map((p: any) => p.id))
+      await pageA.getByText('New page').click()
+      await expect(pageA.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+      await pageA.locator('.page-title').fill(uniqueTitle)
+      await pageA.locator('.bn-editor').click()
+      await expect.poll(async () => {
+        const pages = await fetchPages(pageA)
+        const found = pages.find((p: any) => p.title === uniqueTitle)
+        return found ? found.id : null
+      }, { timeout: 10000 }).toBeTruthy()
+      const pages = await fetchPages(pageA)
+      return pages.find((p: any) => p.title === uniqueTitle).id
+    })()
+
+    // B opens the page before A saves body (so B caches a stale version)
+    await pageB.goto('/')
+    await expect(pageB.getByText('Welcome back')).toBeVisible()
+    await openPageByTitle(pageB, uniqueTitle)
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+
+    // A saves body content (version advances)
+    await pageA.locator('.bn-editor').click()
+    await pageA.keyboard.type('Body from client A')
+    await expect.poll(async () => {
+      const p = await fetchPage(pageA, pageId)
+      return p.content
+    }, { timeout: 10000 }).toContain('Body from client A')
+
+    // B types new content (unsaved) then attempts to navigate -> conflict
+    await pageB.locator('.bn-editor').click()
+    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.type('Body from client B')
+
+    await pageB.locator('.nav-item').filter({ hasText: 'Home' }).click()
+
+    await expect(pageB.locator('.bn-editor')).toContainText('Body from client B')
+    await expect(pageB.getByText(/Save failed|Version conflict/).first()).toBeVisible({ timeout: 10000 })
+
+    const final = await fetchPage(pageB, pageId)
+    expect(final.content).toContain('Body from client A')
+    expect(final.content).not.toContain('Body from client B')
+
+    await contextA.close()
+    await contextB.close()
+  } finally {
+    if (!contextA.isClosed()) await contextA.close()
+    if (!contextB.isClosed()) await contextB.close()
+  }
+})
