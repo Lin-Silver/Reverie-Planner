@@ -104,24 +104,42 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 		if d.ID == "" {
 			d.ID = newID("db")
 		}
-		if d.PageID == "" {
-			// create a backing page
-			pageID := newID("page")
-			_, _ = a.DB.Exec(`INSERT INTO pages (id, title, icon, content, workspace, created_by, version) VALUES (?,?,?,?,1,'You',1)`, pageID, d.Title, nullStr(d.Icon), "")
-			d.PageID = pageID
-		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		_, err := a.DB.Exec(`INSERT INTO databases (id, page_id, title, icon, version, created_at, updated_at) VALUES (?,?,?,?,1,?,?)`, d.ID, d.PageID, d.Title, nullStr(d.Icon), now, now)
+		tx, err := a.DB.Begin()
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		// default title property
+		if d.PageID == "" {
+			pageID := newID("page")
+			if _, err := tx.Exec(`INSERT INTO pages (id, title, icon, content, workspace, created_by, version) VALUES (?,?,?,?,1,'You',1)`, pageID, d.Title, nullStr(d.Icon), ""); err != nil {
+				tx.Rollback()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			d.PageID = pageID
+		}
+		if _, err := tx.Exec(`INSERT INTO databases (id, page_id, title, icon, version, created_at, updated_at) VALUES (?,?,?,?,1,?,?)`, d.ID, d.PageID, d.Title, nullStr(d.Icon), now, now); err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		pid := newID("prop")
-		_, _ = a.DB.Exec(`INSERT INTO db_properties (id, database_id, name, type, config, position, visible, version) VALUES (?,?,?,?, '{}', 0, 1, 1)`, pid, d.ID, "Name", "title")
-		// default view
+		if _, err := tx.Exec(`INSERT INTO db_properties (id, database_id, name, type, config, position, visible, version) VALUES (?,?,?,?, '{}', 0, 1, 1)`, pid, d.ID, "Name", "title"); err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		vid := newID("view")
-		_, _ = a.DB.Exec(`INSERT INTO db_views (id, database_id, name, type, config, position, version) VALUES (?,?,?,?, '{}', 0, 1)`, vid, d.ID, "Table", "table")
+		if _, err := tx.Exec(`INSERT INTO db_views (id, database_id, name, type, config, position, version) VALUES (?,?,?,?, '{}', 0, 1)`, vid, d.ID, "Table", "table"); err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		d.Version = 1
 		d.CreatedAt = now
 		d.UpdatedAt = now
@@ -270,9 +288,25 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 200, out)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM db_properties WHERE id=?`, id)
-		// delete values
-		_, _ = a.DB.Exec(`DELETE FROM db_values WHERE property_id=?`, id)
+		tx, err := a.DB.Begin()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if _, err := tx.Exec(`DELETE FROM db_values WHERE property_id=?`, id); err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if _, err := tx.Exec(`DELETE FROM db_properties WHERE id=?`, id); err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		w.WriteHeader(204)
 	default:
 		w.WriteHeader(405)
@@ -324,17 +358,34 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			rec.Title = "Untitled"
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		_, err := a.DB.Exec(`INSERT INTO db_records (id, database_id, title, page_id, version, created_at, updated_at) VALUES (?,?,?,?,1,?,?)`, rec.ID, rec.DatabaseID, rec.Title, nullStr(rec.PageID), now, now)
+		tx, err := a.DB.Begin()
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		// create backing page if none
+		_, err = tx.Exec(`INSERT INTO db_records (id, database_id, title, page_id, version, created_at, updated_at) VALUES (?,?,?,?,1,?,?)`, rec.ID, rec.DatabaseID, rec.Title, nullStr(rec.PageID), now, now)
+		if err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		if rec.PageID == "" {
 			pageID := newID("page")
-			_, _ = a.DB.Exec(`INSERT INTO pages (id, title, icon, content, workspace, created_by, version) VALUES (?,?,?,?,1,'You',1)`, pageID, rec.Title, "", "")
-			_, _ = a.DB.Exec(`UPDATE db_records SET page_id=? WHERE id=?`, pageID, rec.ID)
+			if _, err := tx.Exec(`INSERT INTO pages (id, title, icon, content, workspace, created_by, version) VALUES (?,?,?,?,1,'You',1)`, pageID, rec.Title, "", ""); err != nil {
+				tx.Rollback()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			if _, err := tx.Exec(`UPDATE db_records SET page_id=? WHERE id=?`, pageID, rec.ID); err != nil {
+				tx.Rollback()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
 			rec.PageID = pageID
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
 		}
 		rec.Version = 1
 		rec.CreatedAt = now
@@ -416,7 +467,25 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, rec)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM db_records WHERE id=?`, id)
+		tx, err := a.DB.Begin()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if _, err := tx.Exec(`DELETE FROM db_values WHERE record_id=?`, id); err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if _, err := tx.Exec(`DELETE FROM db_records WHERE id=?`, id); err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		w.WriteHeader(204)
 	default:
 		w.WriteHeader(405)
@@ -545,12 +614,26 @@ func (a *AppContext) handleDBLinkedView(w http.ResponseWriter, r *http.Request) 
 	_ = a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_views WHERE database_id=?`, body.DatabaseID).Scan(&maxPos)
 	v.Position = int(maxPos.Int64)
 	v.Version = 1
-	_, err := a.DB.Exec(`INSERT INTO db_views (id, database_id, name, type, config, position, version) VALUES (?,?,?,?,?,?,1)`, v.ID, v.DatabaseID, v.Name, v.Type, v.Config, v.Position)
+	tx, err := a.DB.Begin()
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	_, _ = a.DB.Exec(`UPDATE pages SET linked_database_id=?, linked_view_id=?, updated_at=? WHERE id=?`, body.DatabaseID, v.ID, time.Now().UTC().Format(time.RFC3339), body.PageID)
+	_, err = tx.Exec(`INSERT INTO db_views (id, database_id, name, type, config, position, version) VALUES (?,?,?,?,?,?,1)`, v.ID, v.DatabaseID, v.Name, v.Type, v.Config, v.Position)
+	if err != nil {
+		tx.Rollback()
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	if _, err := tx.Exec(`UPDATE pages SET linked_database_id=?, linked_view_id=?, updated_at=? WHERE id=?`, body.DatabaseID, v.ID, time.Now().UTC().Format(time.RFC3339), body.PageID); err != nil {
+		tx.Rollback()
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
 	writeJSON(w, 201, v)
 }
 

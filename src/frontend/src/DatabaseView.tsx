@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 
 
@@ -182,69 +182,116 @@ function Cell({ prop, value, onChange }: { prop: DBProperty; value: any; onChang
   return <input defaultValue={value ?? ''} onBlur={e => onChange(e.target.value)} style={{ width: '100%', border: 'none', background: 'transparent' }} />
 }
 
-function BoardView({ records, props }: any) {
-  const groupProp = props.find((p: DBProperty) => p.type === 'select') || props[0]
-  const groups = useMemo(() => {
-    const g: Record<string, DBRecord[]> = {}
-    records.forEach((r: DBRecord) => {
-      const key = String(r.values?.[groupProp?.id] ?? '(empty)')
-      ;(g[key] = g[key] || []).push(r)
-    })
-    return g
-  }, [records, groupProp])
+function BoardView({ records, props, updateRecord }: any) {
+  const groupProp = props.find((p: DBProperty) => p.type === 'select') || props.find((p: DBProperty) => p.type === 'text')
+  const groups: Record<string, DBRecord[]> = {}
+  records.forEach((r: DBRecord) => {
+    const key = String(r.values?.[groupProp?.id] ?? '(empty)')
+    ;(groups[key] = groups[key] || []).push(r)
+  })
+  // ensure empty group exists
+  if (groupProp?.type === 'select') {
+    let opts: string[] = []
+    try { opts = JSON.parse(groupProp.config || '{}').options || [] } catch {}
+    opts.forEach(o => { if (!groups[o]) groups[o] = [] })
+    if (!groups['(empty)']) groups['(empty)'] = groups['(empty)'] || []
+  }
+  const [dragId, setDragId] = useState<string | null>(null)
+  const onDrop = async (groupKey: string) => {
+    if (!dragId || !groupProp) return
+    const rec = records.find((r: DBRecord) => r.id === dragId)
+    if (!rec) return
+    const newVal = groupKey === '(empty)' ? null : groupKey
+    await updateRecord(rec, { values: { [groupProp.id]: newVal } })
+    setDragId(null)
+  }
   return (
     <div style={{ display: 'flex', gap: 12, overflowX: 'auto' }}>
       {Object.entries(groups).map(([g, recs]) => (
-        <div key={g} style={{ minWidth: 220, background: 'var(--card)', padding: 8, borderRadius: 8 }}>
+        <div key={g} style={{ minWidth: 220, background: 'var(--card)', padding: 8, borderRadius: 8 }}
+          onDragOver={e => e.preventDefault()}
+          onDrop={() => onDrop(g)}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>{g} ({recs.length})</div>
           {recs.map((r: DBRecord) => (
-            <div key={r.id} style={{ padding: 8, marginBottom: 6, background: 'var(--background)', borderRadius: 4, border: '1px solid var(--border)' }}>
+            <div key={r.id} draggable onDragStart={() => setDragId(r.id)}
+              style={{ padding: 8, marginBottom: 6, background: 'var(--background)', borderRadius: 4, border: '1px solid var(--border)', cursor: 'grab' }}>
               {r.title}
             </div>
           ))}
         </div>
       ))}
-      {Object.keys(groups).length === 0 && <div>No records</div>}
     </div>
   )
 }
 
 function CalendarView({ records, props }: any) {
   const dateProp = props.find((p: DBProperty) => p.type === 'date')
-  const byDate: Record<string, DBRecord[]> = {}
+  const [cursor, setCursor] = useState(new Date())
+  const year = cursor.getFullYear()
+  const month = cursor.getMonth()
+  const firstDay = new Date(year, month, 1)
+  const startWeekday = firstDay.getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const cells: (number | null)[] = []
+  for (let i = 0; i < startWeekday; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+  const byDay: Record<number, DBRecord[]> = {}
   records.forEach((r: DBRecord) => {
-    const d = dateProp ? r.values?.[dateProp.id] : null
-    const key = d ? String(d).slice(0, 10) : 'No date'
-    ;(byDate[key] = byDate[key] || []).push(r)
+    const v = dateProp ? r.values?.[dateProp.id] : null
+    if (v) {
+      const dt = new Date(String(v))
+      if (dt.getFullYear() === year && dt.getMonth() === month) {
+        const day = dt.getDate()
+        ;(byDay[day] = byDay[day] || []).push(r)
+      }
+    }
   })
   return (
     <div>
-      {Object.entries(byDate).map(([d, recs]) => (
-        <div key={d} style={{ marginBottom: 12 }}>
-          <div style={{ fontWeight: 600 }}>{d}</div>
-          <ul>{recs.map((r: DBRecord) => <li key={r.id}>{r.title}</li>)}</ul>
-        </div>
-      ))}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+        <button className="btn" onClick={() => setCursor(new Date(year, month - 1, 1))}>‹</button>
+        <div style={{ fontWeight: 600 }}>{cursor.toLocaleString('default', { month: 'long', year: 'numeric' })}</div>
+        <button className="btn" onClick={() => setCursor(new Date(year, month + 1, 1))}>›</button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
+        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} style={{ fontWeight: 600, textAlign: 'center' }}>{d}</div>)}
+        {cells.map((c, i) => (
+          <div key={i} style={{ minHeight: 60, border: '1px solid var(--border)', padding: 4, background: 'var(--card)' }}>
+            {c && <div style={{ fontSize: 12, color: 'var(--muted)' }}>{c}</div>}
+            {c && (byDay[c] || []).map(r => <div key={r.id} style={{ fontSize: 12 }}>{r.title}</div>)}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
 function ListView({ records }: { records: DBRecord[] }) {
+  const [open, setOpen] = useState<string | null>(null)
   return (
     <ul style={{ listStyle: 'none', padding: 0 }}>
       {records.map(r => (
-        <li key={r.id} style={{ padding: 8, borderBottom: '1px solid var(--border)' }}>{r.title}</li>
+        <li key={r.id} style={{ padding: 8, borderBottom: '1px solid var(--border)', cursor: 'pointer' }} onClick={() => setOpen(open === r.id ? null : r.id)}>
+          <div style={{ fontWeight: 600 }}>{r.title}</div>
+          {open === r.id && (
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+              {Object.entries(r.values || {}).map(([k, v]) => <div key={k}>{k}: {String(v)}</div>)}
+            </div>
+          )}
+        </li>
       ))}
     </ul>
   )
 }
 
 function GalleryView({ records }: { records: DBRecord[] }) {
+  const [open, setOpen] = useState<string | null>(null)
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
       {records.map(r => (
-        <div key={r.id} style={{ padding: 12, background: 'var(--card)', borderRadius: 8, border: '1px solid var(--border)' }}>
+        <div key={r.id} onClick={() => setOpen(open === r.id ? null : r.id)} style={{ padding: 12, background: 'var(--card)', borderRadius: 8, border: '1px solid var(--border)', cursor: 'pointer' }}>
           <div style={{ fontWeight: 600 }}>{r.title}</div>
+          {open === r.id && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{Object.entries(r.values || {}).map(([k, v]) => <div key={k}>{k}: {String(v)}</div>)}</div>}
         </div>
       ))}
     </div>
