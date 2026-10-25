@@ -190,3 +190,28 @@ test('concurrency: metadata protected after Retry and continuous autosave', asyn
     if (!contextB.isClosed()) await contextB.close()
   }
 })
+
+test('navigation: unsaved content persists after leaving before debounce', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByText('Welcome back')).toBeVisible()
+
+  const beforePages = await fetchPages(page)
+  const beforeIds = new Set(beforePages.map((p: any) => p.id))
+
+  await page.getByText('New page').click()
+  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+
+  const afterPages = await fetchPages(page)
+  const newPage = afterPages.find((p: any) => !beforeIds.has(p.id))
+  const pageId = newPage.id
+
+  await page.locator('.bn-editor').click()
+  await page.keyboard.type('Unsaved navigation content')
+
+  await page.locator('.nav-item').filter({ hasText: 'Home' }).click()
+
+  await expect.poll(async () => {
+    const p = await fetchPage(page, pageId)
+    return p.content
+  }, { timeout: 10000 }).toContain('Unsaved navigation content')
+})

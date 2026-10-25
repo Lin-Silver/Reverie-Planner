@@ -81,6 +81,7 @@ export default function App() {
   useEffect(() => { pageEditorRef.current = pageEditor; pageTitleRef.current = pageDraft.title }, [pageEditor, pageDraft.title])
   const pageVersions = useRef<Map<string, number>>(new Map())
   const pageSnapshots = useRef<Map<string, Page>>(new Map())
+  const pageDiscardRef = useRef(false)
   const pageWriteQueues = useRef<Map<string, Promise<void>>>(new Map())
   const savePageContent = async (pageId: string, content: string) => {
     // serialize per page
@@ -302,6 +303,7 @@ export default function App() {
   const [iconDraft, setIconDraft] = useState('')
   const [iconTarget, setIconTarget] = useState<Page | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
+  useEffect(() => { pageDiscardRef.current = false }, [reloadToken])
   const [cmdOpen, setCmdOpen] = useState(false)
   const unreadCount = notifications.filter((n) => !n.read).length
   const [cmdIndex, setCmdIndex] = useState(0)
@@ -443,9 +445,11 @@ export default function App() {
       initialContent={pageEditor.content}
       theme={theme}
       reloadToken={reloadToken}
+      discardRef={pageDiscardRef}
       onSave={savePageContent}
       onContentChange={(c) => setPageDraft((d) => ({ ...d, content: c }))}
       onReload={async () => {
+        pageDiscardRef.current = true
         try {
           const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
           pageVersions.current.set(pageEditor.id, latest.version || 1)
@@ -455,7 +459,7 @@ export default function App() {
           setPageEditor(latest)
           setPageDraft({ title: latest.title, icon: latest.icon ?? '', content: latest.content })
           setReloadToken((t) => t + 1)
-        } catch (e) { setError((e as Error).message) }
+        } catch (e) { pageDiscardRef.current = false; setError((e as Error).message) }
       }}
       onRetry={async (content) => {
         try {

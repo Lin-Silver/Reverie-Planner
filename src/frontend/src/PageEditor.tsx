@@ -10,6 +10,7 @@ type Props = {
   initialContent: string
   theme: 'light' | 'dark'
   reloadToken: number
+  discardRef?: { current: boolean }
   onSave: (pageId: string, content: string) => Promise<void>
   onContentChange?: (content: string) => void
   onReload: () => Promise<void>
@@ -26,31 +27,27 @@ function parseBlocks(content: string): Block[] | undefined {
   return [{ type: 'paragraph', content: [{ type: 'text', text: content, styles: {} }] } as Block]
 }
 
-export default function PageEditor({ pageId, initialContent, theme, reloadToken, onSave, onContentChange, onReload, onRetry, onStatus }: Props) {
+export default function PageEditor({ pageId, initialContent, theme, reloadToken, discardRef, onSave, onContentChange, onReload, onRetry, onStatus }: Props) {
   const blocks = useMemo(() => parseBlocks(initialContent), [initialContent])
   const editor = useCreateBlockNote({ initialContent: blocks })
   const latestReq = useRef(0)
   const pendingContent = useRef<string | null>(null)
   const timer = useRef<any>(null)
+  const retryTimer = useRef<any>(null)
   const onSaveRef = useRef(onSave)
   const doSaveRef = useRef<(c: string) => Promise<void>>(async () => {})
   const [status, setStatus] = useState<SaveStatus>('saved')
-  // isDiscarded 标记当前编辑器实例是否已废弃。
-  // reloadToken 变化（Reload latest / Retry 导致重挂载）或组件卸载时置为 true，
-  // 旧实例的所有异步写入（定时器、重试、排队 flush）均不再执行，彻底避免旧草稿回写。
   const isDiscarded = useRef(false)
-  const instanceRef = useRef(reloadToken)
 
   const updateStatus = useCallback((s: SaveStatus) => {
     setStatus(s)
     onStatus(s)
   }, [onStatus])
 
-  // reloadToken 变化：旧实例废弃，清空定时器和未提交草稿，不再写入。
   useEffect(() => {
     isDiscarded.current = true
-    instanceRef.current = reloadToken
     if (timer.current) clearTimeout(timer.current)
+    if (retryTimer.current) clearTimeout(retryTimer.current)
     pendingContent.current = null
     const t = setTimeout(() => { isDiscarded.current = false }, 0)
     return () => clearTimeout(t)
@@ -77,7 +74,8 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
         } else {
           updateStatus('error')
           pendingContent.current = content
-          setTimeout(() => {
+          if (retryTimer.current) clearTimeout(retryTimer.current)
+          retryTimer.current = setTimeout(() => {
             if (!isDiscarded.current && pendingContent.current === content) doSaveRef.current(content)
           }, 3000)
         }
@@ -110,13 +108,17 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
     return () => { unsub() }
   }, [editor, pageId])
 
-  // 卸载时永不 flush 未提交草稿：直接丢弃定时器与 pendingContent，
-  // 确保旧实例卸载不会重新覆盖新实例刚加载的服务器正文。
   useEffect(() => {
     return () => {
       isDiscarded.current = true
-      if (timer.current) clearTimeout(timer.current)
+      if (timer.current) { clearTimeout(timer.current); timer.current = null }
+      if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
+      const content = pendingContent.current
       pendingContent.current = null
+      const discarding = discardRef ? discardRef.current : false
+      if (content && !discarding) {
+        try { onSaveRef.current(pageId, content).catch(() => {}) } catch {}
+      }
     }
   }, [])
 
