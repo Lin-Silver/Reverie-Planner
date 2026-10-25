@@ -6,11 +6,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
+var idCounter uint64
+
 func newID(prefix string) string {
-	return prefix + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	n := atomic.AddUint64(&idCounter, 1)
+	return prefix + "-" + strconv.FormatInt(time.Now().UnixNano(), 10) + "-" + strconv.FormatUint(n, 10)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

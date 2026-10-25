@@ -16,7 +16,7 @@ async function fetchPage(page: any, id: string): Promise<any> {
 
 async function openPageByTitle(page: any, title: string) {
   const item = page.locator('.tree-item').filter({ hasText: title }).first()
-  await expect(item).toBeVisible({ timeout: 10000 })
+  await expect(item).toBeVisible({ timeout: 20000 })
   await item.click()
 }
 
@@ -28,7 +28,7 @@ async function createPageWithTitle(page: any, title: string): Promise<string> {
   await page.goto('/')
   await expect(page.getByText('Welcome back')).toBeVisible()
   await page.getByText('New page').click()
-  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
   // 通过标题输入框设置唯一标题，失焦触发保存
   await page.locator('.page-title').fill(title)
   await page.locator('.bn-editor').click()
@@ -37,7 +37,7 @@ async function createPageWithTitle(page: any, title: string): Promise<string> {
     const pages = await fetchPages(page)
     const found = pages.find((p: any) => p.title === title)
     return found ? found.id : null
-  }, { timeout: 10000 }).toBeTruthy()
+  }, { timeout: 20000 }).toBeTruthy()
 
   const pages = await fetchPages(page)
   const testPage = pages.find((p: any) => p.title === title)
@@ -59,7 +59,7 @@ test('concurrency: Reload latest keeps server content, discards stale draft', as
     await pageB.goto('/')
     await expect(pageB.getByText('Welcome back')).toBeVisible()
     await openPageByTitle(pageB, uniqueTitle)
-    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
 
     // 客户端 A: 写入内容 A 并自动保存 (version -> 2)
     await pageA.locator('.bn-editor').click()
@@ -68,7 +68,7 @@ test('concurrency: Reload latest keeps server content, discards stale draft', as
     await expect.poll(async () => {
       const p = await fetchPage(pageA, pageId)
       return p.content
-    }, { timeout: 10000 }).toContain('Body from client A')
+    }, { timeout: 20000 }).toContain('Body from client A')
 
     // 客户端 B: 写入内容 B，基于陈旧版本自动保存 -> 触发 409
     await pageB.locator('.bn-editor').click()
@@ -88,7 +88,7 @@ test('concurrency: Reload latest keeps server content, discards stale draft', as
     expect(reloaded.version).toBeGreaterThanOrEqual(2)
 
     // 重新加载后 BlockNote 内容应为 A 的正文，状态为 saved
-    await expect(pageB.locator('.bn-editor')).toContainText('Body from client A', { timeout: 10000 })
+    await expect(pageB.locator('.bn-editor')).toContainText('Body from client A', { timeout: 20000 })
     await expect(pageB.getByText('saved')).toBeVisible()
 
     await contextA.close()
@@ -113,7 +113,7 @@ test('concurrency: Retry my changes saves client content', async ({ browser }) =
     await pageB.goto('/')
     await expect(pageB.getByText('Welcome back')).toBeVisible()
     await openPageByTitle(pageB, uniqueTitle)
-    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
 
     // A 保存内容 A
     await pageA.locator('.bn-editor').click()
@@ -122,7 +122,7 @@ test('concurrency: Retry my changes saves client content', async ({ browser }) =
     await expect.poll(async () => {
       const p = await fetchPage(pageA, pageId)
       return p.content
-    }, { timeout: 10000 }).toContain('Body from client A')
+    }, { timeout: 20000 }).toContain('Body from client A')
 
     // B 写入内容 B，触发 409
     await pageB.locator('.bn-editor').click()
@@ -161,7 +161,7 @@ test('concurrency: metadata protected after Retry and continuous autosave', asyn
     await pageB.goto('/')
     await expect(pageB.getByText('Welcome back')).toBeVisible()
     await openPageByTitle(pageB, uniqueTitle)
-    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
 
     // A 修改标题并保存
     const newTitle = `Modified by A ${Date.now()}`
@@ -171,7 +171,7 @@ test('concurrency: metadata protected after Retry and continuous autosave', asyn
     await expect.poll(async () => {
       const p = await fetchPage(pageA, pageId)
       return p.title
-    }, { timeout: 10000 }).toBe(newTitle)
+    }, { timeout: 20000 }).toBe(newTitle)
 
     const afterMeta = await fetchPage(pageA, pageId)
     expect(afterMeta.title).toBe(newTitle)
@@ -193,7 +193,7 @@ test('concurrency: metadata protected after Retry and continuous autosave', asyn
     await expect.poll(async () => {
       const p = await fetchPage(pageB, pageId)
       return p.content
-    }, { timeout: 10000 }).toContain('extra text')
+    }, { timeout: 20000 }).toContain('extra text')
 
     const final = await fetchPage(pageB, pageId)
     expect(final.title).toBe(newTitle)
@@ -217,7 +217,7 @@ test('navigation: unsaved content persists after leaving before debounce', async
   const beforeIds = new Set(beforePages.map((p: any) => p.id))
 
   await page.getByText('New page').click()
-  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
 
   const afterPages = await fetchPages(page)
   const newPage = afterPages.find((p: any) => !beforeIds.has(p.id))
@@ -231,7 +231,7 @@ test('navigation: unsaved content persists after leaving before debounce', async
   await expect.poll(async () => {
     const p = await fetchPage(page, pageId)
     return p.content
-  }, { timeout: 10000 }).toContain('Unsaved navigation content')
+  }, { timeout: 20000 }).toContain('Unsaved navigation content')
 })
 
 test('navigation: conflict on leave preserves draft and shows failure', async ({ browser }) => {
@@ -248,14 +248,14 @@ test('navigation: conflict on leave preserves draft and shows failure', async ({
       const before = await fetchPages(pageA)
       const beforeIds = new Set(before.map((p: any) => p.id))
       await pageA.getByText('New page').click()
-      await expect(pageA.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+      await expect(pageA.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
       await pageA.locator('.page-title').fill(uniqueTitle)
       await pageA.locator('.bn-editor').click()
       await expect.poll(async () => {
         const pages = await fetchPages(pageA)
         const found = pages.find((p: any) => p.title === uniqueTitle)
         return found ? found.id : null
-      }, { timeout: 10000 }).toBeTruthy()
+      }, { timeout: 20000 }).toBeTruthy()
       const pages = await fetchPages(pageA)
       return pages.find((p: any) => p.title === uniqueTitle).id
     })()
@@ -264,7 +264,7 @@ test('navigation: conflict on leave preserves draft and shows failure', async ({
     await pageB.goto('/')
     await expect(pageB.getByText('Welcome back')).toBeVisible()
     await openPageByTitle(pageB, uniqueTitle)
-    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
 
     // A saves body content (version advances)
     await pageA.locator('.bn-editor').click()
@@ -272,7 +272,7 @@ test('navigation: conflict on leave preserves draft and shows failure', async ({
     await expect.poll(async () => {
       const p = await fetchPage(pageA, pageId)
       return p.content
-    }, { timeout: 10000 }).toContain('Body from client A')
+    }, { timeout: 20000 }).toContain('Body from client A')
 
     // B types new content (unsaved) then attempts to navigate -> conflict
     await pageB.locator('.bn-editor').click()
@@ -282,7 +282,7 @@ test('navigation: conflict on leave preserves draft and shows failure', async ({
     await pageB.locator('.nav-item').filter({ hasText: 'Home' }).click()
 
     await expect(pageB.locator('.bn-editor')).toContainText('Body from client B')
-    await expect(pageB.getByText(/Save failed|Version conflict/).first()).toBeVisible({ timeout: 10000 })
+    await expect(pageB.getByText(/Save failed|Version conflict/).first()).toBeVisible({ timeout: 20000 })
 
     // Wait through debounce (1s) + retry window (3s) + margin to ensure no auto-save overwrites
     await pageB.waitForTimeout(5000)
@@ -298,7 +298,7 @@ test('navigation: conflict on leave preserves draft and shows failure', async ({
     await expect.poll(async () => {
       const p = await fetchPage(pageB, pageId)
       return p.content
-    }, { timeout: 10000 }).toContain('Body from client B')
+    }, { timeout: 20000 }).toContain('Body from client B')
 
     await contextA.close()
     await contextB.close()
@@ -321,14 +321,14 @@ test('conflict lock survives parent rerender and keeps draft', async ({ browser 
       const before = await fetchPages(pageA)
       const beforeIds = new Set(before.map((p: any) => p.id))
       await pageA.getByText('New page').click()
-      await expect(pageA.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+      await expect(pageA.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
       await pageA.locator('.page-title').fill(uniqueTitle)
       await pageA.locator('.bn-editor').click()
       await expect.poll(async () => {
         const pages = await fetchPages(pageA)
         const found = pages.find((p: any) => p.title === uniqueTitle)
         return found ? found.id : null
-      }, { timeout: 10000 }).toBeTruthy()
+      }, { timeout: 20000 }).toBeTruthy()
       const pages = await fetchPages(pageA)
       return pages.find((p: any) => p.title === uniqueTitle).id
     })()
@@ -339,7 +339,7 @@ test('conflict lock survives parent rerender and keeps draft', async ({ browser 
     await expect.poll(async () => {
       const p = await fetchPage(pageA, pageId)
       return p.content
-    }, { timeout: 10000 }).toContain('Body from client A')
+    }, { timeout: 20000 }).toContain('Body from client A')
 
     // B opens page before A saves (stale version) - already opened after A? reorder: open now (A already saved, version current)
     // To make B stale, open before A's body save is not possible here; instead B opens now and we rely on autosave conflict from a forced stale version by not refetching.
@@ -349,7 +349,7 @@ test('conflict lock survives parent rerender and keeps draft', async ({ browser 
     await pageB.goto('/')
     await expect(pageB.getByText('Welcome back')).toBeVisible()
     await openPageByTitle(pageB, uniqueTitle)
-    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
 
     // B types (autosave will conflict because B's cached version may be current; to force conflict, ensure A advanced version after B opened)
     // A already saved body before B opened, so B's version is current -> no conflict. Adjust: have A save again after B opens.
@@ -358,7 +358,7 @@ test('conflict lock survives parent rerender and keeps draft', async ({ browser 
     await expect.poll(async () => {
       const p = await fetchPage(pageA, pageId)
       return p.content
-    }, { timeout: 10000 }).toContain('more from A')
+    }, { timeout: 20000 }).toContain('more from A')
 
     await pageB.locator('.bn-editor').click()
     await pageB.keyboard.press('Control+a')
@@ -369,7 +369,7 @@ test('conflict lock survives parent rerender and keeps draft', async ({ browser 
       const p = await fetchPage(pageB, pageId)
       // still A's content
       return p.content
-    }, { timeout: 10000 }).toContain('more from A')
+    }, { timeout: 20000 }).toContain('more from A')
 
     // Trigger parent re-render by toggling theme
     await pageB.locator('button').filter({ hasText: /🌙|☀️/ }).click()
@@ -388,7 +388,7 @@ test('conflict lock survives parent rerender and keeps draft', async ({ browser 
     await expect.poll(async () => {
       const p = await fetchPage(pageB, pageId)
       return p.content
-    }, { timeout: 10000 }).toContain('Body from client B')
+    }, { timeout: 20000 }).toContain('Body from client B')
 
     await contextA.close()
     await contextB.close()

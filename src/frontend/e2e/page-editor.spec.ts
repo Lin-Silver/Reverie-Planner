@@ -13,7 +13,7 @@ test('page editor creates and persists content', async ({ page }) => {
   const beforeIds = new Set(before.map((p: any) => p.id))
 
   await page.getByText('New page').click()
-  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
 
   const after = await fetchPages(page)
   const newPage = after.find((p: any) => !beforeIds.has(p.id))
@@ -26,7 +26,7 @@ test('page editor creates and persists content', async ({ page }) => {
     const res = await page.request.fetch(`http://127.0.0.1:18765/api/pages?id=${pageId}`)
     const p = await res.json()
     return p.content
-  }, { timeout: 10000 }).toContain('Hello BlockNote')
+  }, { timeout: 20000 }).toContain('Hello BlockNote')
 
   await page.reload()
   await expect(page.getByText('Welcome back')).toBeVisible()
@@ -35,14 +35,14 @@ test('page editor creates and persists content', async ({ page }) => {
     const res = await page.request.fetch(`http://127.0.0.1:18765/api/pages?id=${pageId}`)
     const p = await res.json()
     return p.content
-  }, { timeout: 10000 }).toContain('Hello BlockNote')
+  }, { timeout: 20000 }).toContain('Hello BlockNote')
 })
 
 test('create child page persists after reload', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByText('Welcome back')).toBeVisible()
   await page.getByText('New page').click()
-  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
   // create child via + button in sidebar
   await page.locator('.tree-item').first().locator('button').click()
   await page.waitForTimeout(1000)

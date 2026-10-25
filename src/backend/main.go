@@ -236,7 +236,11 @@ func main() {
 	mux.HandleFunc("/api/analytics", ctx.handleAnalytics)
 	mux.HandleFunc("/api/workspaces", ctx.handleWorkspaces)
 	mux.HandleFunc("/api/members", ctx.handleMembers)
-	mux.HandleFunc("/api/echo", ctx.handleEcho)
+	mux.HandleFunc("/api/databases", ctx.handleDatabases)
+	mux.HandleFunc("/api/db/properties", ctx.handleDBProperties)
+	mux.HandleFunc("/api/db/records", ctx.handleDBRecords)
+	mux.HandleFunc("/api/db/views", ctx.handleDBViews)
+	mux.HandleFunc("/api/db/linked-view", ctx.handleDBLinkedView)
 
 	if _, err := os.Stat(staticRoot); err == nil {
 		fileServer := http.FileServer(http.Dir(staticRoot))
@@ -481,6 +485,64 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 			`CREATE TABLE IF NOT EXISTS intake (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
 		}},
 		{version: 6, statements: []string{`ALTER TABLE pages ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`}},
+		{version: 7, statements: []string{
+			`CREATE TABLE IF NOT EXISTS databases (
+				id TEXT PRIMARY KEY,
+				page_id TEXT NOT NULL,
+				title TEXT NOT NULL DEFAULT 'Untitled database',
+				icon TEXT,
+				version INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY(page_id) REFERENCES pages(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS db_properties (
+				id TEXT PRIMARY KEY,
+				database_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				type TEXT NOT NULL DEFAULT 'text',
+				config TEXT NOT NULL DEFAULT '{}',
+				position INTEGER NOT NULL DEFAULT 0,
+				visible INTEGER NOT NULL DEFAULT 1,
+				version INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY(database_id) REFERENCES databases(id) ON DELETE CASCADE
+			);`,
+			`CREATE TABLE IF NOT EXISTS db_records (
+				id TEXT PRIMARY KEY,
+				database_id TEXT NOT NULL,
+				title TEXT NOT NULL DEFAULT '',
+				page_id TEXT,
+				version INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY(database_id) REFERENCES databases(id) ON DELETE CASCADE,
+				FOREIGN KEY(page_id) REFERENCES pages(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS db_values (
+				record_id TEXT NOT NULL,
+				property_id TEXT NOT NULL,
+				value TEXT NOT NULL DEFAULT 'null',
+				version INTEGER NOT NULL DEFAULT 1,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY(record_id, property_id),
+				FOREIGN KEY(record_id) REFERENCES db_records(id) ON DELETE CASCADE,
+				FOREIGN KEY(property_id) REFERENCES db_properties(id) ON DELETE CASCADE
+			);`,
+			`CREATE TABLE IF NOT EXISTS db_views (
+				id TEXT PRIMARY KEY,
+				database_id TEXT NOT NULL,
+				name TEXT NOT NULL DEFAULT 'View',
+				type TEXT NOT NULL DEFAULT 'table',
+				config TEXT NOT NULL DEFAULT '{}',
+				position INTEGER NOT NULL DEFAULT 0,
+				version INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY(database_id) REFERENCES databases(id) ON DELETE CASCADE
+			);`,
+		}},
 	}
 	for _, migration := range migrations {
 		var exists int

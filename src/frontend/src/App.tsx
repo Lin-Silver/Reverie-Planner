@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PageEditor from './PageEditor'
+import DatabaseView from './DatabaseView'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -68,6 +69,7 @@ export default function App() {
   const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [projectDraft, setProjectDraft] = useState({ name: '', description: '', status: 'planning' as ProjectStatus, owner: 'You', color: 'cyan' })
   const [pageEditor, setPageEditor] = useState<Page | null>(null)
+  const [pageDatabaseId, setPageDatabaseId] = useState<string>('')
   const [pageDraft, setPageDraft] = useState({ title: 'Untitled', icon: '', content: '' })
   const [pageLeaveError, setPageLeaveError] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState('')
@@ -250,6 +252,7 @@ export default function App() {
           return
         }
       }
+      let openedId = page?.id
       if (page) {
         let full = page
         if (page.content === undefined || page.content === '') {
@@ -259,13 +262,20 @@ export default function App() {
         pageSnapshots.current.set(full.id, full)
         setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
     }
-    else {
-      try {
-        const created = await apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title: 'Untitled', workspace: true, createdBy: 'You' }) })
-        setPageEditor(created); setPageDraft({ title: created.title, icon: created.icon ?? '', content: created.content })
-        await refresh()
-      } catch (e) { setError((e as Error).message) }
-    }
+      else {
+        try {
+          const created = await apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title: 'Untitled', workspace: true, createdBy: 'You' }) })
+          setPageEditor(created); setPageDraft({ title: created.title, icon: created.icon ?? '', content: created.content })
+          openedId = created.id
+          await refresh()
+        } catch (e) { setError((e as Error).message) }
+      }
+    // check if this page hosts a database
+    try {
+      const dbs = await apiFetch<any[]>('/api/databases')
+      const found = (dbs || []).find((d: any) => d.pageId === openedId)
+      setPageDatabaseId(found ? found.id : '')
+    } catch {}
     setView('page')
   }
   const deletePage = async (id: string) => {
@@ -451,7 +461,11 @@ export default function App() {
       </div>
     )
 
-  if (view === 'page') return (
+  if (view === 'page') {
+    if (pageDatabaseId) {
+      return <DatabaseView databaseId={pageDatabaseId} onBack={() => { setPageDatabaseId(''); setView('home') }} />
+    }
+    return (
       <div className="page-wrap">
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
           <div className="breadcrumb" style={{ color: 'var(--muted)', fontSize: 13 }}>
@@ -464,6 +478,12 @@ export default function App() {
           </div>
           <div className="row">
             {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
+            {pageEditor && <button className="btn" onClick={async () => {
+              try {
+                const db = await apiFetch<any>('/api/databases', { method: 'POST', body: JSON.stringify({ title: pageEditor.title || 'Untitled database', pageId: pageEditor.id }) })
+                setPageDatabaseId(db.id)
+              } catch (e) { setError((e as Error).message) }
+            }}>Create database</button>}
           </div>
         </div>
         <div className="page-icon" onClick={() => { if (!pageEditor) return; setIconDraft(pageEditor.icon || ''); setIconTarget(pageEditor) }}>{pageDraft.icon || '📄'}</div>
@@ -517,8 +537,9 @@ export default function App() {
   )}
       </div>
     )
+  }
 
-    if (view === 'issues') return (
+  if (view === 'issues') return (
       <div style={{ padding: 16 }}>
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
           <h2>Issues</h2>
