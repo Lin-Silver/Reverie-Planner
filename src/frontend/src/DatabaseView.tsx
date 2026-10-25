@@ -99,7 +99,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         }}>+ Linked view page</button>
       </div>
       {view?.type === 'table' && <TableView records={records} props={props} updateRecord={updateRecord} deleteProperty={deleteProperty} />}
-      {view?.type === 'board' && <BoardView records={records} props={props} />}
+      {view?.type === 'board' && <BoardView records={records} props={props} updateRecord={updateRecord} />}
       {view?.type === 'calendar' && <CalendarView records={records} props={props} />}
       {view?.type === 'list' && <ListView records={records} />}
       {view?.type === 'gallery' && <GalleryView records={records} />}

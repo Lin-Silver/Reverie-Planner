@@ -450,19 +450,34 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			vb, _ := json.Marshal(val)
 			// upsert
 			var exists int
-			_ = tx.QueryRow(`SELECT COUNT(*) FROM db_values WHERE record_id=? AND property_id=?`, body.ID, propID).Scan(&exists)
-			if exists > 0 {
-				_, _ = tx.Exec(`UPDATE db_values SET value=?, version=version+1, updated_at=? WHERE record_id=? AND property_id=?`, string(vb), now, body.ID, propID)
-			} else {
-				_, _ = tx.Exec(`INSERT INTO db_values (record_id, property_id, value, version, updated_at) VALUES (?,?,?,1,?)`, body.ID, propID, string(vb), now)
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM db_values WHERE record_id=? AND property_id=?`, body.ID, propID).Scan(&exists); err != nil {
+				tx.Rollback()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
 			}
+			if exists > 0 {
+				if _, err := tx.Exec(`UPDATE db_values SET value=?, version=version+1, updated_at=? WHERE record_id=? AND property_id=?`, string(vb), now, body.ID, propID); err != nil {
+					tx.Rollback()
+					writeJSON(w, 500, map[string]string{"error": err.Error()})
+					return
+				}
+			} else {
+				if _, err := tx.Exec(`INSERT INTO db_values (record_id, property_id, value, version, updated_at) VALUES (?,?,?,1,?)`, body.ID, propID, string(vb), now); err != nil {
+					tx.Rollback()
+					writeJSON(w, 500, map[string]string{"error": err.Error()})
+					return
+				}
+			}
+		}
+		if _, err := tx.Exec(`UPDATE pages SET title=(SELECT title FROM db_records WHERE id=?), updated_at=? WHERE id=(SELECT page_id FROM db_records WHERE id=?)`, body.ID, now, body.ID); err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
 		}
 		if err := tx.Commit(); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		// sync page title
-		_, _ = a.DB.Exec(`UPDATE pages SET title=?, updated_at=? WHERE id=(SELECT page_id FROM db_records WHERE id=?)`, body.Title, now, body.ID)
 		rec, _ := a.getDBRecord(body.ID)
 		writeJSON(w, 200, rec)
 	case http.MethodDelete:
@@ -604,6 +619,18 @@ func (a *AppContext) handleDBLinkedView(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.DatabaseID == "" || body.PageID == "" {
 		writeJSON(w, 400, map[string]string{"error": "databaseId and pageId required"})
+		return
+	}
+	// verify page exists
+	var pageExists int
+	if err := a.DB.QueryRow(`SELECT COUNT(*) FROM pages WHERE id=?`, body.PageID).Scan(&pageExists); err != nil || pageExists == 0 {
+		writeJSON(w, 404, map[string]string{"error": "page not found"})
+		return
+	}
+	// verify database exists
+	var dbExists int
+	if err := a.DB.QueryRow(`SELECT COUNT(*) FROM databases WHERE id=?`, body.DatabaseID).Scan(&dbExists); err != nil || dbExists == 0 {
+		writeJSON(w, 404, map[string]string{"error": "database not found"})
 		return
 	}
 	v := DBView{ID: newID("view"), DatabaseID: body.DatabaseID, Name: body.Name, Type: "table", Config: "{}"}
