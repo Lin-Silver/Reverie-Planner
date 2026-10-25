@@ -32,11 +32,16 @@ async function createPageWithTitle(page: any, title: string): Promise<string> {
   // 通过标题输入框设置唯一标题，失焦触发保存
   await page.locator('.page-title').fill(title)
   await page.locator('.bn-editor').click()
-  await waitForAutosave(page)
+
+  await expect.poll(async () => {
+    const pages = await fetchPages(page)
+    const found = pages.find((p: any) => p.title === title)
+    return found ? found.id : null
+  }, { timeout: 10000 }).toBeTruthy()
 
   const pages = await fetchPages(page)
   const testPage = pages.find((p: any) => p.title === title)
-  expect(testPage, `page not found in DB: ${title}`).toBeTruthy()
+  expect(testPage).toBeTruthy()
   return testPage.id
 }
 
@@ -59,15 +64,18 @@ test('concurrency: Reload latest keeps server content, discards stale draft', as
     // 客户端 A: 写入内容 A 并自动保存 (version -> 2)
     await pageA.locator('.bn-editor').click()
     await pageA.keyboard.type('Body from client A')
-    await waitForAutosave(pageA)
+
+    await expect.poll(async () => {
+      const p = await fetchPage(pageA, pageId)
+      return p.content
+    }, { timeout: 10000 }).toContain('Body from client A')
 
     // 客户端 B: 写入内容 B，基于陈旧版本自动保存 -> 触发 409
     await pageB.locator('.bn-editor').click()
     await pageB.keyboard.press('Control+a')
     await pageB.keyboard.type('Body from client B')
-    await waitForAutosave(pageB)
 
-    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 10000 })
+    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
 
     // B 点击 Reload latest
     await pageB.getByText('Reload latest').click()
@@ -110,14 +118,17 @@ test('concurrency: Retry my changes saves client content', async ({ browser }) =
     // A 保存内容 A
     await pageA.locator('.bn-editor').click()
     await pageA.keyboard.type('Body from client A')
-    await waitForAutosave(pageA)
+
+    await expect.poll(async () => {
+      const p = await fetchPage(pageA, pageId)
+      return p.content
+    }, { timeout: 10000 }).toContain('Body from client A')
 
     // B 写入内容 B，触发 409
     await pageB.locator('.bn-editor').click()
     await pageB.keyboard.press('Control+a')
     await pageB.keyboard.type('Body from client B')
-    await waitForAutosave(pageB)
-    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 10000 })
+    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
 
     // B 选择 Retry my changes -> 最终正文为 B 的内容
     await pageB.getByText('Retry my changes').click()
@@ -156,7 +167,11 @@ test('concurrency: metadata protected after Retry and continuous autosave', asyn
     const newTitle = `Modified by A ${Date.now()}`
     await pageA.locator('.page-title').fill(newTitle)
     await pageA.locator('.bn-editor').click() // blur title -> save
-    await waitForAutosave(pageA)
+
+    await expect.poll(async () => {
+      const p = await fetchPage(pageA, pageId)
+      return p.title
+    }, { timeout: 10000 }).toBe(newTitle)
 
     const afterMeta = await fetchPage(pageA, pageId)
     expect(afterMeta.title).toBe(newTitle)
@@ -165,8 +180,7 @@ test('concurrency: metadata protected after Retry and continuous autosave', asyn
     await pageB.locator('.bn-editor').click()
     await pageB.keyboard.press('Control+a')
     await pageB.keyboard.type('Body from client B')
-    await waitForAutosave(pageB)
-    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 10000 })
+    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
 
     // B 选择 Retry my changes：使用服务器最新元数据 (newTitle)，仅替换正文
     await pageB.getByText('Retry my changes').click()
@@ -175,7 +189,11 @@ test('concurrency: metadata protected after Retry and continuous autosave', asyn
     // Retry 后 B 继续编辑，连续自动保存不得恢复旧元数据
     await pageB.locator('.bn-editor').click()
     await pageB.keyboard.type(' extra text')
-    await waitForAutosave(pageB)
+
+    await expect.poll(async () => {
+      const p = await fetchPage(pageB, pageId)
+      return p.content
+    }, { timeout: 10000 }).toContain('extra text')
 
     const final = await fetchPage(pageB, pageId)
     expect(final.title).toBe(newTitle)

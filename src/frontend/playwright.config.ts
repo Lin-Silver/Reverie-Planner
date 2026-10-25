@@ -10,6 +10,7 @@ export default defineConfig({
     browserName: 'chromium',
     headless: true,
   },
+  workers: 1,
   webServer: {
     command: 'node e2e/server.mjs',
     port: 18765,
