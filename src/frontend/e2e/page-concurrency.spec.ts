@@ -1,0 +1,192 @@
+import { test, expect } from '@playwright/test'
+
+const BASE = 'http://127.0.0.1:18765'
+
+async function fetchPages(page: any): Promise<any[]> {
+  const res = await page.request.fetch(`${BASE}/api/pages`)
+  expect(res.ok, `GET /api/pages failed: ${res.status()}`).toBeTruthy()
+  return (await res.json()) as any[]
+}
+
+async function fetchPage(page: any, id: string): Promise<any> {
+  const res = await page.request.fetch(`${BASE}/api/pages?id=${id}`)
+  expect(res.ok, `GET /api/pages?id=${id} failed: ${res.status()}`).toBeTruthy()
+  return (await res.json()) as any
+}
+
+async function openPageByTitle(page: any, title: string) {
+  const item = page.locator('.tree-item').filter({ hasText: title }).first()
+  await expect(item).toBeVisible({ timeout: 10000 })
+  await item.click()
+}
+
+async function waitForAutosave(page: any) {
+  await page.waitForTimeout(2500)
+}
+
+async function createPageWithTitle(page: any, title: string): Promise<string> {
+  await page.goto('/')
+  await expect(page.getByText('Welcome back')).toBeVisible()
+  await page.getByText('New page').click()
+  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+  // 通过标题输入框设置唯一标题，失焦触发保存
+  await page.locator('.page-title').fill(title)
+  await page.locator('.bn-editor').click()
+  await waitForAutosave(page)
+
+  const pages = await fetchPages(page)
+  const testPage = pages.find((p: any) => p.title === title)
+  expect(testPage, `page not found in DB: ${title}`).toBeTruthy()
+  return testPage.id
+}
+
+test('concurrency: Reload latest keeps server content, discards stale draft', async ({ browser }) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+
+    const uniqueTitle = `Conc-Reload-${Date.now()}`
+    const pageId = await createPageWithTitle(pageA, uniqueTitle)
+
+    // 客户端 B: 在 A 保存正文之前打开同一页面 (version=1)
+    await pageB.goto('/')
+    await expect(pageB.getByText('Welcome back')).toBeVisible()
+    await openPageByTitle(pageB, uniqueTitle)
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+
+    // 客户端 A: 写入内容 A 并自动保存 (version -> 2)
+    await pageA.locator('.bn-editor').click()
+    await pageA.keyboard.type('Body from client A')
+    await waitForAutosave(pageA)
+
+    // 客户端 B: 写入内容 B，基于陈旧版本自动保存 -> 触发 409
+    await pageB.locator('.bn-editor').click()
+    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.type('Body from client B')
+    await waitForAutosave(pageB)
+
+    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 10000 })
+
+    // B 点击 Reload latest
+    await pageB.getByText('Reload latest').click()
+    await pageB.waitForTimeout(2000)
+
+    // 数据库必须保留 A 的正文，B 的旧草稿不得回写
+    const reloaded = await fetchPage(pageB, pageId)
+    expect(reloaded.content).toContain('Body from client A')
+    expect(reloaded.content).not.toContain('Body from client B')
+    expect(reloaded.version).toBeGreaterThanOrEqual(2)
+
+    // 重新加载后 BlockNote 内容应为 A 的正文，状态为 saved
+    await expect(pageB.locator('.bn-editor')).toContainText('Body from client A', { timeout: 10000 })
+    await expect(pageB.getByText('saved')).toBeVisible()
+
+    await contextA.close()
+    await contextB.close()
+  } finally {
+    if (!contextA.isClosed()) await contextA.close()
+    if (!contextB.isClosed()) await contextB.close()
+  }
+})
+
+test('concurrency: Retry my changes saves client content', async ({ browser }) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+
+    const uniqueTitle = `Conc-Retry-${Date.now()}`
+    const pageId = await createPageWithTitle(pageA, uniqueTitle)
+
+    // B 在 A 保存正文前打开同一页面
+    await pageB.goto('/')
+    await expect(pageB.getByText('Welcome back')).toBeVisible()
+    await openPageByTitle(pageB, uniqueTitle)
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+
+    // A 保存内容 A
+    await pageA.locator('.bn-editor').click()
+    await pageA.keyboard.type('Body from client A')
+    await waitForAutosave(pageA)
+
+    // B 写入内容 B，触发 409
+    await pageB.locator('.bn-editor').click()
+    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.type('Body from client B')
+    await waitForAutosave(pageB)
+    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 10000 })
+
+    // B 选择 Retry my changes -> 最终正文为 B 的内容
+    await pageB.getByText('Retry my changes').click()
+    await pageB.waitForTimeout(3000)
+
+    const retried = await fetchPage(pageB, pageId)
+    expect(retried.content).toContain('Body from client B')
+    expect(retried.content).not.toContain('Body from client A')
+    expect(retried.version).toBeGreaterThanOrEqual(3)
+
+    await contextA.close()
+    await contextB.close()
+  } finally {
+    if (!contextA.isClosed()) await contextA.close()
+    if (!contextB.isClosed()) await contextB.close()
+  }
+})
+
+test('concurrency: metadata protected after Retry and continuous autosave', async ({ browser }) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+
+    const uniqueTitle = `Conc-Meta-${Date.now()}`
+    const pageId = await createPageWithTitle(pageA, uniqueTitle)
+
+    // B 在 A 修改元数据前打开同一页面 (缓存旧元数据)
+    await pageB.goto('/')
+    await expect(pageB.getByText('Welcome back')).toBeVisible()
+    await openPageByTitle(pageB, uniqueTitle)
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+
+    // A 修改标题并保存
+    const newTitle = `Modified by A ${Date.now()}`
+    await pageA.locator('.page-title').fill(newTitle)
+    await pageA.locator('.bn-editor').click() // blur title -> save
+    await waitForAutosave(pageA)
+
+    const afterMeta = await fetchPage(pageA, pageId)
+    expect(afterMeta.title).toBe(newTitle)
+
+    // B 基于陈旧版本写入内容，触发 409
+    await pageB.locator('.bn-editor').click()
+    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.type('Body from client B')
+    await waitForAutosave(pageB)
+    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 10000 })
+
+    // B 选择 Retry my changes：使用服务器最新元数据 (newTitle)，仅替换正文
+    await pageB.getByText('Retry my changes').click()
+    await pageB.waitForTimeout(3000)
+
+    // Retry 后 B 继续编辑，连续自动保存不得恢复旧元数据
+    await pageB.locator('.bn-editor').click()
+    await pageB.keyboard.type(' extra text')
+    await waitForAutosave(pageB)
+
+    const final = await fetchPage(pageB, pageId)
+    expect(final.title).toBe(newTitle)
+    expect(final.title).not.toBe(uniqueTitle)
+    expect(final.content).toContain('Body from client B')
+    expect(final.version).toBeGreaterThanOrEqual(4)
+
+    await contextA.close()
+    await contextB.close()
+  } finally {
+    if (!contextA.isClosed()) await contextA.close()
+    if (!contextB.isClosed()) await contextB.close()
+  }
+})

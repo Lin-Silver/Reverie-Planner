@@ -35,32 +35,42 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
   const onSaveRef = useRef(onSave)
   const doSaveRef = useRef<(c: string) => Promise<void>>(async () => {})
   const [status, setStatus] = useState<SaveStatus>('saved')
-
-  const discardRef = useRef(false)
-  useEffect(() => {
-    discardRef.current = true
-    if (timer.current) clearTimeout(timer.current)
-    pendingContent.current = null
-    const t = setTimeout(() => { discardRef.current = false }, 0)
-    return () => clearTimeout(t)
-  }, [reloadToken])
-  useEffect(() => { onSaveRef.current = onSave }, [onSave])
+  // isDiscarded 标记当前编辑器实例是否已废弃。
+  // reloadToken 变化（Reload latest / Retry 导致重挂载）或组件卸载时置为 true，
+  // 旧实例的所有异步写入（定时器、重试、排队 flush）均不再执行，彻底避免旧草稿回写。
+  const isDiscarded = useRef(false)
+  const instanceRef = useRef(reloadToken)
 
   const updateStatus = useCallback((s: SaveStatus) => {
     setStatus(s)
     onStatus(s)
   }, [onStatus])
 
+  // reloadToken 变化：旧实例废弃，清空定时器和未提交草稿，不再写入。
+  useEffect(() => {
+    isDiscarded.current = true
+    instanceRef.current = reloadToken
+    if (timer.current) clearTimeout(timer.current)
+    pendingContent.current = null
+    const t = setTimeout(() => { isDiscarded.current = false }, 0)
+    return () => clearTimeout(t)
+  }, [reloadToken])
+
+  useEffect(() => { onSaveRef.current = onSave }, [onSave])
+
   const doSave = useCallback(async (content: string) => {
+    if (isDiscarded.current) return
     const reqId = ++latestReq.current
     updateStatus('saving')
     try {
       await onSaveRef.current(pageId, content)
+      if (isDiscarded.current) return
       if (reqId === latestReq.current) {
         updateStatus('saved')
         pendingContent.current = null
       }
     } catch (e) {
+      if (isDiscarded.current) return
       if (reqId === latestReq.current) {
         if ((e as Error).message.includes('version conflict')) {
           updateStatus('conflict')
@@ -68,7 +78,7 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
           updateStatus('error')
           pendingContent.current = content
           setTimeout(() => {
-            if (pendingContent.current === content) doSaveRef.current(content)
+            if (!isDiscarded.current && pendingContent.current === content) doSaveRef.current(content)
           }, 3000)
         }
       }
@@ -76,6 +86,7 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
   }, [updateStatus, pageId])
 
   const scheduleSave = useCallback((content: string) => {
+    if (isDiscarded.current) return
     pendingContent.current = content
     onContentChange?.(content)
     updateStatus('unsaved')
@@ -99,19 +110,19 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
     return () => { unsub() }
   }, [editor, pageId])
 
+  // 卸载时永不 flush 未提交草稿：直接丢弃定时器与 pendingContent，
+  // 确保旧实例卸载不会重新覆盖新实例刚加载的服务器正文。
   useEffect(() => {
     return () => {
+      isDiscarded.current = true
       if (timer.current) clearTimeout(timer.current)
-      if (pendingContent.current && !discardRef.current) {
-        doSaveRef.current(pendingContent.current)
-      }
       pendingContent.current = null
     }
   }, [])
 
   useEffect(() => {
     const handler = () => {
-      if (pendingContent.current) {
+      if (pendingContent.current && !isDiscarded.current) {
         try { onSaveRef.current(pageId, pendingContent.current) } catch {}
       }
     }

@@ -80,32 +80,57 @@ export default function App() {
   const pageTitleRef = useRef('')
   useEffect(() => { pageEditorRef.current = pageEditor; pageTitleRef.current = pageDraft.title }, [pageEditor, pageDraft.title])
   const pageVersions = useRef<Map<string, number>>(new Map())
+  const pageSnapshots = useRef<Map<string, Page>>(new Map())
   const pageWriteQueues = useRef<Map<string, Promise<void>>>(new Map())
   const savePageContent = async (pageId: string, content: string) => {
     // serialize per page
     const prev = pageWriteQueues.current.get(pageId) || Promise.resolve()
     const next = prev.then(async () => {
-      // authoritative version
+      // authoritative version and metadata from server snapshot (never stale pages[] cache)
+      let snapshot = pageSnapshots.current.get(pageId)
+      if (!snapshot) {
+        const pe = pages.find((p) => p.id === pageId) || pageEditorRef.current
+        if (!pe) return
+        snapshot = pe
+        pageSnapshots.current.set(pageId, snapshot)
+      }
       let version = pageVersions.current.get(pageId)
       if (version == null) {
-        const pe = pages.find((p) => p.id === pageId) || pageEditorRef.current
-        version = pe?.version || 1
+        version = snapshot.version || 1
       }
-      const pe = pages.find((p) => p.id === pageId) || pageEditorRef.current
-      if (!pe) return
-      const title = pageEditorRef.current?.id === pageId ? pageTitleRef.current : pe.title
+      // title comes from the live title input (user may be editing it), all other metadata
+      // (icon, cover, parentId, project_id, workspace) comes from the server snapshot so a
+      // Retry + continuous autosave never resurrects stale remote metadata.
+      const title = pageEditorRef.current?.id === pageId ? pageTitleRef.current : snapshot.title
       try {
-        const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pe, title, icon: pe.icon, content, version }) })
+        const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...snapshot, title, icon: snapshot.icon, cover: snapshot.cover, parentId: snapshot.parentId, content, version }) })
         if (res.version) {
           pageVersions.current.set(pageId, res.version)
-          if (pageEditorRef.current?.id === pageId) pageEditorRef.current.version = res.version
+          pageSnapshots.current.set(pageId, res)
+          if (pageEditorRef.current?.id === pageId) {
+            pageEditorRef.current.version = res.version
+            pageEditorRef.current.title = res.title
+            pageEditorRef.current.icon = res.icon
+            pageEditorRef.current.cover = res.cover
+            pageEditorRef.current.parentId = res.parentId
+            pageEditorRef.current.content = res.content
+          }
         }
       } catch (e) {
         if ((e as Error).message.includes('version conflict') && pageId) {
           try {
             const latest = await apiFetch<Page>(`/api/pages?id=${pageId}`)
             pageVersions.current.set(pageId, latest.version || 1)
-            if (pageEditorRef.current?.id === pageId) pageEditorRef.current.version = latest.version
+            pageSnapshots.current.set(pageId, latest)
+            if (pageEditorRef.current?.id === pageId) {
+              pageEditorRef.current.version = latest.version
+              pageEditorRef.current.title = latest.title
+              pageEditorRef.current.icon = latest.icon
+              pageEditorRef.current.cover = latest.cover
+              pageEditorRef.current.parentId = latest.parentId
+              pageEditorRef.current.content = latest.content
+              pageTitleRef.current = latest.title
+            }
             // keep local content; throw conflict for UI
           } catch {}
         }
@@ -200,6 +225,7 @@ export default function App() {
           try { full = await apiFetch<Page>(`/api/pages?id=${page.id}`) } catch {}
         }
         pageVersions.current.set(full.id, full.version || 1)
+        pageSnapshots.current.set(full.id, full)
         setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
     }
     else {
@@ -423,7 +449,9 @@ export default function App() {
         try {
           const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
           pageVersions.current.set(pageEditor.id, latest.version || 1)
+          pageSnapshots.current.set(pageEditor.id, latest)
           pageEditorRef.current = latest
+          pageTitleRef.current = latest.title
           setPageEditor(latest)
           setPageDraft({ title: latest.title, icon: latest.icon ?? '', content: latest.content })
           setReloadToken((t) => t + 1)
@@ -432,9 +460,20 @@ export default function App() {
       onRetry={async (content) => {
         try {
           const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
+          pageSnapshots.current.set(pageEditor.id, latest)
           await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...latest, content, version: latest.version }) })
-          pageVersions.current.set(pageEditor.id, (latest.version || 0) + 1)
-          if (pageEditorRef.current?.id === pageEditor.id) pageEditorRef.current.version = (latest.version || 0) + 1
+          const newVersion = (latest.version || 0) + 1
+          pageVersions.current.set(pageEditor.id, newVersion)
+          pageSnapshots.current.set(pageEditor.id, { ...latest, content, version: newVersion })
+          if (pageEditorRef.current?.id === pageEditor.id) {
+            pageEditorRef.current.version = newVersion
+            pageEditorRef.current.title = latest.title
+            pageEditorRef.current.icon = latest.icon
+            pageEditorRef.current.cover = latest.cover
+            pageEditorRef.current.parentId = latest.parentId
+            pageEditorRef.current.content = content
+            pageTitleRef.current = latest.title
+          }
         } catch (e) { setError((e as Error).message); throw e }
       }}
       onStatus={() => {}}
