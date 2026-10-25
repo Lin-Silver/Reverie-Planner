@@ -62,8 +62,6 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
       if (timer.current) { clearTimeout(timer.current); timer.current = null }
       if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
       updateStatus('conflict')
-    } else {
-      conflictLocked.current = false
     }
   }, [showConflict, updateStatus])
 

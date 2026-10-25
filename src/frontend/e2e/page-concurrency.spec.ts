@@ -307,3 +307,93 @@ test('navigation: conflict on leave preserves draft and shows failure', async ({
     if (!contextB.isClosed()) await contextB.close()
   }
 })
+test('conflict lock survives parent rerender and keeps draft', async ({ browser }) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+
+    const uniqueTitle = `LockRerender-${Date.now()}`
+    const pageId = await (async () => {
+      await pageA.goto('/')
+      await expect(pageA.getByText('Welcome back')).toBeVisible()
+      const before = await fetchPages(pageA)
+      const beforeIds = new Set(before.map((p: any) => p.id))
+      await pageA.getByText('New page').click()
+      await expect(pageA.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+      await pageA.locator('.page-title').fill(uniqueTitle)
+      await pageA.locator('.bn-editor').click()
+      await expect.poll(async () => {
+        const pages = await fetchPages(pageA)
+        const found = pages.find((p: any) => p.title === uniqueTitle)
+        return found ? found.id : null
+      }, { timeout: 10000 }).toBeTruthy()
+      const pages = await fetchPages(pageA)
+      return pages.find((p: any) => p.title === uniqueTitle).id
+    })()
+
+    // A saves body content
+    await pageA.locator('.bn-editor').click()
+    await pageA.keyboard.type('Body from client A')
+    await expect.poll(async () => {
+      const p = await fetchPage(pageA, pageId)
+      return p.content
+    }, { timeout: 10000 }).toContain('Body from client A')
+
+    // B opens page before A saves (stale version) - already opened after A? reorder: open now (A already saved, version current)
+    // To make B stale, open before A's body save is not possible here; instead B opens now and we rely on autosave conflict from a forced stale version by not refetching.
+    // Simpler: B opens the page now (current version), types, then we manually stale by reloading A? Instead, use the standard stale path: open B before A saves body.
+    // Redo ordering: reopen flow not needed; instead verify lock behavior with a 409 triggered by B typing on stale cached page.
+    // For this test, B must have a stale version. Achieve by opening B before A's body save: move B open above. (restructuring below)
+    await pageB.goto('/')
+    await expect(pageB.getByText('Welcome back')).toBeVisible()
+    await openPageByTitle(pageB, uniqueTitle)
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 10000 })
+
+    // B types (autosave will conflict because B's cached version may be current; to force conflict, ensure A advanced version after B opened)
+    // A already saved body before B opened, so B's version is current -> no conflict. Adjust: have A save again after B opens.
+    await pageA.locator('.bn-editor').click()
+    await pageA.keyboard.type(' more from A')
+    await expect.poll(async () => {
+      const p = await fetchPage(pageA, pageId)
+      return p.content
+    }, { timeout: 10000 }).toContain('more from A')
+
+    await pageB.locator('.bn-editor').click()
+    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.type('Body from client B')
+
+    // wait for autosave to produce 409
+    await expect.poll(async () => {
+      const p = await fetchPage(pageB, pageId)
+      // still A's content
+      return p.content
+    }, { timeout: 10000 }).toContain('more from A')
+
+    // Trigger parent re-render by toggling theme
+    await pageB.locator('button').filter({ hasText: /🌙|☀️/ }).click()
+
+    // Wait through debounce + retry
+    await pageB.waitForTimeout(5000)
+
+    const mid = await fetchPage(pageB, pageId)
+    expect(mid.content).toContain('more from A')
+    expect(mid.content).not.toContain('Body from client B')
+
+    await expect(pageB.locator('.bn-editor')).toContainText('Body from client B')
+
+    // Explicit Retry -> B replaces
+    await pageB.getByText('Retry my changes').click()
+    await expect.poll(async () => {
+      const p = await fetchPage(pageB, pageId)
+      return p.content
+    }, { timeout: 10000 }).toContain('Body from client B')
+
+    await contextA.close()
+    await contextB.close()
+  } finally {
+    if (!contextA.isClosed()) await contextA.close()
+    if (!contextB.isClosed()) await contextB.close()
+  }
+})
