@@ -4,13 +4,19 @@ import { BlockNoteView } from '@blocknote/mantine'
 import '@blocknote/mantine/style.css'
 import type { Block } from '@blocknote/core'
 
-type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
+type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error' | 'conflict'
 type Props = {
   pageId: string
   initialContent: string
   theme: 'light' | 'dark'
+  reloadToken: number
+  discardRef?: { current: boolean }
+  initialStatus?: SaveStatus
+  showConflict?: boolean
   onSave: (pageId: string, content: string) => Promise<void>
   onContentChange?: (content: string) => void
+  onReload: () => Promise<void>
+  onRetry: (content: string) => Promise<void>
   onStatus: (s: SaveStatus) => void
 }
 
@@ -23,44 +29,77 @@ function parseBlocks(content: string): Block[] | undefined {
   return [{ type: 'paragraph', content: [{ type: 'text', text: content, styles: {} }] } as Block]
 }
 
-export default function PageEditor({ pageId, initialContent, theme, onSave, onContentChange, onStatus }: Props) {
+export default function PageEditor({ pageId, initialContent, theme, reloadToken, discardRef, initialStatus, showConflict, onSave, onContentChange, onReload, onRetry, onStatus }: Props) {
   const blocks = useMemo(() => parseBlocks(initialContent), [initialContent])
   const editor = useCreateBlockNote({ initialContent: blocks })
   const latestReq = useRef(0)
   const pendingContent = useRef<string | null>(null)
   const timer = useRef<any>(null)
+  const retryTimer = useRef<any>(null)
   const onSaveRef = useRef(onSave)
   const doSaveRef = useRef<(c: string) => Promise<void>>(async () => {})
-  const [status, setStatus] = useState<SaveStatus>('saved')
-
-  useEffect(() => { onSaveRef.current = onSave }, [onSave])
+  const [status, setStatus] = useState<SaveStatus>(initialStatus || 'saved')
+  const isDiscarded = useRef(false)
+  const conflictLocked = useRef(false)
 
   const updateStatus = useCallback((s: SaveStatus) => {
     setStatus(s)
     onStatus(s)
   }, [onStatus])
 
+  useEffect(() => {
+    isDiscarded.current = true
+    if (timer.current) clearTimeout(timer.current)
+    if (retryTimer.current) clearTimeout(retryTimer.current)
+    pendingContent.current = null
+    const t = setTimeout(() => { isDiscarded.current = false }, 0)
+    return () => clearTimeout(t)
+  }, [reloadToken])
+
+  useEffect(() => {
+    if (showConflict) {
+      conflictLocked.current = true
+      if (timer.current) { clearTimeout(timer.current); timer.current = null }
+      if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
+      updateStatus('conflict')
+    }
+  }, [showConflict, updateStatus])
+
+  useEffect(() => { onSaveRef.current = onSave }, [onSave])
+
   const doSave = useCallback(async (content: string) => {
+    if (isDiscarded.current || conflictLocked.current) return
     const reqId = ++latestReq.current
     updateStatus('saving')
     try {
       await onSaveRef.current(pageId, content)
+      if (isDiscarded.current || conflictLocked.current) return
       if (reqId === latestReq.current) {
         updateStatus('saved')
         pendingContent.current = null
       }
-    } catch {
+    } catch (e) {
+      if (isDiscarded.current || conflictLocked.current) return
       if (reqId === latestReq.current) {
-        updateStatus('error')
-        pendingContent.current = content
-        setTimeout(() => {
-          if (pendingContent.current === content) doSaveRef.current(content)
-        }, 3000)
+        if ((e as Error).message.includes('version conflict')) {
+          conflictLocked.current = true
+          if (timer.current) { clearTimeout(timer.current); timer.current = null }
+          if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
+          updateStatus('conflict')
+        } else {
+          updateStatus('error')
+          pendingContent.current = content
+          if (retryTimer.current) clearTimeout(retryTimer.current)
+          retryTimer.current = setTimeout(() => {
+            if (!isDiscarded.current && !conflictLocked.current && pendingContent.current === content) doSaveRef.current(content)
+          }, 3000)
+        }
       }
     }
-  }, [updateStatus])
+  }, [updateStatus, pageId])
 
   const scheduleSave = useCallback((content: string) => {
+    if (isDiscarded.current || conflictLocked.current) return
     pendingContent.current = content
     onContentChange?.(content)
     updateStatus('unsaved')
@@ -68,7 +107,7 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
     timer.current = setTimeout(() => {
       doSave(content)
     }, 1000)
-  }, [doSave, updateStatus])
+  }, [doSave, updateStatus, onContentChange])
 
   const scheduleSaveRef = useRef(scheduleSave)
   useEffect(() => {
@@ -82,32 +121,44 @@ export default function PageEditor({ pageId, initialContent, theme, onSave, onCo
       scheduleSaveRef.current(json)
     })
     return () => { unsub() }
-  }, [editor])
+  }, [editor, pageId])
 
   useEffect(() => {
     return () => {
-      if (timer.current) clearTimeout(timer.current)
-      if (pendingContent.current) {
-        doSaveRef.current(pendingContent.current)
+      isDiscarded.current = true
+      if (timer.current) { clearTimeout(timer.current); timer.current = null }
+      if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
+      const content = pendingContent.current
+      pendingContent.current = null
+      const discarding = discardRef ? discardRef.current : false
+      if (content && !discarding) {
+        // App-level navigation guard handles save; keep draft preserved on failure by not clearing pageDraft.
+        // Best-effort flush is handled by App; do not swallow here.
       }
     }
   }, [])
 
   useEffect(() => {
     const handler = () => {
-      if (pendingContent.current) {
+      if (pendingContent.current && !isDiscarded.current) {
         try { onSaveRef.current(pageId, pendingContent.current) } catch {}
       }
     }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
-  }, [])
+  }, [pageId])
 
   return (
     <div>
       <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
-        Status: {status === 'error' ? 'Save failed (retrying…)' : status}
+        Status: {status === 'error' ? 'Save failed (retrying…)' : status === 'conflict' ? 'Version conflict' : status}
       </div>
+      {status === 'conflict' && (
+        <div className="row" style={{ marginBottom: 8, gap: 8 }}>
+          <button className="btn" onClick={async () => { await onReload(); }}>Reload latest</button>
+          <button className="btn primary" onClick={() => { const c = JSON.stringify(editor.document); onRetry(c).then(() => { conflictLocked.current = false; updateStatus('saved'); pendingContent.current = null }).catch(() => updateStatus('error')) }}>Retry my changes</button>
+        </div>
+      )}
       <BlockNoteView editor={editor} theme={theme} />
     </div>
   )

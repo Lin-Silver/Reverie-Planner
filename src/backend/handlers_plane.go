@@ -305,6 +305,10 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 		if p.ID == "" {
 			p.ID = newID("page")
 		}
+		if err := a.validatePageParent(p.ID, p.ParentID); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
 		if p.Title == "" {
 			p.Title = "Untitled"
 		}
@@ -327,6 +331,10 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&p)
 		if p.ID == "" {
 			writeJSON(w, 400, map[string]string{"error": "id required"})
+			return
+		}
+		if err := a.validatePageParent(p.ID, p.ParentID); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
 		if p.Version <= 0 {
@@ -782,6 +790,42 @@ func (a *AppContext) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 		"totalCycles":      totalCycles,
 		"totalModules":     totalModules,
 	})
+}
+
+func (a *AppContext) handlePageMove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	var payload struct {
+		ID       string `json:"id"`
+		ParentID string `json:"parentId"`
+		Version  int    `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.ID == "" {
+		writeJSON(w, 400, map[string]string{"error": "id required"})
+		return
+	}
+	if payload.Version <= 0 {
+		writeJSON(w, 400, map[string]string{"error": "version required"})
+		return
+	}
+	newVersion, err := a.movePageAtomic(payload.ID, payload.ParentID, payload.Version)
+	if err != nil {
+		msg := err.Error()
+		switch msg {
+		case "not found", "parent not found":
+			writeJSON(w, 404, map[string]string{"error": msg})
+		case "version conflict":
+			writeJSON(w, 409, map[string]string{"error": msg})
+		case "self parent", "circular":
+			writeJSON(w, 400, map[string]string{"error": msg})
+		default:
+			writeJSON(w, 500, map[string]string{"error": msg})
+		}
+		return
+	}
+	writeJSON(w, 200, map[string]any{"id": payload.ID, "parentId": payload.ParentID, "version": newVersion})
 }
 
 func (a *AppContext) handleWorkspaces(w http.ResponseWriter, r *http.Request) {

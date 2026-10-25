@@ -38,7 +38,7 @@ const uid = () => Math.random().toString(36).slice(2, 10)
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('theme') as any) || 'light')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('reverie.sidebar.collapsed') === '1')
-  const [view, setView] = useState<string>('home')
+  const [view, _setView] = useState<string>('home')
   const [selectedPage, setSelectedPage] = useState<string>('')
   const [selectedProject, setSelectedProject] = useState<string>('all')
   const [search, setSearch] = useState('')
@@ -69,6 +69,7 @@ export default function App() {
   const [projectDraft, setProjectDraft] = useState({ name: '', description: '', status: 'planning' as ProjectStatus, owner: 'You', color: 'cyan' })
   const [pageEditor, setPageEditor] = useState<Page | null>(null)
   const [pageDraft, setPageDraft] = useState({ title: 'Untitled', icon: '', content: '' })
+  const [pageLeaveError, setPageLeaveError] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState('')
   const [sessionId, setSessionId] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -79,24 +80,87 @@ export default function App() {
   const pageEditorRef = useRef<Page | null>(null)
   const pageTitleRef = useRef('')
   useEffect(() => { pageEditorRef.current = pageEditor; pageTitleRef.current = pageDraft.title }, [pageEditor, pageDraft.title])
+  const pageVersions = useRef<Map<string, number>>(new Map())
+  const pageSnapshots = useRef<Map<string, Page>>(new Map())
+  const pageDiscardRef = useRef(false)
+  const pageWriteQueues = useRef<Map<string, Promise<void>>>(new Map())
   const savePageContent = async (pageId: string, content: string) => {
-    const pe = pages.find((p) => p.id === pageId) || (pageEditorRef.current?.id === pageId ? pageEditorRef.current : null)
-    if (!pe) return
-    const title = pageEditorRef.current?.id === pageId ? pageTitleRef.current : pe.title
-    try {
-      const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...pe, title, icon: pe.icon, content, version: pe.version }) })
-      if (pageEditorRef.current?.id === pageId && res.version) pageEditorRef.current.version = res.version
-    } catch (e) {
-      if ((e as Error).message.includes('version conflict') && pageId) {
-        try {
-          const latest = await apiFetch<Page>(`/api/pages?id=${pageId}`)
-          if (pageEditorRef.current?.id === pageId) pageEditorRef.current = latest
-          setPageEditor((cur) => (cur?.id === pageId ? latest : cur))
-        } catch {}
+    // serialize per page
+    const prev = pageWriteQueues.current.get(pageId) || Promise.resolve()
+    const next = prev.then(async () => {
+      // authoritative version and metadata from server snapshot (never stale pages[] cache)
+      let snapshot = pageSnapshots.current.get(pageId)
+      if (!snapshot) {
+        const pe = pages.find((p) => p.id === pageId) || pageEditorRef.current
+        if (!pe) return
+        snapshot = pe
+        pageSnapshots.current.set(pageId, snapshot)
       }
-      throw e
-    }
+      let version = pageVersions.current.get(pageId)
+      if (version == null) {
+        version = snapshot.version || 1
+      }
+      // title comes from the live title input (user may be editing it), all other metadata
+      // (icon, cover, parentId, project_id, workspace) comes from the server snapshot so a
+      // Retry + continuous autosave never resurrects stale remote metadata.
+      const title = pageEditorRef.current?.id === pageId ? pageTitleRef.current : snapshot.title
+      try {
+        const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...snapshot, title, icon: snapshot.icon, cover: snapshot.cover, parentId: snapshot.parentId, content, version }) })
+        if (res.version) {
+          pageVersions.current.set(pageId, res.version)
+          pageSnapshots.current.set(pageId, res)
+          if (pageEditorRef.current?.id === pageId) {
+            pageEditorRef.current.version = res.version
+            pageEditorRef.current.title = res.title
+            pageEditorRef.current.icon = res.icon
+            pageEditorRef.current.cover = res.cover
+            pageEditorRef.current.parentId = res.parentId
+            pageEditorRef.current.content = res.content
+          }
+        }
+      } catch (e) {
+        if ((e as Error).message.includes('version conflict') && pageId) {
+          try {
+            const latest = await apiFetch<Page>(`/api/pages?id=${pageId}`)
+            pageVersions.current.set(pageId, latest.version || 1)
+            pageSnapshots.current.set(pageId, latest)
+            if (pageEditorRef.current?.id === pageId) {
+              pageEditorRef.current.version = latest.version
+              pageEditorRef.current.title = latest.title
+              pageEditorRef.current.icon = latest.icon
+              pageEditorRef.current.cover = latest.cover
+              pageEditorRef.current.parentId = latest.parentId
+              pageEditorRef.current.content = latest.content
+              pageTitleRef.current = latest.title
+            }
+            // keep local content; throw conflict for UI
+          } catch {}
+        }
+        throw e
+      }
+    })
+    pageWriteQueues.current.set(pageId, next.catch(() => {}))
+    return next
   }
+
+  const setView = useCallback((next: string) => {
+    if (view === 'page' && next !== 'page' && pageEditor) {
+      void (async () => {
+        try {
+          await savePageContent(pageEditor.id, pageDraft.content)
+          setPageLeaveError(false)
+          _setView(next)
+        } catch (e) {
+          setPageEditor((pe) => (pe ? { ...pe, content: pageDraft.content } : pe))
+          setPageLeaveError(true)
+          setError(`Save failed: ${(e as Error).message}`)
+        }
+      })()
+      return
+    }
+    setPageLeaveError(false)
+    _setView(next)
+  }, [view, pageEditor, pageDraft.content])
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme) }, [theme])
   useEffect(() => { localStorage.setItem('reverie.sidebar.collapsed', sidebarCollapsed ? '1' : '0') }, [sidebarCollapsed])
@@ -176,12 +240,24 @@ export default function App() {
   }
 
   const openPageEditor = async (page?: Page) => {
-    if (page) {
-      let full = page
-      if (page.content === undefined || page.content === '') {
-        try { full = await apiFetch<Page>(`/api/pages?id=${page.id}`) } catch {}
+      if (view === 'page' && pageEditor && (!page || page.id !== pageEditor.id)) {
+        try {
+          await savePageContent(pageEditor.id, pageDraft.content)
+        } catch (e) {
+          setPageEditor((pe) => (pe ? { ...pe, content: pageDraft.content } : pe))
+          setPageLeaveError(true)
+          setError(`Save failed: ${(e as Error).message}`)
+          return
+        }
       }
-      setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
+      if (page) {
+        let full = page
+        if (page.content === undefined || page.content === '') {
+          try { full = await apiFetch<Page>(`/api/pages?id=${page.id}`) } catch {}
+        }
+        pageVersions.current.set(full.id, full.version || 1)
+        pageSnapshots.current.set(full.id, full)
+        setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
     }
     else {
       try {
@@ -249,11 +325,20 @@ export default function App() {
     } catch (e) { setError((e as Error).message) }
   }
 
-  const [iconTarget, setIconTarget] = useState<Page | null>(null)
+  const [expandedPages, setExpandedPages] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('reverie.expanded') || '[]')) } catch { return new Set() }
+  })
+  useEffect(() => { localStorage.setItem('reverie.expanded', JSON.stringify([...expandedPages])) }, [expandedPages])
+  const toggleExpanded = (id: string) => setExpandedPages((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const [iconDraft, setIconDraft] = useState('')
+  const [iconTarget, setIconTarget] = useState<Page | null>(null)
+  const [reloadToken, setReloadToken] = useState(0)
+  useEffect(() => { pageDiscardRef.current = false }, [reloadToken])
   const [cmdOpen, setCmdOpen] = useState(false)
   const unreadCount = notifications.filter((n) => !n.read).length
+  const [cmdIndex, setCmdIndex] = useState(0)
   const [cmdQuery, setCmdQuery] = useState('')
+  useEffect(() => { setCmdIndex(0) }, [cmdQuery])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setCmdOpen(true) }
@@ -268,6 +353,9 @@ export default function App() {
     pages.forEach((p) => { if (!q || p.title.toLowerCase().includes(q)) items.push({ label: `📄 ${p.title}`, action: () => { setSelectedPage(p.id); openPageEditor(p); setCmdOpen(false) } }) })
     projects.forEach((p) => { if (!q || p.name.toLowerCase().includes(q)) items.push({ label: `📁 ${p.name}`, action: () => { setView('projects'); setCmdOpen(false) } }) })
     tasks.forEach((t) => { if (!q || t.title.toLowerCase().includes(q)) items.push({ label: `✅ ${t.title}`, action: () => { openTaskEditor(t); setCmdOpen(false) } }) })
+    if (q) {
+      items.unshift({ label: `➕ Create page "${cmdQuery}"`, action: () => { apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title: cmdQuery, workspace: true, createdBy: 'You' }) }).then((p) => { refresh(); setSelectedPage(p.id); openPageEditor(p); setCmdOpen(false) }).catch((e) => setError((e as Error).message)) } })
+    }
     return items.slice(0, 20)
   }, [cmdQuery, pages, projects, tasks, openTaskEditor])
 
@@ -294,16 +382,38 @@ export default function App() {
       {(() => {
         const roots = pages.filter((p) => p.workspace && !p.parentId)
         const childrenOf = (pid: string) => pages.filter((p) => p.parentId === pid)
-        const renderNode = (p: Page, depth: number): any => (
-          <div key={p.id}>
-            <div className={`tree-item ${selectedPage === p.id ? 'active' : ''}`} style={{ paddingLeft: 8 + depth * 12 }} onClick={() => { setSelectedPage(p.id); openPageEditor(p) }}>
-              <span>{childrenOf(p.id).length > 0 ? '▾' : '📄'}</span>
-              <span style={{ marginRight: 4 }}>{p.icon || '📄'}</span>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
+        const isDescendant = (ancestor: string, target: string): boolean => {
+          const kids = childrenOf(ancestor)
+          if (kids.some((k) => k.id === target)) return true
+          return kids.some((k) => isDescendant(k.id, target))
+        }
+        const renderNode = (p: Page, depth: number): any => {
+          const kids = childrenOf(p.id)
+          const expanded = expandedPages.has(p.id)
+          return (
+            <div key={p.id}>
+              <div className={`tree-item ${selectedPage === p.id ? 'active' : ''}`} style={{ paddingLeft: 8 + depth * 12 }}
+                draggable
+                onDragStart={(e) => { e.dataTransfer.setData('text/plain', p.id) }}
+                onDragOver={(e) => { e.preventDefault() }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const draggedId = e.dataTransfer.getData('text/plain')
+                  if (!draggedId || draggedId === p.id) return
+                  if (isDescendant(draggedId, p.id)) return
+                  const dragged = pages.find((x) => x.id === draggedId)
+                  apiFetch('/api/pages/move', { method: 'POST', body: JSON.stringify({ id: draggedId, parentId: p.id, version: dragged?.version }) }).then(() => refresh()).catch((err) => setError((err as Error).message))
+                }}
+                onClick={() => { setSelectedPage(p.id); openPageEditor(p) }}>
+                <span onClick={(e) => { e.stopPropagation(); toggleExpanded(p.id) }} style={{ cursor: 'pointer', width: 12, display: 'inline-block' }}>{kids.length > 0 ? (expanded ? '▾' : '▸') : '·'}</span>
+                <span style={{ marginRight: 4 }}>{p.icon || '📄'}</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
+                <button className="btn" style={{ padding: '0 4px', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); apiFetch('/api/pages', { method: 'POST', body: JSON.stringify({ title: 'Untitled', parentId: p.id, workspace: true, createdBy: 'You' }) }).then(() => refresh()).catch((err) => setError((err as Error).message)) }}>+</button>
+              </div>
+              {expanded && kids.map((c) => renderNode(c, depth + 1))}
             </div>
-            {childrenOf(p.id).map((c) => renderNode(c, depth + 1))}
-          </div>
-        )
+          )
+        }
         return roots.map((p) => renderNode(p, 0))
       })()}
       <div className="nav-section">AI</div>
@@ -344,7 +454,14 @@ export default function App() {
   if (view === 'page') return (
       <div className="page-wrap">
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
-          <button className="btn" onClick={() => setView('home')}>← Back</button>
+          <div className="breadcrumb" style={{ color: 'var(--muted)', fontSize: 13 }}>
+            {(() => {
+              const path: Page[] = []
+              let cur = pageEditor
+              while (cur) { path.unshift(cur); cur = pages.find((p) => p.id === cur?.parentId) || null }
+              return path.map((p, i) => <span key={p.id}>{i > 0 && ' / '}{p.title}</span>)
+            })()}
+          </div>
           <div className="row">
             {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
           </div>
@@ -353,13 +470,49 @@ export default function App() {
         <input className="page-title" value={pageDraft.title} onChange={(e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor) savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch(() => {}) }} placeholder="Untitled" />
   {pageEditor && (
     <PageEditor
-      key={pageEditor.id}
+      key={`${pageEditor.id}-${reloadToken}`}
       pageId={pageEditor.id}
       initialContent={pageEditor.content}
       theme={theme}
+      reloadToken={reloadToken}
+      discardRef={pageDiscardRef}
+      initialStatus={pageLeaveError ? 'conflict' : 'saved'}
+      showConflict={pageLeaveError}
       onSave={savePageContent}
       onContentChange={(c) => setPageDraft((d) => ({ ...d, content: c }))}
-      onStatus={() => {}}
+      onReload={async () => {
+        pageDiscardRef.current = true
+        try {
+          const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
+          pageVersions.current.set(pageEditor.id, latest.version || 1)
+          pageSnapshots.current.set(pageEditor.id, latest)
+          pageEditorRef.current = latest
+          pageTitleRef.current = latest.title
+          setPageEditor(latest)
+          setPageDraft({ title: latest.title, icon: latest.icon ?? '', content: latest.content })
+          setReloadToken((t) => t + 1)
+        } catch (e) { pageDiscardRef.current = false; setError((e as Error).message) }
+      }}
+      onRetry={async (content) => {
+        try {
+          const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
+          pageSnapshots.current.set(pageEditor.id, latest)
+          await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...latest, content, version: latest.version }) })
+          const newVersion = (latest.version || 0) + 1
+          pageVersions.current.set(pageEditor.id, newVersion)
+          pageSnapshots.current.set(pageEditor.id, { ...latest, content, version: newVersion })
+          if (pageEditorRef.current?.id === pageEditor.id) {
+            pageEditorRef.current.version = newVersion
+            pageEditorRef.current.title = latest.title
+            pageEditorRef.current.icon = latest.icon
+            pageEditorRef.current.cover = latest.cover
+            pageEditorRef.current.parentId = latest.parentId
+            pageEditorRef.current.content = content
+            pageTitleRef.current = latest.title
+          }
+        } catch (e) { setError((e as Error).message); throw e }
+      }}
+      onStatus={(s) => { if (s === 'saved') setPageLeaveError(false) }}
     />
   )}
       </div>
@@ -637,9 +790,13 @@ export default function App() {
       {cmdOpen && (
         <div className="modal-backdrop" onClick={() => setCmdOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
-            <input className="input" style={{ width: '100%', marginBottom: 8 }} autoFocus placeholder="Search pages, projects, issues..." value={cmdQuery} onChange={(e) => setCmdQuery(e.target.value)} />
+            <input className="input" style={{ width: '100%', marginBottom: 8 }} autoFocus placeholder="Search pages, projects, issues..." value={cmdQuery} onChange={(e) => setCmdQuery(e.target.value)} onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setCmdIndex((i) => Math.min(i + 1, cmdResults.length - 1)) }
+              else if (e.key === 'ArrowUp') { e.preventDefault(); setCmdIndex((i) => Math.max(i - 1, 0)) }
+              else if (e.key === 'Enter') { e.preventDefault(); cmdResults[cmdIndex]?.action() }
+            }} />
             <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-              {cmdResults.map((r, i) => <div key={i} className="tree-item" onClick={r.action}>{r.label}</div>)}
+              {cmdResults.map((r, i) => <div key={i} className="tree-item" style={{ background: i === cmdIndex ? 'var(--hover)' : 'transparent' }} onClick={r.action}>{r.label}</div>)}
               {cmdResults.length === 0 && <div className="empty">No results</div>}
             </div>
           </div>
