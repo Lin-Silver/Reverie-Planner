@@ -248,13 +248,13 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		id := r.URL.Query().Get("id")
 		if id != "" {
-			row := a.DB.QueryRow(`SELECT id, project_id, workspace, parent_id, title, icon, cover, content, created_by, created_at, updated_at, version FROM pages WHERE id=?`, id)
+			row := a.DB.QueryRow(`SELECT id, project_id, workspace, parent_id, title, icon, cover, content, created_by, created_at, updated_at, version, linked_database_id, linked_view_id FROM pages WHERE id=?`, id)
 			var p Page
 			var created, updated string
-			var pid, parent, icon, cover, content, createdBy sqlNullString
+			var pid, parent, icon, cover, content, createdBy, linkedDB, linkedView sqlNullString
 			var ws int
 			var version int
-			if err := row.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &content, &createdBy, &created, &updated, &version); err != nil {
+			if err := row.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &content, &createdBy, &created, &updated, &version, &linkedDB, &linkedView); err != nil {
 				writeJSON(w, 404, map[string]string{"error": "not found"})
 				return
 			}
@@ -268,6 +268,8 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 			p.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			p.UpdatedAt, _ = time.Parse(time.RFC3339, updated)
 			p.Version = version
+			p.LinkedDatabaseID = linkedDB.String
+			p.LinkedViewID = linkedView.String
 			writeJSON(w, 200, p)
 			return
 		}

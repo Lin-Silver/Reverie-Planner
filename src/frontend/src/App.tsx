@@ -13,7 +13,7 @@ type Overview = { projectCount: number; taskCount: number; completedCount: numbe
 type Provider = { id: string; label: string; provider: string; baseURL: string; model: string; temperature: number; maxTokens: number; enabled: boolean; streaming: boolean; toolCalling: boolean; apiKeyConfigured: boolean }
 type TaskDraft = { projectId: string; title: string; description: string; status: TaskStatus; priority: Priority; dueDate: string; assignee: string }
 type ChatMessage = { role: 'user' | 'assistant'; content: string; id: string }
-type Page = { id: string; projectId?: string; workspace: boolean; parentId?: string; title: string; icon?: string; cover?: string; content: string; version?: number; createdBy: string; createdAt: string; updatedAt: string }
+type Page = { id: string; projectId?: string; workspace: boolean; parentId?: string; linkedDatabaseId?: string; linkedViewId?: string; title: string; icon?: string; cover?: string; content: string; version?: number; createdBy: string; createdAt: string; updatedAt: string }
 type Cycle = { id: string; projectId: string; name: string; description?: string; startDate?: string; endDate?: string; status: string; createdAt: string }
 type Module = { id: string; projectId: string; name: string; description?: string; status: string; lead?: string; startDate?: string; endDate?: string; createdAt: string }
 type Notification = { id: string; title: string; body?: string; type: string; read: boolean; createdAt: string }
@@ -70,6 +70,7 @@ export default function App() {
   const [projectDraft, setProjectDraft] = useState({ name: '', description: '', status: 'planning' as ProjectStatus, owner: 'You', color: 'cyan' })
   const [pageEditor, setPageEditor] = useState<Page | null>(null)
   const [pageDatabaseId, setPageDatabaseId] = useState<string>('')
+  const [pageDatabaseViewId, setPageDatabaseViewId] = useState<string>('')
   const [pageDraft, setPageDraft] = useState({ title: 'Untitled', icon: '', content: '' })
   const [pageLeaveError, setPageLeaveError] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState('')
@@ -253,14 +254,17 @@ export default function App() {
         }
       }
       let openedId = page?.id
+      let openedFull: Page | undefined = page
       if (page) {
         let full = page
-        if (page.content === undefined || page.content === '') {
+        if (page.content === undefined || page.content === '' || page.linkedDatabaseId === undefined) {
           try { full = await apiFetch<Page>(`/api/pages?id=${page.id}`) } catch {}
         }
         pageVersions.current.set(full.id, full.version || 1)
         pageSnapshots.current.set(full.id, full)
         setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
+        openedId = full.id
+        openedFull = full
     }
       else {
         try {
@@ -273,8 +277,12 @@ export default function App() {
     // check if this page hosts a database
     try {
       const dbs = await apiFetch<any[]>('/api/databases')
-      const found = (dbs || []).find((d: any) => d.pageId === openedId)
+      let found = (dbs || []).find((d: any) => d.pageId === openedId)
+      if (!found && openedFull?.linkedDatabaseId) {
+        found = (dbs || []).find((d: any) => d.id === openedFull!.linkedDatabaseId)
+      }
       setPageDatabaseId(found ? found.id : '')
+      setPageDatabaseViewId(openedFull?.linkedViewId || '')
     } catch {}
     setView('page')
   }
@@ -463,7 +471,7 @@ export default function App() {
 
   if (view === 'page') {
     if (pageDatabaseId) {
-      return <DatabaseView databaseId={pageDatabaseId} onBack={() => { setPageDatabaseId(''); setView('home') }} />
+      return <DatabaseView databaseId={pageDatabaseId} viewId={pageDatabaseViewId || undefined} onBack={() => { setPageDatabaseId(''); setPageDatabaseViewId(''); setView('home') }} />
     }
     return (
       <div className="page-wrap">

@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -65,16 +66,30 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rows, _ := a.DB.Query(`SELECT id, page_id, title, icon, version, created_at, updated_at FROM databases ORDER BY created_at ASC`)
-		defer rows.Close()
-		out := []Database{}
+		type rawDB struct {
+			d       Database
+			icon    sql.NullString
+			created string
+			updated string
+		}
+		var raws []rawDB
 		for rows.Next() {
-			var d Database
-			var icon sql.NullString
-			var created, updated string
-			_ = rows.Scan(&d.ID, &d.PageID, &d.Title, &icon, &d.Version, &created, &updated)
-			d.Icon = icon.String
-			d.CreatedAt = created
-			d.UpdatedAt = updated
+			var r rawDB
+			_ = rows.Scan(&r.d.ID, &r.d.PageID, &r.d.Title, &r.icon, &r.d.Version, &r.created, &r.updated)
+			raws = append(raws, r)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		rows.Close()
+		out := []Database{}
+		for _, r := range raws {
+			d := r.d
+			d.Icon = r.icon.String
+			d.CreatedAt = r.created
+			d.UpdatedAt = r.updated
 			d.Properties, _ = a.listProperties(d.ID)
 			d.Views, _ = a.listViews(d.ID)
 			out = append(out, d)
@@ -360,8 +375,27 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 409, map[string]string{"error": "version conflict"})
 			return
 		}
-		// update values
+		// validate property ownership and values
+		propType := map[string]string{}
+		propRows, _ := tx.Query(`SELECT id, type FROM db_properties WHERE database_id=?`, dbID)
+		for propRows.Next() {
+			var pid, ptype string
+			_ = propRows.Scan(&pid, &ptype)
+			propType[pid] = ptype
+		}
+		propRows.Close()
 		for propID, val := range body.Values {
+			pt, ok := propType[propID]
+			if !ok {
+				tx.Rollback()
+				writeJSON(w, 400, map[string]string{"error": "unknown property"})
+				return
+			}
+			if err := validatePropertyValue(pt, val); err != nil {
+				tx.Rollback()
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
+				return
+			}
 			vb, _ := json.Marshal(val)
 			// upsert
 			var exists int
@@ -516,7 +550,55 @@ func (a *AppContext) handleDBLinkedView(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	// link page to database via app state (store linkedDatabaseId in page? reuse pages table: add column lazily)
-	_, _ = a.DB.Exec(`UPDATE pages SET updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), body.PageID)
+	_, _ = a.DB.Exec(`UPDATE pages SET linked_database_id=?, linked_view_id=?, updated_at=? WHERE id=?`, body.DatabaseID, v.ID, time.Now().UTC().Format(time.RFC3339), body.PageID)
 	writeJSON(w, 201, v)
+}
+
+func validatePropertyValue(propType string, val any) error {
+	if val == nil {
+		return nil
+	}
+	switch propType {
+	case "number":
+		switch val.(type) {
+		case float64, int, int64, json.Number:
+		default:
+			return fmt.Errorf("invalid number value")
+		}
+	case "checkbox":
+		if _, ok := val.(bool); !ok {
+			return fmt.Errorf("invalid checkbox value")
+		}
+	case "select":
+		if _, ok := val.(string); !ok {
+			return fmt.Errorf("invalid select value")
+		}
+	case "multi_select":
+		arr, ok := val.([]any)
+		if !ok {
+			return fmt.Errorf("invalid multi_select value")
+		}
+		for _, x := range arr {
+			if _, ok := x.(string); !ok {
+				return fmt.Errorf("invalid multi_select item")
+			}
+		}
+	case "date":
+		s, ok := val.(string)
+		if !ok {
+			return fmt.Errorf("invalid date value")
+		}
+		if s != "" {
+			if _, err := time.Parse(time.RFC3339, s); err != nil {
+				if _, err2 := time.Parse("2006-01-02", s); err2 != nil {
+					return fmt.Errorf("invalid date format")
+				}
+			}
+		}
+	case "url", "email", "text", "title":
+		if _, ok := val.(string); !ok {
+			return fmt.Errorf("invalid %s value", propType)
+		}
+	}
+	return nil
 }

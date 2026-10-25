@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-const API = 'http://127.0.0.1:18765'
+
 
 type DBProperty = { id: string; databaseId: string; name: string; type: string; config: string; position: number; visible: boolean; version: number }
 type DBView = { id: string; databaseId: string; name: string; type: string; config: string; position: number; version: number }
@@ -8,16 +8,16 @@ type Database = { id: string; pageId: string; title: string; icon: string; prope
 type DBRecord = { id: string; databaseId: string; title: string; pageId: string; values: Record<string, any>; version: number; createdAt: string; updatedAt: string }
 
 async function api(path: string, opts?: RequestInit) {
-  const res = await fetch(`${API}${path}`, { headers: { 'Content-Type': 'application/json' }, ...opts })
+  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts })
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   if (res.status === 204) return null
   return res.json()
 }
 
-export default function DatabaseView({ databaseId, onBack }: { databaseId: string; onBack: () => void }) {
+export default function DatabaseView({ databaseId, viewId: initialViewId, onBack }: { databaseId: string; viewId?: string; onBack: () => void }) {
   const [db, setDb] = useState<Database | null>(null)
   const [records, setRecords] = useState<DBRecord[]>([])
-  const [viewId, setViewId] = useState<string>('')
+  const [viewId, setViewId] = useState<string>(initialViewId || '')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -90,6 +90,13 @@ export default function DatabaseView({ databaseId, onBack }: { databaseId: strin
           setDb({ ...db, views: [...db.views, v] })
           setViewId(v.id)
         }}>+ View</button>
+        <button className="btn" onClick={async () => {
+          try {
+            const pg = await api('/api/pages', { method: 'POST', body: JSON.stringify({ title: `${db.title} (linked)`, workspace: true, createdBy: 'You' }) }) as any
+            await api('/api/db/linked-view', { method: 'POST', body: JSON.stringify({ databaseId, pageId: pg.id, name: 'Linked view' }) })
+            alert('Linked view page created: open it from the sidebar.')
+          } catch (e) { setError((e as Error).message) }
+        }}>+ Linked view page</button>
       </div>
       {view?.type === 'table' && <TableView records={records} props={props} updateRecord={updateRecord} deleteProperty={deleteProperty} />}
       {view?.type === 'board' && <BoardView records={records} props={props} />}

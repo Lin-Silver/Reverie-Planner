@@ -585,6 +585,8 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 		`ALTER TABLE tasks ADD COLUMN sequence_no INTEGER DEFAULT 0`,
 		`ALTER TABLE tasks ADD COLUMN labels_json TEXT`,
 		`ALTER TABLE tasks ADD COLUMN deleted_at TEXT`,
+		`ALTER TABLE pages ADD COLUMN linked_database_id TEXT`,
+		`ALTER TABLE pages ADD COLUMN linked_view_id TEXT`,
 	} {
 		_, _ = db.Exec(stmt)
 	}
