@@ -40,6 +40,7 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
   const doSaveRef = useRef<(c: string) => Promise<void>>(async () => {})
   const [status, setStatus] = useState<SaveStatus>(initialStatus || 'saved')
   const isDiscarded = useRef(false)
+  const conflictLocked = useRef(false)
 
   const updateStatus = useCallback((s: SaveStatus) => {
     setStatus(s)
@@ -57,34 +58,42 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
 
   useEffect(() => {
     if (showConflict) {
+      conflictLocked.current = true
+      if (timer.current) { clearTimeout(timer.current); timer.current = null }
+      if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
       updateStatus('conflict')
+    } else {
+      conflictLocked.current = false
     }
   }, [showConflict, updateStatus])
 
   useEffect(() => { onSaveRef.current = onSave }, [onSave])
 
   const doSave = useCallback(async (content: string) => {
-    if (isDiscarded.current) return
+    if (isDiscarded.current || conflictLocked.current) return
     const reqId = ++latestReq.current
     updateStatus('saving')
     try {
       await onSaveRef.current(pageId, content)
-      if (isDiscarded.current) return
+      if (isDiscarded.current || conflictLocked.current) return
       if (reqId === latestReq.current) {
         updateStatus('saved')
         pendingContent.current = null
       }
     } catch (e) {
-      if (isDiscarded.current) return
+      if (isDiscarded.current || conflictLocked.current) return
       if (reqId === latestReq.current) {
         if ((e as Error).message.includes('version conflict')) {
+          conflictLocked.current = true
+          if (timer.current) { clearTimeout(timer.current); timer.current = null }
+          if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
           updateStatus('conflict')
         } else {
           updateStatus('error')
           pendingContent.current = content
           if (retryTimer.current) clearTimeout(retryTimer.current)
           retryTimer.current = setTimeout(() => {
-            if (!isDiscarded.current && pendingContent.current === content) doSaveRef.current(content)
+            if (!isDiscarded.current && !conflictLocked.current && pendingContent.current === content) doSaveRef.current(content)
           }, 3000)
         }
       }
@@ -92,7 +101,7 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
   }, [updateStatus, pageId])
 
   const scheduleSave = useCallback((content: string) => {
-    if (isDiscarded.current) return
+    if (isDiscarded.current || conflictLocked.current) return
     pendingContent.current = content
     onContentChange?.(content)
     updateStatus('unsaved')
@@ -149,7 +158,7 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
       {status === 'conflict' && (
         <div className="row" style={{ marginBottom: 8, gap: 8 }}>
           <button className="btn" onClick={async () => { await onReload(); }}>Reload latest</button>
-          <button className="btn primary" onClick={() => { const c = JSON.stringify(editor.document); onRetry(c).then(() => { updateStatus('saved'); pendingContent.current = null }).catch(() => updateStatus('error')) }}>Retry my changes</button>
+          <button className="btn primary" onClick={() => { const c = JSON.stringify(editor.document); onRetry(c).then(() => { conflictLocked.current = false; updateStatus('saved'); pendingContent.current = null }).catch(() => updateStatus('error')) }}>Retry my changes</button>
         </div>
       )}
       <BlockNoteView editor={editor} theme={theme} />

@@ -284,9 +284,21 @@ test('navigation: conflict on leave preserves draft and shows failure', async ({
     await expect(pageB.locator('.bn-editor')).toContainText('Body from client B')
     await expect(pageB.getByText(/Save failed|Version conflict/).first()).toBeVisible({ timeout: 10000 })
 
-    const final = await fetchPage(pageB, pageId)
-    expect(final.content).toContain('Body from client A')
-    expect(final.content).not.toContain('Body from client B')
+    // Wait through debounce (1s) + retry window (3s) + margin to ensure no auto-save overwrites
+    await pageB.waitForTimeout(5000)
+
+    const mid = await fetchPage(pageB, pageId)
+    expect(mid.content).toContain('Body from client A')
+    expect(mid.content).not.toContain('Body from client B')
+
+    await expect(pageB.locator('.bn-editor')).toContainText('Body from client B')
+
+    // Explicitly Retry -> B's content replaces
+    await pageB.getByText('Retry my changes').click()
+    await expect.poll(async () => {
+      const p = await fetchPage(pageB, pageId)
+      return p.content
+    }, { timeout: 10000 }).toContain('Body from client B')
 
     await contextA.close()
     await contextB.close()
