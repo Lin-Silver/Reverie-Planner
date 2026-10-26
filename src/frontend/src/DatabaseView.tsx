@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
+import { matchesFilters, newFilterGroup, type FilterGroup } from './databaseFilters'
+import DatabaseFilterBuilder from './DatabaseFilterBuilder'
 
 
 
 type ViewType = 'table' | 'board' | 'calendar' | 'list' | 'gallery'
 const VIEW_TYPES: ViewType[] = ['table', 'board', 'calendar', 'list', 'gallery']
-type ViewConfig = { filter?: string; sort?: string; groupBy?: string; dateProperty?: string }
+type ViewConfig = { filter?: string; sort?: string; groupBy?: string; dateProperty?: string; filterTree?: FilterGroup }
 
 type DBProperty = { id: string; databaseId: string; name: string; type: string; config: string; position: number; visible: boolean; version: number }
 type DBView = { id: string; databaseId: string; name: string; type: string; config: string; position: number; version: number }
@@ -24,6 +26,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [viewId, setViewId] = useState<string>(initialViewId || '')
   const [newViewType, setNewViewType] = useState<ViewType>('table')
   const [filterText, setFilterText] = useState('')
+  const [filterTree, setFilterTree] = useState<FilterGroup>(() => newFilterGroup())
   const [sortProp, setSortProp] = useState('')
   const [groupBy, setGroupBy] = useState('')
   const [dateProperty, setDateProperty] = useState('')
@@ -55,6 +58,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     let cfg: ViewConfig = {}
     try { cfg = JSON.parse(view?.config || '{}') as ViewConfig } catch { /* old invalid view */ }
     setFilterText(cfg.filter || '')
+    setFilterTree(cfg.filterTree?.kind === 'group' && Array.isArray(cfg.filterTree.children) ? cfg.filterTree : newFilterGroup())
     setSortProp(cfg.sort || '')
     setGroupBy(cfg.groupBy || '')
     setDateProperty(cfg.dateProperty || '')
@@ -63,12 +67,12 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const saveViewSettings = async () => {
     if (!view) return
     try {
-      const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...view, config: JSON.stringify({ filter: filterText, sort: sortProp, groupBy, dateProperty }) }) }) as DBView
+      const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...view, config: JSON.stringify({ filter: filterText, filterTree, sort: sortProp, groupBy, dateProperty }) }) }) as DBView
       setDb(current => current && ({ ...current, views: current.views.map(v => v.id === updated.id ? updated : v) }))
       setError('')
     } catch (e) { setError((e as Error).message) }
   }
-  const visibleRecords = records.filter(rec => !filterText || (rec.title + ' ' + Object.values(rec.values || {}).join(' ')).toLowerCase().includes(filterText.toLowerCase())).sort((a,b) => {
+  const visibleRecords = records.filter(rec => matchesFilters(rec, props, filterTree) && (!filterText || (rec.title + ' ' + Object.values(rec.values || {}).join(' ')).toLowerCase().includes(filterText.toLowerCase()))).sort((a,b) => {
     if (!sortProp) return 0
     const left = sortProp === 'title' ? a.title : a.values?.[sortProp]
     const right = sortProp === 'title' ? b.title : b.values?.[sortProp]
@@ -183,6 +187,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         {view?.type === 'calendar' && <select aria-label="Calendar date property" value={dateProperty} onChange={e => setDateProperty(e.target.value)}><option value="">First date property</option>{props.filter(p => p.type === 'date').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
         <button onClick={() => void saveViewSettings()}>Save view settings</button>
       </div>
+      <details style={{ marginBottom: 10 }}><summary>Advanced filters (AND / OR)</summary><DatabaseFilterBuilder group={filterTree} properties={props} onChange={setFilterTree} /></details>
       {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} onOpenRecord={guardedOpen} />}
       {view?.type === 'board' && <BoardView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={guardedOpen} />}
       {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={guardedOpen} />}
