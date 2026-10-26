@@ -178,9 +178,13 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 		out, _ := a.getDatabase(d.ID)
 		writeJSON(w, 200, out)
 	case http.MethodDelete:
-		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM databases WHERE id=?`, id)
-		w.WriteHeader(204)
+        id:=r.URL.Query().Get("id")
+        result,err:=a.DB.Exec("UPDATE databases SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        changed,err:=result.RowsAffected()
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        if changed!=1 {writeJSON(w,404,map[string]string{"error":"database not found"});return}
+        w.WriteHeader(204)
 	default:
 		w.WriteHeader(405)
 	}
@@ -314,25 +318,11 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		var kind string
 		if err := a.DB.QueryRow(`SELECT type FROM db_properties WHERE id=? AND deleted_at IS NULL`, id).Scan(&kind); err != nil { writeJSON(w, 404, map[string]string{"error": "property not found"}); return }
 		if kind == "title" { writeJSON(w, 400, map[string]string{"error": "title property cannot be deleted"}); return }
-		tx, err := a.DB.Begin()
-		if err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
-		if _, err := tx.Exec(`DELETE FROM db_values WHERE property_id=?`, id); err != nil {
-			tx.Rollback()
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
-		if _, err := tx.Exec(`DELETE FROM db_properties WHERE id=?`, id); err != nil {
-			tx.Rollback()
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := tx.Commit(); err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
+        result,err:=a.DB.Exec("UPDATE db_properties SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        changed,err:=result.RowsAffected()
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        if changed!=1 {writeJSON(w,404,map[string]string{"error":"property not found"});return}
 		w.WriteHeader(204)
 	default:
 		w.WriteHeader(405)
@@ -536,25 +526,11 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, rec)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		tx, err := a.DB.Begin()
-		if err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
-		if _, err := tx.Exec(`DELETE FROM db_values WHERE record_id=?`, id); err != nil {
-			tx.Rollback()
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
-		if _, err := tx.Exec(`DELETE FROM db_records WHERE id=?`, id); err != nil {
-			tx.Rollback()
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := tx.Commit(); err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
+        result,err:=a.DB.Exec("UPDATE db_records SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        changed,err:=result.RowsAffected()
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        if changed!=1 {writeJSON(w,404,map[string]string{"error":"record not found"});return}
 		w.WriteHeader(204)
 	default:
 		w.WriteHeader(405)
@@ -655,14 +631,14 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
         if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         defer tx.Rollback()
         var dbID string
-        if err:=tx.QueryRow("SELECT database_id FROM db_views WHERE id=?",id).Scan(&dbID);err!=nil {writeJSON(w,404,map[string]string{"error":"view not found"});return}
+        if err:=tx.QueryRow("SELECT database_id FROM db_views WHERE id=? AND deleted_at IS NULL",id).Scan(&dbID);err!=nil {writeJSON(w,404,map[string]string{"error":"view not found"});return}
         var refs int
         if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE linked_view_id=?",id).Scan(&refs);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         if refs!=0 {writeJSON(w,409,map[string]string{"error":"linked view is still used by pages"});return}
         var total int
-        if err:=tx.QueryRow("SELECT COUNT(*) FROM db_views WHERE database_id=?",dbID).Scan(&total);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        if err:=tx.QueryRow("SELECT COUNT(*) FROM db_views WHERE database_id=? AND deleted_at IS NULL",dbID).Scan(&total);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         if total<=1 {writeJSON(w,409,map[string]string{"error":"cannot remove last database view"});return}
-        deleted,err:=tx.Exec("DELETE FROM db_views WHERE id=?",id)
+        deleted,err:=tx.Exec("UPDATE db_views SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
         if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         count,err:=deleted.RowsAffected()
         if err!=nil || count!=1 {writeJSON(w,409,map[string]string{"error":"view changed during deletion"});return}
