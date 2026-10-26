@@ -33,6 +33,8 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
   const blocks = useMemo(() => parseBlocks(initialContent), [initialContent])
   const editor = useCreateBlockNote({ initialContent: blocks })
   const latestReq = useRef(0)
+  // A completed request must not acknowledge edits made while it was in flight.
+  const editRevision = useRef(0)
   const pendingContent = useRef<string | null>(null)
   const timer = useRef<any>(null)
   const retryTimer = useRef<any>(null)
@@ -70,13 +72,19 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
   const doSave = useCallback(async (content: string) => {
     if (isDiscarded.current || conflictLocked.current) return
     const reqId = ++latestReq.current
+    const saveRevision = editRevision.current
     updateStatus('saving')
     try {
       await onSaveRef.current(pageId, content)
       if (isDiscarded.current || conflictLocked.current) return
       if (reqId === latestReq.current) {
-        updateStatus('saved')
-        pendingContent.current = null
+        if (saveRevision === editRevision.current && pendingContent.current === content) {
+          updateStatus('saved')
+          pendingContent.current = null
+        } else {
+          // The debounce for a newer draft is still pending; keep it available to flush.
+          updateStatus('unsaved')
+        }
       }
     } catch (e) {
       if (isDiscarded.current || conflictLocked.current) return
@@ -86,6 +94,9 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
           if (timer.current) { clearTimeout(timer.current); timer.current = null }
           if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
           updateStatus('conflict')
+        } else if (saveRevision !== editRevision.current) {
+          // Do not replace a newer draft or retry an obsolete payload.
+          updateStatus('unsaved')
         } else {
           updateStatus('error')
           pendingContent.current = content
@@ -100,6 +111,7 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
 
   const scheduleSave = useCallback((content: string) => {
     if (isDiscarded.current || conflictLocked.current) return
+    editRevision.current += 1
     pendingContent.current = content
     onContentChange?.(content)
     updateStatus('unsaved')
@@ -150,7 +162,7 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
 
   return (
     <div>
-      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
+      <div data-testid="page-save-status" style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
         Status: {status === 'error' ? 'Save failed (retrying…)' : status === 'conflict' ? 'Version conflict' : status}
       </div>
       {status === 'conflict' && (
