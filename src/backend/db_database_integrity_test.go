@@ -111,3 +111,30 @@ func TestDatabaseTitlePropertyCannotBeDeletedOrConverted(t *testing.T) {
     if err != nil { t.Fatal(err) }
     if len(current.Properties)!=1 || current.Properties[0].Type!="title" || current.Properties[0].Version!=titleProp.Version { t.Fatalf("title property corrupted: %+v",current.Properties) }
 }
+
+
+func TestDatabaseRecordCannotHijackUnrelatedPage(t *testing.T) {
+    ctx := setupTestContext(t)
+    defer ctx.DB.Close()
+    db, _ := dbRegressionCreate(t, ctx)
+    unrelated := db.PageID
+    response := dbRegressionCall(t, ctx, "POST", "/api/db/records", `{"databaseId":"`+db.ID+`","title":"Hijack","pageId":"`+unrelated+`"}`, ctx.handleDBRecords)
+    if response.Code != 400 { t.Fatalf("arbitrary existing page accepted as record backing page: %d %s", response.Code, response.Body.String()) }
+    var total int
+    if err := ctx.DB.QueryRow(`SELECT COUNT(*) FROM db_records WHERE database_id=?`,db.ID).Scan(&total); err != nil { t.Fatal(err) }
+    if total != 1 { t.Fatalf("malformed record created: %d",total) }
+}
+
+func TestDatabaseRecordTitleChangeVersionsBackingPage(t *testing.T) {
+    ctx := setupTestContext(t)
+    defer ctx.DB.Close()
+    _, rec := dbRegressionCreate(t, ctx)
+    var previousVersion int
+    if err := ctx.DB.QueryRow(`SELECT version FROM pages WHERE id=?`,rec.PageID).Scan(&previousVersion); err != nil { t.Fatal(err) }
+    response := dbRegressionCall(t, ctx, "PUT", "/api/db/records", `{"id":"`+rec.ID+`","version":1,"title":"Revised","values":{}}`, ctx.handleDBRecords)
+    if response.Code != 200 { t.Fatalf("record title change failed: %d %s",response.Code,response.Body.String()) }
+    var nextVersion int
+    var title string
+    if err := ctx.DB.QueryRow(`SELECT title, version FROM pages WHERE id=?`,rec.PageID).Scan(&title,&nextVersion); err != nil { t.Fatal(err) }
+    if title != "Revised" || nextVersion != previousVersion+1 { t.Fatalf("page version/title mismatch: %q, %d -> %d",title,previousVersion,nextVersion) }
+}
