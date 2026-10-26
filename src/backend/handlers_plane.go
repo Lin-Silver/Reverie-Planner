@@ -815,24 +815,38 @@ func (a *AppContext) handleNotifications(w http.ResponseWriter, r *http.Request)
 func (a *AppContext) handleStickies(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		rows, _ := a.DB.Query(`SELECT id, title, body, color, created_at FROM stickies ORDER BY created_at DESC`)
+		rows, err := a.DB.Query(`SELECT id, title, body, color, created_at FROM stickies ORDER BY created_at DESC`)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to list stickies")
+			return
+		}
 		defer rows.Close()
 		out := []Sticky{}
 		for rows.Next() {
 			var s Sticky
 			var created string
 			var title, body, color sqlNullString
-			_ = rows.Scan(&s.ID, &title, &body, &color, &created)
+			if err := rows.Scan(&s.ID, &title, &body, &color, &created); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "failed to read sticky")
+				return
+			}
 			s.Title = title.String
 			s.Body = body.String
 			s.Color = color.String
 			s.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			out = append(out, s)
 		}
-		writeJSON(w, 200, out)
+		if err := rows.Err(); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to list stickies")
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
 		var s Sticky
-		_ = json.NewDecoder(r.Body).Decode(&s)
+		if _, err := decodeJSONRequest(r, &s); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON payload")
+			return
+		}
 		if s.ID == "" {
 			s.ID = newID("sticky")
 		}
@@ -840,14 +854,35 @@ func (a *AppContext) handleStickies(w http.ResponseWriter, r *http.Request) {
 			s.Color = "yellow"
 		}
 		s.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`INSERT INTO stickies (id, title, body, color, created_at) VALUES (?,?,?,?,?)`, s.ID, nullStr(s.Title), s.Body, s.Color, s.CreatedAt.Format(time.RFC3339))
-		writeJSON(w, 201, s)
+		if _, err := a.DB.Exec(`INSERT INTO stickies (id, title, body, color, created_at) VALUES (?,?,?,?,?)`,
+			s.ID, nullStr(s.Title), s.Body, s.Color, s.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to create sticky")
+			return
+		}
+		writeJSON(w, http.StatusCreated, s)
 	case http.MethodDelete:
-		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM stickies WHERE id=?`, id)
-		w.WriteHeader(204)
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			writeJSONError(w, http.StatusBadRequest, "id required")
+			return
+		}
+		result, err := a.DB.Exec(`DELETE FROM stickies WHERE id=?`, id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to delete sticky")
+			return
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to verify sticky deletion")
+			return
+		}
+		if affected == 0 {
+			writeJSONError(w, http.StatusNotFound, "sticky not found")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
-		w.WriteHeader(405)
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
@@ -948,39 +983,74 @@ func (a *AppContext) handleViews(w http.ResponseWriter, r *http.Request) {
 			args = append(args, projectID)
 		}
 		q += ` ORDER BY created_at DESC`
-		rows, _ := a.DB.Query(q, args...)
+		rows, err := a.DB.Query(q, args...)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to list views")
+			return
+		}
 		defer rows.Close()
 		out := []View{}
 		for rows.Next() {
 			var v View
 			var created string
 			var pid, filters sqlNullString
-			_ = rows.Scan(&v.ID, &pid, &v.Name, &filters, &created)
+			if err := rows.Scan(&v.ID, &pid, &v.Name, &filters, &created); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "failed to read view")
+				return
+			}
 			v.ProjectID = pid.String
 			v.Filters = filters.String
 			v.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			out = append(out, v)
 		}
-		writeJSON(w, 200, out)
+		if err := rows.Err(); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to list views")
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
 		var v View
-		_ = json.NewDecoder(r.Body).Decode(&v)
+		if _, err := decodeJSONRequest(r, &v); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON payload")
+			return
+		}
+		if strings.TrimSpace(v.Name) == "" {
+			writeJSONError(w, http.StatusBadRequest, "name required")
+			return
+		}
 		if v.ID == "" {
 			v.ID = newID("view")
 		}
-		if v.Name == "" {
-			writeJSON(w, 400, map[string]string{"error": "name required"})
+		v.CreatedAt = time.Now().UTC().Truncate(time.Second)
+		if _, err := a.DB.Exec(`INSERT INTO views (id, project_id, name, filters, created_at) VALUES (?,?,?,?,?)`,
+			v.ID, nullStr(v.ProjectID), v.Name, v.Filters, v.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to create view")
 			return
 		}
-		v.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`INSERT INTO views (id, project_id, name, filters, created_at) VALUES (?,?,?,?,?)`, v.ID, nullStr(v.ProjectID), v.Name, v.Filters, v.CreatedAt.Format(time.RFC3339))
-		writeJSON(w, 201, v)
+		writeJSON(w, http.StatusCreated, v)
 	case http.MethodDelete:
-		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM views WHERE id=?`, id)
-		w.WriteHeader(204)
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			writeJSONError(w, http.StatusBadRequest, "id required")
+			return
+		}
+		result, err := a.DB.Exec(`DELETE FROM views WHERE id=?`, id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to delete view")
+			return
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to verify view deletion")
+			return
+		}
+		if affected == 0 {
+			writeJSONError(w, http.StatusNotFound, "view not found")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
-		w.WriteHeader(405)
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
