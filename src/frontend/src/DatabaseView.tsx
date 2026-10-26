@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { matchesFilters, newFilterGroup, type FilterGroup } from './databaseFilters'
 import DatabaseFilterBuilder from './DatabaseFilterBuilder'
 import DatabasePropertyDialog from './DatabasePropertyDialog'
@@ -253,6 +253,26 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
 
 type RecordUpdate = (rec: DBRecord, patch: { title?: string; values?: Record<string, any> }) => Promise<void>
 type OpenRecord = (pageId: string) => void
+// Native arrow keys remain available for caret movement. Alt+Arrow moves
+// focus between data cells without committing an unchanged value.
+function navigateTableCell(event: KeyboardEvent<HTMLTableCellElement>) {
+  if (!event.altKey || !['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) return
+  const origin=event.currentTarget
+  const row=origin.parentElement as HTMLTableRowElement | null
+  if (!row || !row.parentElement) return
+  const offset=event.key==='ArrowLeft'?-1:event.key==='ArrowRight'?1:0
+  let target: HTMLTableCellElement | undefined
+  if(offset)target=row.cells[origin.cellIndex+offset] as HTMLTableCellElement | undefined
+  else {
+    const adjacent=event.key==='ArrowUp'?row.previousElementSibling:row.nextElementSibling
+    target=(adjacent as HTMLTableRowElement | null)?.cells[origin.cellIndex] as HTMLTableCellElement | undefined
+  }
+  if (!target?.hasAttribute('data-column-id')) return
+  const control=target.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input,select,textarea')
+  if (!control || control.disabled) return
+  event.preventDefault()
+  control.focus()
+}
 function TableView({ records, props, updateRecord, deleteProperty, deleteRecord, onOpenRecord, columnOrder, setColumnOrder, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidths, selectedRecords, setSelectedRecords }: {
   records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; deleteProperty: (id: string) => Promise<void>;
   deleteRecord: (id: string) => Promise<void>; onOpenRecord?: OpenRecord;
@@ -278,7 +298,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
       <div role="group" aria-label="Column visibility" style={{display:'flex',gap:10,flexWrap:'wrap',padding:8}}>
         {props.map(p=><label key={p.id}><input type="checkbox" checked={!hiddenColumns.includes(p.id)} disabled={p.type==='title'} onChange={()=>toggle(p.id)} />{p.name}</label>)}
       </div>
-      <small>Column order and widths are stored with this view when you click Save view settings.</small>
+      <small>Column order and widths are stored with this view when you click Save view settings. Use Alt+Arrow keys to move between editable cells; Enter saves, Escape cancels.</small>
     </details>
     {selectedRecords.length>0&&<div style={{marginBottom:8}}>
       <strong>{selectedRecords.length} selected</strong>
@@ -306,7 +326,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
       <tbody>{records.map(rec=><tr key={rec.id} data-testid="database-record-row" data-record-id={rec.id}>
         <td><input aria-label={'Select record '+rec.title} type="checkbox" checked={selectedRecords.includes(rec.id)} onChange={e=>setSelectedRecords(e.target.checked?[...selectedRecords,rec.id]:selectedRecords.filter(id=>id!==rec.id))}/></td>
         <td><button onClick={()=>rec.pageId&&onOpenRecord?.(rec.pageId)}>Open page</button><button aria-label={'Delete record '+rec.title} onClick={()=>{void deleteRecord(rec.id)}}>Delete</button></td>
-        {visibleProps.map(p=><td key={p.id} style={{border:'1px solid var(--border)',padding:4,width:columnWidths[p.id]||160}}>
+        {visibleProps.map(p=><td key={p.id} data-column-id={p.id} onKeyDown={navigateTableCell} style={{border:'1px solid var(--border)',padding:4,width:columnWidths[p.id]||160}}>
           <Cell prop={p} recordId={rec.id} value={p.type==='title'?rec.title:rec.values?.[p.id]} onChange={value=>{
             void updateRecord(rec,p.type==='title'?{title:String(value)}:{values:{[p.id]:value}})
           }} />
