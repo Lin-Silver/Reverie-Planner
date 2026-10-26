@@ -575,6 +575,9 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 			return nil, err
 		}
 	}
+	// Database migration 8 is conditional because older releases added linked columns
+	// outside schema_migrations. It must preserve both legacy and fresh databases.
+	if err := migrateDatabaseLinkedColumns(db); err != nil { _ = db.Close(); return nil, err }
 	// Ensure extended task columns exist (idempotent).
 	for _, stmt := range []string{
 		`ALTER TABLE tasks ADD COLUMN state_id TEXT`,
@@ -585,12 +588,47 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 		`ALTER TABLE tasks ADD COLUMN sequence_no INTEGER DEFAULT 0`,
 		`ALTER TABLE tasks ADD COLUMN labels_json TEXT`,
 		`ALTER TABLE tasks ADD COLUMN deleted_at TEXT`,
-		`ALTER TABLE pages ADD COLUMN linked_database_id TEXT`,
-		`ALTER TABLE pages ADD COLUMN linked_view_id TEXT`,
 	} {
 		_, _ = db.Exec(stmt)
 	}
 	return db, nil
+}
+
+
+func migrateDatabaseLinkedColumns(db *sql.DB) error {
+    var applied int
+    if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=8").Scan(&applied); err != nil { return err }
+    if applied > 0 { return nil }
+    rows, err := db.Query("PRAGMA table_info(pages)")
+    if err != nil { return err }
+    columns := map[string]bool{}
+    for rows.Next() {
+        var cid, notnull, pk int
+        var name, typ string
+        var def sql.NullString
+        if err := rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil { rows.Close(); return err }
+        columns[name] = true
+    }
+    if err := rows.Err(); err != nil { rows.Close(); return err }
+    if err := rows.Close(); err != nil { return err }
+    tx, err := db.Begin()
+    if err != nil { return err }
+    defer tx.Rollback()
+    for _, name := range []string{"linked_database_id", "linked_view_id"} {
+        if !columns[name] {
+            // Only known constant identifiers enter this SQL statement.
+            if _, err := tx.Exec("ALTER TABLE pages ADD COLUMN "+name+" TEXT"); err != nil { return err }
+        }
+    }
+    indexes := []string{
+        "CREATE INDEX IF NOT EXISTS idx_db_records_database_created ON db_records(database_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_db_values_property ON db_values(property_id)",
+        "CREATE INDEX IF NOT EXISTS idx_db_properties_order ON db_properties(database_id, position)",
+        "CREATE INDEX IF NOT EXISTS idx_db_views_order ON db_views(database_id, position)",
+    }
+    for _, stmt := range indexes { if _, err := tx.Exec(stmt); err != nil { return err } }
+    if _, err := tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES (8,?)", time.Now().UTC().Format(time.RFC3339Nano)); err != nil { return err }
+    return tx.Commit()
 }
 
 func demoModeRequested() bool {
