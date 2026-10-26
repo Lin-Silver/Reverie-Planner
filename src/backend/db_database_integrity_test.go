@@ -275,3 +275,34 @@ func TestDatabaseRenameRollsBackIfBackingPageUpdateFails(t *testing.T) {
     if done.Code!=200 {t.Fatalf("rename retry failed: %d %s",done.Code,done.Body.String())}
     if stale:=dbRegressionCall(t,ctx,"PUT","/api/databases",string(encoded),ctx.handleDatabases);stale.Code!=409 {t.Fatalf("stale rename accepted: %d %s",stale.Code,stale.Body.String())}
 }
+
+
+func TestRelationRejectsDeletedTargetUntilRestored(t *testing.T) {
+    ctx:=setupTestContext(t)
+    defer ctx.DB.Close()
+    source,from:=dbRegressionCreate(t,ctx)
+    target,to:=dbRegressionCreate(t,ctx)
+    config,err:=json.Marshal(map[string]any{"targetDatabaseId":target.ID})
+    if err!=nil {t.Fatal(err)}
+    payload,err:=json.Marshal(map[string]any{"databaseId":source.ID,"name":"Related","type":"relation","config":string(config)})
+    if err!=nil {t.Fatal(err)}
+    created:=dbRegressionCall(t,ctx,"POST","/api/db/properties",string(payload),ctx.handleDBProperties)
+    if created.Code!=201 {t.Fatalf("relation property: %d %s",created.Code,created.Body.String())}
+    var prop DBProperty
+    if err:=json.Unmarshal(created.Body.Bytes(),&prop);err!=nil {t.Fatal(err)}
+    deletion:=dbRegressionCall(t,ctx,"DELETE","/api/db/records?id="+to.ID,"",ctx.handleDBRecords)
+    if deletion.Code!=204 {t.Fatalf("delete target record: %d %s",deletion.Code,deletion.Body.String())}
+    values:=map[string]any{"id":from.ID,"version":from.Version,"title":"Unchanged","values":map[string]any{prop.ID:[]string{to.ID}}}
+    request,err:=json.Marshal(values)
+    if err!=nil {t.Fatal(err)}
+    rejected:=dbRegressionCall(t,ctx,"PUT","/api/db/records",string(request),ctx.handleDBRecords)
+    if rejected.Code!=400 {t.Fatalf("relation to deleted record accepted: %d %s",rejected.Code,rejected.Body.String())}
+    unchanged,err:=ctx.getDBRecord(from.ID)
+    if err!=nil || unchanged.Title!=from.Title || unchanged.Version!=from.Version {
+        t.Fatalf("invalid relation changed source: %+v err=%v",unchanged,err)
+    }
+    recovered:=dbRegressionCall(t,ctx,"POST","/api/db/trash",`{"kind":"record","id":"`+to.ID+`"}`,ctx.handleDBTrash)
+    if recovered.Code!=200 {t.Fatalf("restore target record: %d %s",recovered.Code,recovered.Body.String())}
+    accepted:=dbRegressionCall(t,ctx,"PUT","/api/db/records",string(request),ctx.handleDBRecords)
+    if accepted.Code!=200 {t.Fatalf("restored relation rejected: %d %s",accepted.Code,accepted.Body.String())}
+}
