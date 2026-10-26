@@ -179,3 +179,38 @@ func TestDatabaseRelationReferencesAndSystemTimestamps(t *testing.T) {
     response=dbRegressionCall(t,ctx,"PUT","/api/db/records",string(bogusBody),ctx.handleDBRecords)
     if response.Code!=400 {t.Fatalf("read-only timestamp update accepted: %d %s",response.Code,response.Body.String())}
 }
+
+
+func TestDatabasePropertyOnlyEditDoesNotConflictWithPageDraft(t *testing.T) {
+    ctx:=setupTestContext(t);defer ctx.DB.Close()
+    database,record:=dbRegressionCreate(t,ctx)
+    propBody,err:=json.Marshal(map[string]any{"databaseId":database.ID,"name":"Count","type":"number"})
+    if err!=nil {t.Fatal(err)}
+    result:=dbRegressionCall(t,ctx,"POST","/api/db/properties",string(propBody),ctx.handleDBProperties)
+    if result.Code!=201{t.Fatalf("property creation: %d %s",result.Code,result.Body.String())}
+    var p DBProperty
+    if err:=json.Unmarshal(result.Body.Bytes(),&p);err!=nil{t.Fatal(err)}
+    var before int
+    if err:=ctx.DB.QueryRow("SELECT version FROM pages WHERE id=?",record.PageID).Scan(&before);err!=nil{t.Fatal(err)}
+    change,err:=json.Marshal(map[string]any{"id":record.ID,"title":record.Title,"version":record.Version,"values":map[string]any{p.ID:42}})
+    if err!=nil{t.Fatal(err)}
+    res:=dbRegressionCall(t,ctx,"PUT","/api/db/records",string(change),ctx.handleDBRecords)
+    if res.Code!=200{t.Fatalf("property update: %d %s",res.Code,res.Body.String())}
+    var after int
+    if err:=ctx.DB.QueryRow("SELECT version FROM pages WHERE id=?",record.PageID).Scan(&after);err!=nil{t.Fatal(err)}
+    if before!=after {t.Fatalf("property edit wrongly changed BlockNote page revision: %d -> %d",before,after)}
+}
+func TestDatabaseCorruptStoredPropertyReturnsErrorInsteadOfPanicking(t *testing.T) {
+    ctx:=setupTestContext(t);defer ctx.DB.Close()
+    db,record:=dbRegressionCreate(t,ctx)
+    body,err:=json.Marshal(map[string]any{"databaseId":db.ID,"name":"Text","type":"text"})
+    if err!=nil{t.Fatal(err)}
+    res:=dbRegressionCall(t,ctx,"POST","/api/db/properties",string(body),ctx.handleDBProperties)
+    if res.Code!=201{t.Fatalf("create property: %d",res.Code)}
+    var field DBProperty
+    if err:=json.Unmarshal(res.Body.Bytes(),&field);err!=nil{t.Fatal(err)}
+    if _,err:=ctx.DB.Exec("INSERT INTO db_values(record_id,property_id,value,version) VALUES (?,?,?,1)",record.ID,field.ID,"not-json");err!=nil{t.Fatal(err)}
+    if _,err:=ctx.getDBRecord(record.ID);err==nil{t.Fatal("corrupt stored value silently accepted")}
+    output:=dbRegressionCall(t,ctx,"GET","/api/db/records?databaseId="+db.ID,"",ctx.handleDBRecords)
+    if output.Code!=500{t.Fatalf("expected server error for corrupt value, got %d: %s",output.Code,output.Body.String())}
+}
