@@ -18,7 +18,7 @@ func TestRejectDuplicateJSONKeysNestedAndEscaped(t *testing.T) {
 		reject bool
 	}{
 		{"top level duplicate", `{"title":"first","title":"last"}`, true},
-		{"escaped equivalent key", `{"title":"first","\\u0074itle":"last"}`, true},
+		{"escaped equivalent key", `{"title":"first","\u0074itle":"last"}`, true},
 		{"nested duplicate", `{"values":{"item":{"id":1,"id":2}}}`, true},
 		{"duplicate inside array", `{"values":[{"id":1,"id":2}]}`, true},
 		{"same key in distinct objects", `{"values":[{"id":1},{"id":2}]}`, false},
