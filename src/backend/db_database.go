@@ -257,6 +257,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			p.Config = "{}"
 		}
 		if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
+		if err:=validateDBComputedDefinition(a.DB,p.DatabaseID,p.Type,p.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
 		if p.Type=="relation" {
 			var cfg struct {TargetDatabaseID string `json:"targetDatabaseId"`}
 			_ = json.Unmarshal([]byte(p.Config), &cfg)
@@ -287,6 +288,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		if currentType != p.Type { writeJSON(w, 400, map[string]string{"error": "changing a property type requires a data migration"}); return }
 		if currentType == "title" && !p.Visible { writeJSON(w, 400, map[string]string{"error": "title property must remain visible"}); return }
 		if currentType != "title" { if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return } }
+		if err:=validateDBComputedDefinition(a.DB,p.DatabaseID,p.Type,p.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
 		visible := 0
 		if p.Visible {
 			visible = 1
@@ -370,6 +372,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			rec.UpdatedAt = r.updated
 			rec.Values = a.recordValues(rec.ID)
 			appendDBSystemValues(rec.Values, fields, rec)
+			if err:=a.appendComputedValues(fields,&rec);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 			out = append(out, rec)
 		}
 		writeJSON(w, 200, out)
@@ -562,6 +565,7 @@ func (a *AppContext) getDBRecord(id string) (DBRecord, error) {
 	fields,err:=a.listProperties(rec.DatabaseID)
 	if err!=nil {return rec,err}
 	appendDBSystemValues(rec.Values,fields,rec)
+	if err:=a.appendComputedValues(fields,&rec);err!=nil {return rec,err}
 	return rec, nil
 }
 
@@ -708,6 +712,7 @@ func (a *AppContext) handleDBLinkedView(w http.ResponseWriter, r *http.Request) 
 }
 
 func validatePropertyValue(propType string, val any) error {
+    if propType=="created_time" || propType=="last_edited_time" || propType=="formula" || propType=="rollup" { return fmt.Errorf("computed property is read-only") }
 	if val == nil {
 		return nil
 	}
@@ -789,6 +794,10 @@ func validatePropertyDefinition(kind, config string) error {
     switch kind {
     case "text", "number", "checkbox", "date", "email", "url", "person", "created_time", "last_edited_time":
         return nil
+    case "formula":
+        _,err:=parseFormulaDefinition(config);return err
+    case "rollup":
+        _,err:=parseRollupDefinition(config);return err
     case "relation":
         var v struct { TargetDatabaseID string `json:"targetDatabaseId"` }
         if err:=json.Unmarshal([]byte(config),&v);err!=nil || v.TargetDatabaseID=="" {return fmt.Errorf("relation targetDatabaseId required")}
