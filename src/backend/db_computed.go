@@ -50,17 +50,17 @@ func validateDBComputedDefinition(db *sql.DB, databaseID, kind, config string) e
         for _,operand:=range def.Args {
             if operand.PropertyID=="" {continue}
             var propertyType string
-            if err:=db.QueryRow("SELECT type FROM db_properties WHERE id=? AND database_id=?",operand.PropertyID,databaseID).Scan(&propertyType);err!=nil{return fmt.Errorf("formula property not found")}
+            if err:=db.QueryRow("SELECT type FROM db_properties WHERE id=? AND database_id=? AND deleted_at IS NULL",operand.PropertyID,databaseID).Scan(&propertyType);err!=nil{return fmt.Errorf("formula property not found")}
             if !map[string]bool{"title":true,"text":true,"number":true,"checkbox":true}[propertyType]{return fmt.Errorf("unsupported formula operand property type")}
         }
     case "rollup":
         def,err:=parseRollupDefinition(config);if err!=nil{return err}
         var kind,relationConfig string
-        if err:=db.QueryRow("SELECT type, config FROM db_properties WHERE id=? AND database_id=?",def.RelationPropertyID,databaseID).Scan(&kind,&relationConfig);err!=nil||kind!="relation"{return fmt.Errorf("rollup must reference relation property")}
+        if err:=db.QueryRow("SELECT type, config FROM db_properties WHERE id=? AND database_id=? AND deleted_at IS NULL",def.RelationPropertyID,databaseID).Scan(&kind,&relationConfig);err!=nil||kind!="relation"{return fmt.Errorf("rollup must reference relation property")}
         var relation struct{TargetDatabaseID string `json:"targetDatabaseId"`}
         if err:=json.Unmarshal([]byte(relationConfig),&relation);err!=nil{return fmt.Errorf("invalid relation configuration")}
         var targetType string
-        if err:=db.QueryRow("SELECT type FROM db_properties WHERE id=? AND database_id=?",def.TargetPropertyID,relation.TargetDatabaseID).Scan(&targetType);err!=nil{return fmt.Errorf("rollup target property not found")}
+        if err:=db.QueryRow("SELECT type FROM db_properties WHERE id=? AND database_id=? AND deleted_at IS NULL",def.TargetPropertyID,relation.TargetDatabaseID).Scan(&targetType);err!=nil{return fmt.Errorf("rollup target property not found")}
         if def.Aggregate!="count" && targetType!="number" {return fmt.Errorf("numeric rollup requires a number property")}
     }
     return nil
@@ -112,7 +112,7 @@ func (a *AppContext) computeRollup(def rollupDefinition, record DBRecord) (any,e
         // The join confirms referenced record and target property still belong
         // to the same database even after property/record deletion.
         var stored sql.NullString
-        err:=a.DB.QueryRow("SELECT dv.value FROM db_records dr JOIN db_properties dp ON dp.database_id=dr.database_id AND dp.id=? LEFT JOIN db_values dv ON dv.record_id=dr.id AND dv.property_id=dp.id WHERE dr.id=?",def.TargetPropertyID,id).Scan(&stored)
+        err:=a.DB.QueryRow("SELECT dv.value FROM db_records dr JOIN db_properties dp ON dp.database_id=dr.database_id AND dp.id=? AND dp.deleted_at IS NULL LEFT JOIN db_values dv ON dv.record_id=dr.id AND dv.property_id=dp.id WHERE dr.id=? AND dr.deleted_at IS NULL",def.TargetPropertyID,id).Scan(&stored)
         if err==sql.ErrNoRows {continue}
         if err!=nil{return nil,err}
         if !stored.Valid {if def.Aggregate=="count"{count++};continue}
