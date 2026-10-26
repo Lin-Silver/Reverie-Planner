@@ -197,8 +197,10 @@ func (a *AppContext) getDatabase(id string) (Database, error) {
 	d.Icon = icon.String
 	d.CreatedAt = created
 	d.UpdatedAt = updated
-	d.Properties, _ = a.listProperties(d.ID)
-	d.Views, _ = a.listViews(d.ID)
+	d.Properties, err = a.listProperties(d.ID)
+	if err != nil { return d, err }
+	d.Views, err = a.listViews(d.ID)
+	if err != nil { return d, err }
 	return d, nil
 }
 
@@ -212,10 +214,11 @@ func (a *AppContext) listProperties(dbID string) ([]DBProperty, error) {
 	for rows.Next() {
 		var p DBProperty
 		var visible int
-		_ = rows.Scan(&p.ID, &p.DatabaseID, &p.Name, &p.Type, &p.Config, &p.Position, &visible, &p.Version)
+		if err := rows.Scan(&p.ID, &p.DatabaseID, &p.Name, &p.Type, &p.Config, &p.Position, &visible, &p.Version); err != nil { return nil, err }
 		p.Visible = visible == 1
 		out = append(out, p)
 	}
+	if err := rows.Err(); err != nil { return nil, err }
 	return out, nil
 }
 
@@ -228,9 +231,10 @@ func (a *AppContext) listViews(dbID string) ([]DBView, error) {
 	out := []DBView{}
 	for rows.Next() {
 		var v DBView
-		_ = rows.Scan(&v.ID, &v.DatabaseID, &v.Name, &v.Type, &v.Config, &v.Position, &v.Version)
+		if err := rows.Scan(&v.ID, &v.DatabaseID, &v.Name, &v.Type, &v.Config, &v.Position, &v.Version); err != nil { return nil, err }
 		out = append(out, v)
 	}
+	if err := rows.Err(); err != nil { return nil, err }
 	return out, nil
 }
 
@@ -252,6 +256,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		if p.Config == "" {
 			p.Config = "{}"
 		}
+		if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
 		// position: append
 		var maxPos sql.NullInt64
 		_ = a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_properties WHERE database_id=?`, p.DatabaseID).Scan(&maxPos)
@@ -271,6 +276,11 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, 400, map[string]string{"error": "id and version required"})
 			return
 		}
+		var currentType string
+		if err := a.DB.QueryRow(`SELECT type FROM db_properties WHERE id=?`, p.ID).Scan(&currentType); err != nil { writeJSON(w, 404, map[string]string{"error": "property not found"}); return }
+		if currentType != p.Type { writeJSON(w, 400, map[string]string{"error": "changing a property type requires a data migration"}); return }
+		if currentType == "title" && !p.Visible { writeJSON(w, 400, map[string]string{"error": "title property must remain visible"}); return }
+		if currentType != "title" { if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return } }
 		visible := 0
 		if p.Visible {
 			visible = 1
@@ -293,6 +303,9 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 200, out)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
+		var kind string
+		if err := a.DB.QueryRow(`SELECT type FROM db_properties WHERE id=?`, id).Scan(&kind); err != nil { writeJSON(w, 404, map[string]string{"error": "property not found"}); return }
+		if kind == "title" { writeJSON(w, 400, map[string]string{"error": "title property cannot be deleted"}); return }
 		tx, err := a.DB.Begin()
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -745,4 +758,27 @@ func validateConfiguredPropertyValue(kind, config string, val any) error {
         for _, x := range val.([]any) { if err := check(x.(string)); err != nil { return err } }
     }
     return nil
+}
+
+func validatePropertyDefinition(kind, config string) error {
+    switch kind {
+    case "text", "number", "checkbox", "date", "email", "url":
+        return nil
+    case "select", "multi_select":
+        if config == "" { return nil }
+        var cfg map[string]json.RawMessage
+        if err := json.Unmarshal([]byte(config), &cfg); err != nil { return fmt.Errorf("invalid options JSON") }
+        if raw, ok := cfg["options"]; ok {
+            var options []string
+            if err := json.Unmarshal(raw, &options); err != nil { return fmt.Errorf("options must be a string array") }
+            seen := map[string]bool{}
+            for _, option := range options {
+                if option == "" || seen[option] { return fmt.Errorf("options must be unique nonempty strings") }
+                seen[option] = true
+            }
+        }
+        return nil
+    default:
+        return fmt.Errorf("unsupported property type: %s", kind)
+    }
 }
