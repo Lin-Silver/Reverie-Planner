@@ -1189,9 +1189,13 @@ func (a *AppContext) handleSearch(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var p Project
 			var created string
-			if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Status, &p.Owner, &p.Color, &created); err != nil {
+			var description, owner, color sqlNullString
+			if err := rows.Scan(&p.ID, &p.Name, &description, &p.Status, &owner, &color, &created); err != nil {
 				return nil, err
 			}
+			p.Description = description.String
+			p.Owner = owner.String
+			p.Color = color.String
 			p.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			result = append(result, p)
 		}
