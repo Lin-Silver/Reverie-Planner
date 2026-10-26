@@ -241,6 +241,7 @@ func main() {
 	mux.HandleFunc("/api/db/records", ctx.handleDBRecords)
 	mux.HandleFunc("/api/db/views", ctx.handleDBViews)
 	mux.HandleFunc("/api/db/linked-view", ctx.handleDBLinkedView)
+	mux.HandleFunc("/api/db/trash", ctx.handleDBTrash)
 
 	if _, err := os.Stat(staticRoot); err == nil {
 		fileServer := http.FileServer(http.Dir(staticRoot))
