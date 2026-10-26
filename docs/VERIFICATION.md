@@ -14,7 +14,7 @@ This file records concrete, SHA-specific evidence. A successful CI run proves th
 - Commit: `b0d34c68c4bc27cafa2389234d189819fc062814`.
 - Windows GitHub Actions: [run 40266607916](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266607916), **success**.
 - Real Windows steps: Go backend tests, frontend build/type-check, lint (**17 warnings, 0 errors**), Chromium Playwright **27/27**, service start/stop, launcher ownership check and portable package.
-- Fresh work after this baseline: populated screenshots of Table, Board, Calendar, List and Gallery, uploaded as a separate CI artifact if the screenshot test and upload step succeed. **Do not claim this artifact exists before its SHA-matched CI run completes**.
+- Visual evidence after this baseline: commit `01ebf1609477365588d0e71d92c7e2bfd264b9a6`, [Windows CI 40266939979](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266939979), **success**, Go tests, Windows build/package and **28/28 Playwright**. This run uploaded `Reverie-Database-UI-Evidence` (artifact ID `12627116333`, five screenshots of populated Table/Board/Calendar/List/Gallery) and `Reverie-Planner-Windows` (artifact ID `12627190910`).
 
 ## Representative regression evidence
 
