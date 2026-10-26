@@ -71,6 +71,7 @@ export default function App() {
   const [pageEditor, setPageEditor] = useState<Page | null>(null)
   const [pageDatabaseId, setPageDatabaseId] = useState<string>('')
   const [pageDatabaseViewId, setPageDatabaseViewId] = useState<string>('')
+  const databasePendingEditRef = useRef(false)
   const [pageDraft, setPageDraft] = useState({ title: 'Untitled', icon: '', content: '' })
   const [pageLeaveError, setPageLeaveError] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState('')
@@ -147,6 +148,7 @@ export default function App() {
   }
 
   const setView = useCallback((next: string) => {
+    if (view === 'page' && next !== 'page' && databasePendingEditRef.current) { setError('Resolve the unsaved database edit with Retry or Reload latest before leaving.'); return }
     if (view === 'page' && next !== 'page' && pageEditor) {
       void (async () => {
         try {
@@ -243,6 +245,7 @@ export default function App() {
   }
 
   const openPageEditor = async (page?: Page) => {
+      if (databasePendingEditRef.current && (!page || page.id !== pageEditor?.id)) { setError('Resolve the unsaved database edit before opening another page.'); return }
       if (view === 'page' && pageEditor && (!page || page.id !== pageEditor.id)) {
         try {
           await savePageContent(pageEditor.id, pageDraft.content)
@@ -471,7 +474,7 @@ export default function App() {
 
   if (view === 'page') {
     if (pageDatabaseId) {
-      return <DatabaseView databaseId={pageDatabaseId} viewId={pageDatabaseViewId || undefined} onBack={() => { setPageDatabaseId(''); setPageDatabaseViewId(''); setView('home') }} onLinkedPageCreated={() => { void refresh() }} onOpenRecord={pageId => { void (async () => { try { const full = await apiFetch<Page>(`/api/pages?id=${encodeURIComponent(pageId)}`); setSelectedPage(pageId); await openPageEditor(full) } catch (e) { setError((e as Error).message) } })() }} />
+      return <DatabaseView databaseId={pageDatabaseId} viewId={pageDatabaseViewId || undefined} onBack={() => { setPageDatabaseId(''); setPageDatabaseViewId(''); setView('home') }} onLinkedPageCreated={() => { void refresh() }} onPendingEditChange={pending => { databasePendingEditRef.current = pending }} onOpenRecord={pageId => { void (async () => { try { const full = await apiFetch<Page>(`/api/pages?id=${encodeURIComponent(pageId)}`); setSelectedPage(pageId); await openPageEditor(full) } catch (e) { setError((e as Error).message) } })() }} />
     }
     return (
       <div className="page-wrap">
