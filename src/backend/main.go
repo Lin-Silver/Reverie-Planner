@@ -407,6 +407,13 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// PRAGMA assignments can succeed without enabling enforcement (for example
+	// inside a transaction). Verify the connection state explicitly.
+	var foreignKeysEnabled int
+	if err := db.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeysEnabled); err != nil || foreignKeysEnabled != 1 {
+		_ = db.Close()
+		return nil, fmt.Errorf("SQLite foreign-key enforcement unavailable (enabled=%d): %v", foreignKeysEnabled, err)
+	}
 
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL)`); err != nil {
 		_ = db.Close()
@@ -595,7 +602,37 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 	} {
 		_, _ = db.Exec(stmt)
 	}
+	// Detect pre-existing orphaned references instead of silently accepting a
+	// damaged workspace. This is read-only; do not attempt destructive repairs.
+	if err := verifyDatabaseForeignKeys(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return db, nil
+}
+
+// verifyDatabaseForeignKeys reports the first broken SQLite reference without
+// deleting or rewriting any user records. SQLite does not automatically check
+// existing rows when foreign_keys is switched on.
+func verifyDatabaseForeignKeys(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		return fmt.Errorf("check SQLite foreign keys: %w", err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var table, parent string
+		var rowID sql.NullInt64
+		var constraint int
+		if err := rows.Scan(&table, &rowID, &parent, &constraint); err != nil {
+			return fmt.Errorf("read SQLite foreign-key violation: %w", err)
+		}
+		return fmt.Errorf("SQLite foreign-key violation in table %q (rowid=%v, referenced table=%q, constraint=%d); inspect and back up the database before repair", table, rowID, parent, constraint)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("scan SQLite foreign-key check: %w", err)
+	}
+	return nil
 }
 
 
