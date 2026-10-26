@@ -3,6 +3,7 @@ import { matchesFilters, newFilterGroup, type FilterGroup } from './databaseFilt
 import DatabaseFilterBuilder from './DatabaseFilterBuilder'
 import DatabasePropertyDialog from './DatabasePropertyDialog'
 import DatabaseTrash from './DatabaseTrash'
+import DatabaseFileCell from './DatabaseFileCell'
 
 
 
@@ -291,7 +292,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
         <td><input aria-label={'Select record '+rec.title} type="checkbox" checked={selectedRecords.includes(rec.id)} onChange={e=>setSelectedRecords(e.target.checked?[...selectedRecords,rec.id]:selectedRecords.filter(id=>id!==rec.id))}/></td>
         <td><button onClick={()=>rec.pageId&&onOpenRecord?.(rec.pageId)}>Open page</button><button aria-label={'Delete record '+rec.title} onClick={()=>{void deleteRecord(rec.id)}}>Delete</button></td>
         {visibleProps.map(p=><td key={p.id} style={{border:'1px solid var(--border)',padding:4,width:columnWidths[p.id]||160}}>
-          <Cell prop={p} value={p.type==='title'?rec.title:rec.values?.[p.id]} onChange={value=>{
+          <Cell prop={p} recordId={rec.id} value={p.type==='title'?rec.title:rec.values?.[p.id]} onChange={value=>{
             void updateRecord(rec,p.type==='title'?{title:String(value)}:{values:{[p.id]:value}})
           }} />
         </td>)}
@@ -299,7 +300,8 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     </table>
   </div>
 }
-function Cell({ prop, value, onChange }: { prop: DBProperty; value: any; onChange: (value: any) => void }) {
+function Cell({ prop, recordId, value, onChange }: { prop: DBProperty; recordId:string; value: any; onChange: (value: any) => void }) {
+  if(prop.type==='file')return <DatabaseFileCell prop={prop} recordId={recordId} value={value} onChange={onChange} />
   if (['formula','rollup','created_time','last_edited_time'].includes(prop.type)) return <span aria-label={prop.name}>{value == null ? '—' : String(value)}</span>
   if (prop.type === 'relation') return <RelationCell prop={prop} value={value} onChange={onChange} />
   if (prop.type === 'person') return <PersonCell prop={prop} value={value} onChange={onChange} />
