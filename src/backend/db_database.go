@@ -337,7 +337,12 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
 			return
 		}
-		rows,err := a.DB.Query(`SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE database_id=? AND deleted_at IS NULL ORDER BY created_at ASC`, dbID)
+		var active int
+        if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",dbID).Scan(&active);err!=nil {
+            writeJSON(w,500,map[string]string{"error":err.Error()});return
+        }
+        if active!=1 {writeJSON(w,404,map[string]string{"error":"database not found"});return}
+        rows,err := a.DB.Query(`SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE database_id=? AND deleted_at IS NULL ORDER BY created_at ASC`, dbID)
 		if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 		type rawRec struct {
 			rec    DBRecord
@@ -392,7 +397,12 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		_, err = tx.Exec(`INSERT INTO db_records (id, database_id, title, page_id, version, created_at, updated_at) VALUES (?,?,?,?,1,?,?)`, rec.ID, rec.DatabaseID, rec.Title, nullStr(rec.PageID), now, now)
+        var active int
+        if err:=tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",rec.DatabaseID).Scan(&active);err!=nil {
+            tx.Rollback();writeJSON(w,500,map[string]string{"error":err.Error()});return
+        }
+        if active!=1 {tx.Rollback();writeJSON(w,404,map[string]string{"error":"database not found"});return}
+        _, err = tx.Exec(`INSERT INTO db_records (id, database_id, title, page_id, version, created_at, updated_at) VALUES (?,?,?,?,1,?,?)`, rec.ID, rec.DatabaseID, rec.Title, nullStr(rec.PageID), now, now)
 		if err != nil {
 			tx.Rollback()
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -435,7 +445,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		}
 		// get db id for version check
 		var dbID string
-		if err := a.DB.QueryRow(`SELECT database_id FROM db_records WHERE id=? AND deleted_at IS NULL`, body.ID).Scan(&dbID); err != nil { writeJSON(w, 404, map[string]string{"error": "record not found"}); return }
+		if err := a.DB.QueryRow(`SELECT r.database_id FROM db_records r JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL WHERE r.id=? AND r.deleted_at IS NULL`, body.ID).Scan(&dbID); err != nil { writeJSON(w, 404, map[string]string{"error": "record not found"}); return }
 		now := time.Now().UTC().Format(time.RFC3339)
 		tx, err := a.DB.Begin()
 		if err != nil {
@@ -544,7 +554,7 @@ func (a *AppContext) getDBRecord(id string) (DBRecord, error) {
 	var rec DBRecord
 	var pageID sql.NullString
 	var created, updated string
-	err := a.DB.QueryRow(`SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE id=? AND deleted_at IS NULL`, id).Scan(&rec.ID, &rec.DatabaseID, &rec.Title, &pageID, &rec.Version, &created, &updated)
+	err := a.DB.QueryRow(`SELECT r.id, r.database_id, r.title, r.page_id, r.version, r.created_at, r.updated_at FROM db_records r JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL WHERE r.id=? AND r.deleted_at IS NULL`, id).Scan(&rec.ID, &rec.DatabaseID, &rec.Title, &pageID, &rec.Version, &created, &updated)
 	if err != nil {
 		return rec, err
 	}
