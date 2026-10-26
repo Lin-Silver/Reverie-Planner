@@ -251,9 +251,13 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		var p DBProperty
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 		if p.DatabaseID == "" || p.Name == "" {
-			writeJSON(w, 400, map[string]string{"error": "databaseId and name required"})
-			return
-		}
+            writeJSON(w,400,map[string]string{"error":"databaseId and name required"});return
+        }
+        var active int
+        if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",p.DatabaseID).Scan(&active);err!=nil {
+            writeJSON(w,500,map[string]string{"error":err.Error()});return
+        }
+        if active!=1 {writeJSON(w,404,map[string]string{"error":"database not found"});return}
 		if p.Type == "" {
 			p.Type = "text"
 		}
@@ -269,7 +273,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			var cfg struct {TargetDatabaseID string `json:"targetDatabaseId"`}
 			_ = json.Unmarshal([]byte(p.Config), &cfg)
 			var target int
-			if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=?",cfg.TargetDatabaseID).Scan(&target);err!=nil || target!=1 {writeJSON(w,400,map[string]string{"error":"relation target database not found"});return}
+			if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",cfg.TargetDatabaseID).Scan(&target);err!=nil || target!=1 {writeJSON(w,400,map[string]string{"error":"relation target database not found"});return}
 		}
 		// position: append
 		var maxPos sql.NullInt64
@@ -300,7 +304,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		if p.Visible {
 			visible = 1
 		}
-		res, err := a.DB.Exec(`UPDATE db_properties SET name=?, type=?, config=?, visible=?, version=version+1 WHERE id=? AND version=?`, p.Name, p.Type, p.Config, visible, p.ID, p.Version)
+		res, err := a.DB.Exec(`UPDATE db_properties SET name=?, type=?, config=?, visible=?, version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL AND database_id IN (SELECT id FROM databases WHERE deleted_at IS NULL)`, p.Name, p.Type, p.Config, visible, p.ID, p.Version)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -620,9 +624,13 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		var v DBView
 		if err := json.NewDecoder(r.Body).Decode(&v); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 		if v.DatabaseID == "" {
-			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
-			return
-		}
+            writeJSON(w,400,map[string]string{"error":"databaseId required"});return
+        }
+        var active int
+        if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",v.DatabaseID).Scan(&active);err!=nil {
+            writeJSON(w,500,map[string]string{"error":err.Error()});return
+        }
+        if active!=1 {writeJSON(w,404,map[string]string{"error":"database not found"});return}
 		if v.Name == "" {
 			v.Name = "View"
 		}
@@ -653,7 +661,7 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		}
 		if v.Config == "" {v.Config="{}"}
         if err:=validateDBViewConfig(v.Type,v.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
-		res, err := a.DB.Exec(`UPDATE db_views SET name=?, type=?, config=?, version=version+1 WHERE id=? AND version=?`, v.Name, v.Type, v.Config, v.ID, v.Version)
+		res, err := a.DB.Exec(`UPDATE db_views SET name=?, type=?, config=?, version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL AND database_id IN (SELECT id FROM databases WHERE deleted_at IS NULL)`, v.Name, v.Type, v.Config, v.ID, v.Version)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -722,7 +730,7 @@ func (a *AppContext) handleDBLinkedView(w http.ResponseWriter, r *http.Request) 
 	}
 	// verify database exists
 	var dbExists int
-	if err := a.DB.QueryRow(`SELECT COUNT(*) FROM databases WHERE id=?`, body.DatabaseID).Scan(&dbExists); err != nil || dbExists == 0 {
+	if err := a.DB.QueryRow(`SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL`, body.DatabaseID).Scan(&dbExists); err != nil || dbExists == 0 {
 		writeJSON(w, 404, map[string]string{"error": "database not found"})
 		return
 	}
