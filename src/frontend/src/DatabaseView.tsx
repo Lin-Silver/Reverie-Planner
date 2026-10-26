@@ -8,7 +8,7 @@ import DatabaseTrash from './DatabaseTrash'
 
 type ViewType = 'table' | 'board' | 'calendar' | 'list' | 'gallery'
 const VIEW_TYPES: ViewType[] = ['table', 'board', 'calendar', 'list', 'gallery']
-type ViewConfig = { filter?: string; sort?: string; groupBy?: string; dateProperty?: string; filterTree?: FilterGroup }
+type ViewConfig = { filter?: string; sort?: string; groupBy?: string; dateProperty?: string; filterTree?: FilterGroup; columnOrder?: string[]; hiddenColumns?: string[]; columnWidths?: Record<string, number> }
 
 type DBProperty = { id: string; databaseId: string; name: string; type: string; config: string; position: number; visible: boolean; version: number }
 type DBView = { id: string; databaseId: string; name: string; type: string; config: string; position: number; version: number }
@@ -33,6 +33,10 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [filterTree, setFilterTree] = useState<FilterGroup>(() => newFilterGroup())
   const [sortProp, setSortProp] = useState('')
   const [groupBy, setGroupBy] = useState('')
+  const [columnOrder,setColumnOrder] = useState<string[]>([])
+  const [hiddenColumns,setHiddenColumns] = useState<string[]>([])
+  const [columnWidths,setColumnWidths] = useState<Record<string,number>>({})
+  const [selectedRecords,setSelectedRecords] = useState<string[]>([])
   const [dateProperty, setDateProperty] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -65,13 +69,16 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     setFilterTree(cfg.filterTree?.kind === 'group' && Array.isArray(cfg.filterTree.children) ? cfg.filterTree : newFilterGroup())
     setSortProp(cfg.sort || '')
     setGroupBy(cfg.groupBy || '')
+    setColumnOrder(Array.isArray(cfg.columnOrder)?cfg.columnOrder:[])
+    setHiddenColumns(Array.isArray(cfg.hiddenColumns)?cfg.hiddenColumns:[])
+    setColumnWidths(cfg.columnWidths && typeof cfg.columnWidths==='object'?cfg.columnWidths:{})
     setDateProperty(cfg.dateProperty || '')
   }, [view?.id, view?.config])
 
   const saveViewSettings = async () => {
     if (!view) return
     try {
-      const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...view, config: JSON.stringify({ filter: filterText, filterTree, sort: sortProp, groupBy, dateProperty }) }) }) as DBView
+      const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...view, config: JSON.stringify({ filter: filterText, filterTree, sort: sortProp, groupBy, dateProperty, columnOrder, hiddenColumns, columnWidths }) }) }) as DBView
       setDb(current => current && ({ ...current, views: current.views.map(v => v.id === updated.id ? updated : v) }))
       setError('')
     } catch (e) { setError((e as Error).message) }
@@ -217,7 +224,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         <button onClick={() => void saveViewSettings()}>Save view settings</button>
       </div>
       <details style={{ marginBottom: 10 }}><summary>Advanced filters (AND / OR)</summary><DatabaseFilterBuilder group={filterTree} properties={props} onChange={setFilterTree} /></details>
-      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} deleteRecord={deleteRecord} onOpenRecord={guardedOpen} />}
+      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} deleteRecord={deleteRecord} onOpenRecord={guardedOpen} columnOrder={columnOrder} setColumnOrder={setColumnOrder} hiddenColumns={hiddenColumns} setHiddenColumns={setHiddenColumns} columnWidths={columnWidths} setColumnWidths={setColumnWidths} selectedRecords={selectedRecords} setSelectedRecords={setSelectedRecords} />}
       {view?.type === 'board' && <BoardView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={guardedOpen} />}
       {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={guardedOpen} />}
       {view?.type === 'list' && <ListView records={visibleRecords} onOpenRecord={guardedOpen} />}
@@ -230,27 +237,67 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
 
 type RecordUpdate = (rec: DBRecord, patch: { title?: string; values?: Record<string, any> }) => Promise<void>
 type OpenRecord = (pageId: string) => void
-function TableView({ records, props, updateRecord, deleteProperty, deleteRecord, onOpenRecord }: {
-  records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; deleteProperty: (id: string) => Promise<void>; deleteRecord: (id:string)=>Promise<void>; onOpenRecord?: OpenRecord
+function TableView({ records, props, updateRecord, deleteProperty, deleteRecord, onOpenRecord, columnOrder, setColumnOrder, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidths, selectedRecords, setSelectedRecords }: {
+  records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; deleteProperty: (id: string) => Promise<void>;
+  deleteRecord: (id: string) => Promise<void>; onOpenRecord?: OpenRecord;
+  columnOrder: string[]; setColumnOrder: (next: string[]) => void;
+  hiddenColumns: string[]; setHiddenColumns: (next: string[]) => void;
+  columnWidths: Record<string,number>; setColumnWidths: (next: Record<string,number>) => void;
+  selectedRecords: string[]; setSelectedRecords: (next: string[]) => void;
 }) {
-  const visibleProps = props.filter(p => p.visible)
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-        <thead><tr><th>Page</th>{visibleProps.map(p => <th key={p.id} style={{ border: '1px solid var(--border)', padding: 6, minWidth: 130 }}>{p.name}
-          {p.type !== 'title' && <button aria-label={'Delete ' + p.name} onClick={() => { if (confirm('Delete property ' + p.name + ' and its values?')) void deleteProperty(p.id) }}>×</button>}
+  const visibleProps=props.filter(p=>p.visible && !hiddenColumns.includes(p.id)).sort((a,b)=>{
+    const ai=columnOrder.indexOf(a.id),bi=columnOrder.indexOf(b.id)
+    return (ai<0?props.indexOf(a)+columnOrder.length:ai)-(bi<0?props.indexOf(b)+columnOrder.length:bi)
+  })
+  const reorder=(id:string,offset:number)=>{
+    const ids=visibleProps.map(p=>p.id),index=ids.indexOf(id),target=index+offset
+    if(target<0 || target>=ids.length)return
+    const swapped=[...ids];[swapped[index],swapped[target]]=[swapped[target],swapped[index]]
+    setColumnOrder([...swapped,...columnOrder.filter(id=>!swapped.includes(id))])
+  }
+  const toggle=(id:string)=>setHiddenColumns(hiddenColumns.includes(id)?hiddenColumns.filter(x=>x!==id):[...hiddenColumns,id])
+  return <div style={{overflowX:'auto'}}>
+    <details style={{marginBottom:10}}>
+      <summary>Table columns and layout</summary>
+      <div role="group" aria-label="Column visibility" style={{display:'flex',gap:10,flexWrap:'wrap',padding:8}}>
+        {props.map(p=><label key={p.id}><input type="checkbox" checked={!hiddenColumns.includes(p.id)} disabled={p.type==='title'} onChange={()=>toggle(p.id)} />{p.name}</label>)}
+      </div>
+      <small>Column order and widths are stored with this view when you click Save view settings.</small>
+    </details>
+    {selectedRecords.length>0&&<div style={{marginBottom:8}}>
+      <strong>{selectedRecords.length} selected</strong>
+      <button aria-label="Clear selected rows" onClick={()=>setSelectedRecords([])}>Clear selection</button>
+      <button aria-label="Delete selected rows" onClick={async()=>{
+        if(!confirm('Move '+selectedRecords.length+' records to Trash?'))return
+        for(const id of selectedRecords)await deleteRecord(id)
+        setSelectedRecords([])
+      }}>Move selected to Trash</button>
+    </div>}
+    <table style={{borderCollapse:'collapse',width:'100%'}}>
+      <thead><tr>
+        <th><input aria-label="Select all visible records" type="checkbox" checked={records.length>0 && records.every(r=>selectedRecords.includes(r.id))} onChange={e=>setSelectedRecords(e.target.checked?[...new Set([...selectedRecords,...records.map(r=>r.id)])]:selectedRecords.filter(id=>!records.some(r=>r.id===id)))} /></th>
+        <th>Page</th>{visibleProps.map((p,index)=><th key={p.id} style={{border:'1px solid var(--border)',padding:5,width:columnWidths[p.id]||160,minWidth:100}}>
+          <div style={{display:'flex',alignItems:'center',gap:4}}><span>{p.name}</span>
+            <button aria-label={'Move '+p.name+' left'} disabled={index===0} onClick={()=>reorder(p.id,-1)}>‹</button>
+            <button aria-label={'Move '+p.name+' right'} disabled={index===visibleProps.length-1} onClick={()=>reorder(p.id,1)}>›</button>
+            {p.type!=='title'&&<button aria-label={'Delete '+p.name} onClick={()=>{if(confirm('Move property '+p.name+' to Trash?'))void deleteProperty(p.id)}}>×</button>}
+          </div>
+          <input type="number" aria-label={'Width '+p.name} title={'Column width: '+p.name} min={100} max={700} step={10} value={columnWidths[p.id]||160} onChange={e=>{
+            const width=Math.min(700,Math.max(100,Number(e.target.value)||160))
+            setColumnWidths({...columnWidths,[p.id]:width})
+          }} style={{width:64}} />
         </th>)}</tr></thead>
-        <tbody>{records.map(rec => <tr key={rec.id} data-testid="database-record-row" data-record-id={rec.id}>
-          <td><button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>Open page</button><button aria-label={'Delete record '+rec.title} onClick={()=>{void deleteRecord(rec.id)}}>Delete</button></td>
-          {visibleProps.map(p => <td key={p.id} style={{ border: '1px solid var(--border)', padding: 4 }}>
-            <Cell prop={p} value={p.type === 'title' ? rec.title : rec.values?.[p.id]} onChange={value => {
-              void updateRecord(rec, p.type === 'title' ? { title: String(value) } : { values: { [p.id]: value } })
-            }} />
-          </td>)}
-        </tr>)}</tbody>
-      </table>
-    </div>
-  )
+      <tbody>{records.map(rec=><tr key={rec.id} data-testid="database-record-row" data-record-id={rec.id}>
+        <td><input aria-label={'Select record '+rec.title} type="checkbox" checked={selectedRecords.includes(rec.id)} onChange={e=>setSelectedRecords(e.target.checked?[...selectedRecords,rec.id]:selectedRecords.filter(id=>id!==rec.id))}/></td>
+        <td><button onClick={()=>rec.pageId&&onOpenRecord?.(rec.pageId)}>Open page</button><button aria-label={'Delete record '+rec.title} onClick={()=>{void deleteRecord(rec.id)}}>Delete</button></td>
+        {visibleProps.map(p=><td key={p.id} style={{border:'1px solid var(--border)',padding:4,width:columnWidths[p.id]||160}}>
+          <Cell prop={p} value={p.type==='title'?rec.title:rec.values?.[p.id]} onChange={value=>{
+            void updateRecord(rec,p.type==='title'?{title:String(value)}:{values:{[p.id]:value}})
+          }} />
+        </td>)}
+      </tr>)}</tbody>
+    </table>
+  </div>
 }
 function Cell({ prop, value, onChange }: { prop: DBProperty; value: any; onChange: (value: any) => void }) {
   if (['formula','rollup','created_time','last_edited_time'].includes(prop.type)) return <span aria-label={prop.name}>{value == null ? '—' : String(value)}</span>
