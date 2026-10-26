@@ -227,9 +227,13 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
         <input aria-label="Database filter" placeholder="Filter records" value={filterText} onChange={e => setFilterText(e.target.value)} />
-        <select aria-label="Database sort" value={sortProp} onChange={e => setSortProp(e.target.value)}><option value="">No sort</option><option value="title">Title</option>{props.filter(p => p.type !== 'title').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+        <select aria-label="Database sort" value={sortProp} onChange={e => {
+          const next=e.target.value
+          setSortProp(next)
+          if (!next || next===secondarySortProp) setSecondarySortProp('')
+        }}><option value="">No sort</option><option value="title">Title</option>{props.filter(p => p.type !== 'title').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
         <select aria-label="Sort direction" value={sortDirection} disabled={!sortProp} onChange={e => setSortDirection(e.target.value as 'asc'|'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select>
-        <select aria-label="Secondary database sort" value={secondarySortProp} onChange={e => setSecondarySortProp(e.target.value)}><option value="">No secondary sort</option><option value="title" disabled={sortProp==='title'}>Title</option>{props.filter(p => p.type !== 'title').map(p => <option key={p.id} value={p.id} disabled={sortProp===p.id}>{p.name}</option>)}</select>
+        <select aria-label="Secondary database sort" value={secondarySortProp} disabled={!sortProp} onChange={e => setSecondarySortProp(e.target.value)}><option value="">No secondary sort</option><option value="title" disabled={sortProp==='title'}>Title</option>{props.filter(p => p.type !== 'title').map(p => <option key={p.id} value={p.id} disabled={sortProp===p.id}>{p.name}</option>)}</select>
         <select aria-label="Secondary sort direction" value={secondarySortDirection} disabled={!secondarySortProp} onChange={e => setSecondarySortDirection(e.target.value as 'asc'|'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select>
         {view?.type === 'board' && <select aria-label="Board group by" value={groupBy} onChange={e => setGroupBy(e.target.value)}><option value="">First select property</option>{props.filter(p => p.type === 'select').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
         {view?.type === 'calendar' && <select aria-label="Calendar date property" value={dateProperty} onChange={e => setDateProperty(e.target.value)}><option value="">First date property</option>{props.filter(p => p.type === 'date').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
