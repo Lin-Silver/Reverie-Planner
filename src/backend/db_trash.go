@@ -64,7 +64,7 @@ func (a *AppContext) handleDBTrash(w http.ResponseWriter,r *http.Request) {
             if err:=tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",databaseID).Scan(&count);err!=nil||count!=1{writeJSON(w,409,map[string]string{"error":"restore database first"});return}
             if request.Kind=="record"{
                 var pageID sql.NullString
-                if err:=tx.QueryRow("SELECT page_id FROM db_records WHERE id=?",request.ID).Scan(&pageID);err!=nil{return}
+                if err:=tx.QueryRow("SELECT page_id FROM db_records WHERE id=?",request.ID).Scan(&pageID);err!=nil{writeJSON(w,500,map[string]string{"error":err.Error()});return}
                 if pageID.Valid{
                     var count int
                     if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=?",pageID.String).Scan(&count);err!=nil||count!=1{writeJSON(w,409,map[string]string{"error":"backing record page unavailable"});return}
