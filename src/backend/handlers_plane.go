@@ -49,11 +49,14 @@ func (a *AppContext) handleLabels(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var l Label
-		_ = json.NewDecoder(r.Body).Decode(&l)
+		if _, err := decodeJSONRequest(r, &l); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid label payload")
+			return
+		}
 		if l.ID == "" {
 			l.ID = newID("label")
 		}
-		if l.Name == "" {
+		if strings.TrimSpace(l.Name) == "" {
 			writeJSON(w, 400, map[string]string{"error": "name required"})
 			return
 		}
@@ -61,12 +64,32 @@ func (a *AppContext) handleLabels(w http.ResponseWriter, r *http.Request) {
 			l.Color = "gray"
 		}
 		l.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`INSERT INTO labels (id, project_id, name, color, created_at) VALUES (?,?,?,?,?)`, l.ID, nullStr(l.ProjectID), l.Name, l.Color, l.CreatedAt.Format(time.RFC3339))
+		if _, err := a.DB.Exec(`INSERT INTO labels (id, project_id, name, color, created_at) VALUES (?,?,?,?,?)`, l.ID, nullStr(l.ProjectID), l.Name, l.Color, l.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "label could not be saved")
+			return
+		}
 		writeJSON(w, 201, l)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM labels WHERE id=?`, id)
-		w.WriteHeader(204)
+		if id == "" {
+			writeJSONError(w, http.StatusBadRequest, "id required")
+			return
+		}
+		result, err := a.DB.Exec(`DELETE FROM labels WHERE id=?`, id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "label could not be deleted")
+			return
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "label deletion could not be verified")
+			return
+		}
+		if rows == 0 {
+			writeJSONError(w, http.StatusNotFound, "label not found")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(405)
 	}
@@ -96,12 +119,19 @@ func (a *AppContext) handleStates(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var s State
-		_ = json.NewDecoder(r.Body).Decode(&s)
+		if _, err := decodeJSONRequest(r, &s); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid state payload")
+			return
+		}
 		if s.ID == "" {
 			s.ID = newID("state")
 		}
-		if s.Name == "" {
+		if strings.TrimSpace(s.Name) == "" {
 			writeJSON(w, 400, map[string]string{"error": "name required"})
+			return
+		}
+		if strings.TrimSpace(s.ProjectID) == "" {
+			writeJSONError(w, http.StatusBadRequest, "projectId required")
 			return
 		}
 		if s.Color == "" {
@@ -111,12 +141,32 @@ func (a *AppContext) handleStates(w http.ResponseWriter, r *http.Request) {
 			s.Group = "backlog"
 		}
 		s.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`INSERT INTO states (id, project_id, name, color, group_name, sequence, created_at) VALUES (?,?,?,?,?,?,?)`, s.ID, s.ProjectID, s.Name, s.Color, s.Group, s.Sequence, s.CreatedAt.Format(time.RFC3339))
+		if _, err := a.DB.Exec(`INSERT INTO states (id, project_id, name, color, group_name, sequence, created_at) VALUES (?,?,?,?,?,?,?)`, s.ID, s.ProjectID, s.Name, s.Color, s.Group, s.Sequence, s.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "state could not be saved")
+			return
+		}
 		writeJSON(w, 201, s)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM states WHERE id=?`, id)
-		w.WriteHeader(204)
+		if id == "" {
+			writeJSONError(w, http.StatusBadRequest, "id required")
+			return
+		}
+		result, err := a.DB.Exec(`DELETE FROM states WHERE id=?`, id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "state could not be deleted")
+			return
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "state deletion could not be verified")
+			return
+		}
+		if rows == 0 {
+			writeJSONError(w, http.StatusNotFound, "state not found")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(405)
 	}
