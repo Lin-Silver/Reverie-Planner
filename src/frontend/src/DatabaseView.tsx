@@ -399,6 +399,7 @@ function CalendarView({ records, props, updateRecord, dateProperty, onOpenRecord
   records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; dateProperty: string; onOpenRecord?: OpenRecord
 }) {
   const [cursor, setCursor] = useState(() => new Date())
+  const [draggedRecord, setDraggedRecord] = useState<string | null>(null)
   const dateProp = props.find(p => p.id === dateProperty && p.type === 'date') || props.find(p => p.type === 'date')
   const year = cursor.getFullYear()
   const month = cursor.getMonth()
@@ -415,15 +416,30 @@ function CalendarView({ records, props, updateRecord, dateProperty, onOpenRecord
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(90px, 1fr))', overflowX: 'auto', gap: 4 }}>
       {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(name => <strong key={name}>{name}</strong>)}
       {cells.map((day,index) => <div data-testid="calendar-cell" data-date={day ? calendarDay(year, month, day) : ''}
-        key={index} style={{ border: '1px solid var(--border)', background: 'var(--card)', padding: 4, minHeight: 80 }}>
+        key={index} onDragOver={event=>{if(day)event.preventDefault()}} onDrop={()=>{
+          if(!day || !draggedRecord)return
+          const record=records.find(r=>r.id===draggedRecord)
+          setDraggedRecord(null)
+          if(record)void updateRecord(record,{values:{[dateProp.id]:calendarDay(year,month,day)}})
+        }} style={{ border: '1px solid var(--border)', background: 'var(--card)', padding: 4, minHeight: 80 }}>
         <small>{day || ''}</small>
-        {day && records.filter(rec => String(rec.values?.[dateProp.id] ?? '').slice(0,10) === calendarDay(year,month,day)).map(rec => <div key={rec.id}>
+        {day && records.filter(rec => String(rec.values?.[dateProp.id] ?? '').slice(0,10) === calendarDay(year,month,day)).map(rec => <div key={rec.id} data-testid="calendar-record" draggable onDragStart={()=>setDraggedRecord(rec.id)} onDragEnd={()=>setDraggedRecord(null)}>
           <button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>{rec.title}</button>
           <input type="date" aria-label={'Date for ' + rec.title} value={String(rec.values?.[dateProp.id] ?? '').slice(0,10)}
             onChange={e => { void updateRecord(rec, { values: { [dateProp.id]: e.target.value || null } }) }} />
         </div>)}
       </div>)}
     </div>
+    <section style={{marginTop:12}}>
+      <strong>Unscheduled records</strong>
+      <div style={{display:'flex',gap:12,flexWrap:'wrap',marginTop:6}}>
+        {records.filter(rec=>!rec.values?.[dateProp.id]).map(rec=><label key={rec.id}>
+          {rec.title} <input type="date" aria-label={'Schedule '+rec.title} onChange={e=>{
+            if(e.target.value)void updateRecord(rec,{values:{[dateProp.id]:e.target.value}})
+          }}/>
+        </label>)}
+      </div>
+    </section>
   </div>
 }
 function ListView({ records, onOpenRecord }: { records: DBRecord[]; onOpenRecord?: OpenRecord }) {
