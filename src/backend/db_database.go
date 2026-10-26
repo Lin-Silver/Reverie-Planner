@@ -485,6 +485,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := validateConfiguredPropertyValue(def.kind, def.config, val); err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
 			if err := validateDBReferenceValue(tx,def.kind,def.config,val); err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
+            if def.kind=="file" {if err:=validateDBFileReferences(tx,body.ID,val);err!=nil{tx.Rollback();writeJSON(w,400,map[string]string{"error":err.Error()});return}}
 			vb, err := json.Marshal(val)
 			if err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": "invalid property value"}); return }
 			// upsert
@@ -787,6 +788,9 @@ func validatePropertyValue(propType string, val any) error {
 		}
 	case "url", "email", "text", "title", "person":
         if _, ok := val.(string); !ok { return fmt.Errorf("invalid %s value", propType) }
+    case "file":
+        values,ok:=val.([]any);if !ok{return fmt.Errorf("file references must be an array")}
+        for _,v:=range values{if _,ok:=v.(string);!ok{return fmt.Errorf("invalid file ID")}}
     case "relation":
         values,ok:=val.([]any); if !ok {return fmt.Errorf("relation must be an array of IDs")}
         for _,v:=range values {if _,ok:=v.(string);!ok{return fmt.Errorf("invalid relation ID")}}
@@ -824,7 +828,7 @@ func validateConfiguredPropertyValue(kind, config string, val any) error {
 
 func validatePropertyDefinition(kind, config string) error {
     switch kind {
-    case "text", "number", "checkbox", "date", "email", "url", "person", "created_time", "last_edited_time":
+    case "text", "number", "checkbox", "date", "email", "url", "person", "file", "created_time", "last_edited_time":
         return nil
     case "formula":
         _,err:=parseFormulaDefinition(config);return err
