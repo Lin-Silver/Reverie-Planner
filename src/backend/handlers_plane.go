@@ -1168,64 +1168,108 @@ func (a *AppContext) handleIntake(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AppContext) handleSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	out := map[string]any{"projects": []Project{}, "tasks": []Task{}, "pages": []Page{}}
 	if q == "" {
-		writeJSON(w, 200, out)
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	like := "%" + q + "%"
-	prows, _ := a.DB.Query(`SELECT id, name, description, status, owner, color, created_at FROM projects WHERE name LIKE ? OR description LIKE ?`, like, like)
-	defer prows.Close()
-	projects := []Project{}
-	for prows.Next() {
-		var p Project
-		var created string
-		_ = prows.Scan(&p.ID, &p.Name, &p.Description, &p.Status, &p.Owner, &p.Color, &created)
-		p.CreatedAt, _ = time.Parse(time.RFC3339, created)
-		projects = append(projects, p)
+	projects, err := func() ([]Project, error) {
+		rows, err := a.DB.Query(`SELECT id, name, description, status, owner, color, created_at FROM projects WHERE name LIKE ? OR description LIKE ?`, like, like)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		result := []Project{}
+		for rows.Next() {
+			var p Project
+			var created string
+			if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Status, &p.Owner, &p.Color, &created); err != nil {
+				return nil, err
+			}
+			p.CreatedAt, _ = time.Parse(time.RFC3339, created)
+			result = append(result, p)
+		}
+		return result, rows.Err()
+	}()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to search projects"})
+		return
 	}
-	trows, _ := a.DB.Query(`SELECT id, project_id, title, description, status, priority, due_date, assignee, created_at FROM tasks WHERE title LIKE ? OR description LIKE ?`, like, like)
-	defer trows.Close()
-	tasks := []Task{}
-	for trows.Next() {
-		var t Task
-		var created string
-		var desc, due, assignee sqlNullString
-		_ = trows.Scan(&t.ID, &t.ProjectID, &t.Title, &desc, &t.Status, &t.Priority, &due, &assignee, &created)
-		t.Description = desc.String
-		t.DueDate = due.String
-		t.Assignee = assignee.String
-		t.CreatedAt, _ = time.Parse(time.RFC3339, created)
-		tasks = append(tasks, t)
+	tasks, err := func() ([]Task, error) {
+		rows, err := a.DB.Query(`SELECT id, project_id, title, description, status, priority, due_date, assignee, created_at FROM tasks WHERE title LIKE ? OR description LIKE ?`, like, like)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		result := []Task{}
+		for rows.Next() {
+			var t Task
+			var created string
+			var desc, due, assignee sqlNullString
+			if err := rows.Scan(&t.ID, &t.ProjectID, &t.Title, &desc, &t.Status, &t.Priority, &due, &assignee, &created); err != nil {
+				return nil, err
+			}
+			t.Description = desc.String
+			t.DueDate = due.String
+			t.Assignee = assignee.String
+			t.CreatedAt, _ = time.Parse(time.RFC3339, created)
+			result = append(result, t)
+		}
+		return result, rows.Err()
+	}()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to search tasks"})
+		return
 	}
-	pgrows, _ := a.DB.Query(`SELECT id, project_id, workspace, parent_id, title, icon, cover, content, created_by, created_at, updated_at FROM pages WHERE title LIKE ? OR content LIKE ?`, like, like)
-	defer pgrows.Close()
-	pages := []Page{}
-	for pgrows.Next() {
-		var p Page
-		var created, updated string
-		var pid, parent, icon, cover, content, createdBy sqlNullString
-		var ws int
-		_ = pgrows.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &content, &createdBy, &created, &updated)
-		p.ProjectID = pid.String
-		p.Workspace = ws == 1
-		p.ParentID = parent.String
-		p.Icon = icon.String
-		p.Cover = cover.String
-		p.Content = content.String
-		p.CreatedBy = createdBy.String
-		p.CreatedAt, _ = time.Parse(time.RFC3339, created)
-		p.UpdatedAt, _ = time.Parse(time.RFC3339, updated)
-		pages = append(pages, p)
+	pages, err := func() ([]Page, error) {
+		rows, err := a.DB.Query(`SELECT id, project_id, workspace, parent_id, title, icon, cover, content, created_by, created_at, updated_at FROM pages WHERE title LIKE ? OR content LIKE ?`, like, like)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		result := []Page{}
+		for rows.Next() {
+			var p Page
+			var created, updated string
+			var pid, parent, icon, cover, content, createdBy sqlNullString
+			var ws int
+			if err := rows.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &content, &createdBy, &created, &updated); err != nil {
+				return nil, err
+			}
+			p.ProjectID = pid.String
+			p.Workspace = ws == 1
+			p.ParentID = parent.String
+			p.Icon = icon.String
+			p.Cover = cover.String
+			p.Content = content.String
+			p.CreatedBy = createdBy.String
+			p.CreatedAt, _ = time.Parse(time.RFC3339, created)
+			p.UpdatedAt, _ = time.Parse(time.RFC3339, updated)
+			result = append(result, p)
+		}
+		return result, rows.Err()
+	}()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to search pages"})
+		return
 	}
 	out["projects"] = projects
 	out["tasks"] = tasks
 	out["pages"] = pages
-	writeJSON(w, 200, out)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *AppContext) handleAnalytics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	projectID := r.URL.Query().Get("projectId")
 	counts := map[string]int{}
 	q := `SELECT status, COUNT(*) FROM tasks`
@@ -1235,21 +1279,47 @@ func (a *AppContext) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 		args = append(args, projectID)
 	}
 	q += ` GROUP BY status`
-	rows, _ := a.DB.Query(q, args...)
-	defer rows.Close()
+	rows, err := a.DB.Query(q, args...)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load task analytics"})
+		return
+	}
 	for rows.Next() {
 		var st string
 		var c int
-		_ = rows.Scan(&st, &c)
+		if err := rows.Scan(&st, &c); err != nil {
+			rows.Close()
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read task analytics"})
+			return
+		}
 		counts[st] = c
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load task analytics"})
+		return
+	}
+	if err := rows.Close(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to close task analytics query"})
+		return
+	}
 	totalProjects, totalTasks, totalPages, totalCycles, totalModules := 0, 0, 0, 0, 0
-	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM projects`).Scan(&totalProjects)
-	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM tasks`).Scan(&totalTasks)
-	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM pages`).Scan(&totalPages)
-	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM cycles`).Scan(&totalCycles)
-	_ = a.DB.QueryRow(`SELECT COUNT(*) FROM modules`).Scan(&totalModules)
-	writeJSON(w, 200, map[string]any{
+	for _, metric := range []struct {
+		query string
+		value *int
+	}{
+		{`SELECT COUNT(*) FROM projects`, &totalProjects},
+		{`SELECT COUNT(*) FROM tasks`, &totalTasks},
+		{`SELECT COUNT(*) FROM pages`, &totalPages},
+		{`SELECT COUNT(*) FROM cycles`, &totalCycles},
+		{`SELECT COUNT(*) FROM modules`, &totalModules},
+	} {
+		if err := a.DB.QueryRow(metric.query).Scan(metric.value); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load analytics totals"})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
 		"taskStatusCounts": counts,
 		"totalProjects":    totalProjects,
 		"totalTasks":       totalTasks,
@@ -1376,29 +1446,57 @@ func (a *AppContext) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AppContext) handleMembers(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		rows, _ := a.DB.Query(`SELECT id, name, email, role, created_at FROM members ORDER BY created_at DESC`)
-		defer rows.Close()
-		out := []Member{}
-		for rows.Next() {
-			var m Member
-			var created string
-			var email sqlNullString
-			_ = rows.Scan(&m.ID, &m.Name, &email, &m.Role, &created)
-			m.Email = email.String
-			m.CreatedAt, _ = time.Parse(time.RFC3339, created)
-			out = append(out, m)
-		}
-		if len(out) == 0 {
-			m := Member{ID: "mem-you", Name: "You", Role: "owner", CreatedAt: time.Now().UTC().Truncate(time.Second)}
-			_, _ = a.DB.Exec(`INSERT INTO members (id, name, role, created_at) VALUES (?,?,?,?)`, m.ID, m.Name, m.Role, m.CreatedAt.Format(time.RFC3339))
-			out = append(out, m)
-		}
-		writeJSON(w, 200, out)
-	default:
-		w.WriteHeader(405)
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+	rows, err := a.DB.Query(`SELECT id, name, email, role, created_at FROM members ORDER BY created_at DESC`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list members"})
+		return
+	}
+	out := []Member{}
+	for rows.Next() {
+		var m Member
+		var created string
+		var email sqlNullString
+		if err := rows.Scan(&m.ID, &m.Name, &email, &m.Role, &created); err != nil {
+			rows.Close()
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read member"})
+			return
+		}
+		m.Email = email.String
+		m.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list members"})
+		return
+	}
+	if err := rows.Close(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to close member query"})
+		return
+	}
+	if len(out) == 0 {
+		m := Member{ID: "mem-you", Name: "You", Role: "owner", CreatedAt: time.Now().UTC().Truncate(time.Second)}
+		if _, err := a.DB.Exec(`INSERT OR IGNORE INTO members (id, name, role, created_at) VALUES (?,?,?,?)`,
+			m.ID, m.Name, m.Role, m.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to initialize member"})
+			return
+		}
+		var created string
+		var email sqlNullString
+		if err := a.DB.QueryRow(`SELECT id, name, email, role, created_at FROM members WHERE id=?`, m.ID).
+			Scan(&m.ID, &m.Name, &email, &m.Role, &created); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load default member"})
+			return
+		}
+		m.Email = email.String
+		m.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		out = append(out, m)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // sqlNullString helper
