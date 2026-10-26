@@ -163,192 +163,124 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   )
 }
 
-function TableView({ records, props, updateRecord, deleteProperty }: { records: DBRecord[]; props: DBProperty[]; updateRecord: any; deleteProperty: any }) {
-  const [sortProp, setSortProp] = useState<string>('')
-  const [filter, setFilter] = useState('')
-  const visibleProps = props.filter(p => p.visible)
-  const filtered = records.filter(r => {
-    if (!filter) return true
-    const hay = (r.title + ' ' + Object.values(r.values || {}).join(' ')).toLowerCase()
-    return hay.includes(filter.toLowerCase())
-  }).sort((a, b) => {
-    if (!sortProp) return 0
-    const va = a.values?.[sortProp] ?? a.title
-    const vb = b.values?.[sortProp] ?? b.title
-    return String(va).localeCompare(String(vb))
-  })
 
+type RecordUpdate = (rec: DBRecord, patch: { title?: string; values?: Record<string, any> }) => Promise<void>
+type OpenRecord = (pageId: string) => void
+function TableView({ records, props, updateRecord, deleteProperty, onOpenRecord }: {
+  records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; deleteProperty: (id: string) => Promise<void>; onOpenRecord?: OpenRecord
+}) {
+  const visibleProps = props.filter(p => p.visible)
   return (
     <div style={{ overflowX: 'auto' }}>
-      <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
-        <input placeholder="Filter…" value={filter} onChange={e => setFilter(e.target.value)} />
-        <select value={sortProp} onChange={e => setSortProp(e.target.value)}>
-          <option value="">Sort by…</option>
-          {props.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-      </div>
       <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-        <thead>
-          <tr>
-            {visibleProps.map(p => (
-              <th key={p.id} style={{ border: '1px solid var(--border)', padding: 6, background: 'var(--card)', minWidth: 120 }}>
-                {p.name}
-                <button onClick={() => deleteProperty(p.id)} style={{ marginLeft: 6, fontSize: 10 }}>×</button>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map(rec => (
-            <tr key={rec.id}>
-              {visibleProps.map(p => (
-                <td key={p.id} style={{ border: '1px solid var(--border)', padding: 4 }}>
-                  <Cell prop={p} value={p.type === 'title' ? rec.title : rec.values?.[p.id]} onChange={(v: any) => {
-                    if (p.type === 'title') updateRecord(rec, { title: v })
-                    else updateRecord(rec, { values: { [p.id]: v } })
-                  }} />
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
+        <thead><tr><th>Page</th>{visibleProps.map(p => <th key={p.id} style={{ border: '1px solid var(--border)', padding: 6, minWidth: 130 }}>{p.name}
+          {p.type !== 'title' && <button aria-label={'Delete ' + p.name} onClick={() => { if (confirm('Delete property ' + p.name + ' and its values?')) void deleteProperty(p.id) }}>×</button>}
+        </th>)}</tr></thead>
+        <tbody>{records.map(rec => <tr key={rec.id} data-testid="database-record-row">
+          <td><button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>Open page</button></td>
+          {visibleProps.map(p => <td key={p.id} style={{ border: '1px solid var(--border)', padding: 4 }}>
+            <Cell prop={p} value={p.type === 'title' ? rec.title : rec.values?.[p.id]} onChange={value => {
+              void updateRecord(rec, p.type === 'title' ? { title: String(value) } : { values: { [p.id]: value } })
+            }} />
+          </td>)}
+        </tr>)}</tbody>
       </table>
     </div>
   )
 }
-
-function Cell({ prop, value, onChange }: { prop: DBProperty; value: any; onChange: (v: any) => void }) {
-  if (prop.type === 'checkbox') {
-    return <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />
-  }
-  if (prop.type === 'number') {
-    return <input type="number" defaultValue={value ?? ''} onBlur={e => onChange(e.target.value === '' ? null : Number(e.target.value))} style={{ width: '100%' }} />
-  }
+function Cell({ prop, value, onChange }: { prop: DBProperty; value: any; onChange: (value: any) => void }) {
+  if (prop.type === 'checkbox') return <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />
+  if (prop.type === 'number') return <input aria-label={prop.name} type="number" key={String(value)} defaultValue={value ?? ''} onBlur={e => onChange(e.target.value === '' ? null : Number(e.target.value))} />
+  if (prop.type === 'date') return <input aria-label={prop.name} type="date" value={String(value ?? '').slice(0, 10)} onChange={e => onChange(e.target.value || null)} />
   if (prop.type === 'select') {
-    let opts: string[] = []
-    try { opts = JSON.parse(prop.config || '{}').options || [] } catch {}
-    return (
-      <select value={value ?? ''} onChange={e => onChange(e.target.value)}>
-        <option value="">—</option>
-        {opts.map(o => <option key={o} value={o}>{o}</option>)}
-      </select>
-    )
+    let options: string[] = []
+    try { options = JSON.parse(prop.config || '{}').options || [] } catch { /* invalid legacy config */ }
+    return <select aria-label={prop.name} value={value ?? ''} onChange={e => onChange(e.target.value || null)}>
+      <option value="">—</option>{options.map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
   }
-  return <input defaultValue={value ?? ''} onBlur={e => onChange(e.target.value)} style={{ width: '100%', border: 'none', background: 'transparent' }} />
+  if (prop.type === 'multi_select') return <input aria-label={prop.name} key={JSON.stringify(value)} defaultValue={Array.isArray(value) ? value.join(',') : ''} onBlur={e => onChange(e.target.value.split(',').map(x => x.trim()).filter(Boolean))} />
+  return <input aria-label={prop.name} key={String(value)} defaultValue={value ?? ''} onBlur={e => { if (String(value ?? '') !== e.target.value) onChange(e.target.value) }} style={{ width: '100%', border: 'none', background: 'transparent' }} />
 }
-
-function BoardView({ records, props, updateRecord }: any) {
-  const groupProp = props.find((p: DBProperty) => p.type === 'select') || props.find((p: DBProperty) => p.type === 'text')
-  const groups: Record<string, DBRecord[]> = {}
-  records.forEach((r: DBRecord) => {
-    const key = String(r.values?.[groupProp?.id] ?? '(empty)')
-    ;(groups[key] = groups[key] || []).push(r)
-  })
-  // ensure empty group exists
-  if (groupProp?.type === 'select') {
-    let opts: string[] = []
-    try { opts = JSON.parse(groupProp.config || '{}').options || [] } catch {}
-    opts.forEach(o => { if (!groups[o]) groups[o] = [] })
-    if (!groups['(empty)']) groups['(empty)'] = groups['(empty)'] || []
-  }
+function BoardView({ records, props, updateRecord, groupBy, onOpenRecord }: {
+  records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; groupBy: string; onOpenRecord?: OpenRecord
+}) {
   const [dragId, setDragId] = useState<string | null>(null)
-  const onDrop = async (groupKey: string) => {
-    if (!dragId || !groupProp) return
-    const rec = records.find((r: DBRecord) => r.id === dragId)
-    if (!rec) return
-    const newVal = groupKey === '(empty)' ? null : groupKey
-    await updateRecord(rec, { values: { [groupProp.id]: newVal } })
-    setDragId(null)
+  const groupProp = props.find(p => p.id === groupBy && p.type === 'select') || props.find(p => p.type === 'select')
+  if (!groupProp) return <p>Add a Select property to use Board view.</p>
+  const groups: Record<string, DBRecord[]> = { '(empty)': [] }
+  let options: string[] = []
+  try { options = JSON.parse(groupProp.config || '{}').options || [] } catch { /* legacy config */ }
+  for (const option of options) groups[option] = []
+  for (const rec of records) {
+    const key = String(rec.values?.[groupProp.id] ?? '(empty)')
+    if (!groups[key]) groups[key] = []
+    groups[key].push(rec)
   }
-  return (
-    <div style={{ display: 'flex', gap: 12, overflowX: 'auto' }}>
-      {Object.entries(groups).map(([g, recs]) => (
-        <div key={g} style={{ minWidth: 220, background: 'var(--card)', padding: 8, borderRadius: 8 }}
-          onDragOver={e => e.preventDefault()}
-          onDrop={() => onDrop(g)}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>{g} ({recs.length})</div>
-          {recs.map((r: DBRecord) => (
-            <div key={r.id} draggable onDragStart={() => setDragId(r.id)}
-              style={{ padding: 8, marginBottom: 6, background: 'var(--background)', borderRadius: 4, border: '1px solid var(--border)', cursor: 'grab' }}>
-              {r.title}
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  )
+  const move = async (key: string) => {
+    const record = records.find(rec => rec.id === dragId)
+    setDragId(null)
+    if (record && String(record.values?.[groupProp.id] ?? '(empty)') !== key) {
+      await updateRecord(record, { values: { [groupProp.id]: key === '(empty)' ? null : key } })
+    }
+  }
+  return <div style={{ display: 'flex', gap: 12, overflowX: 'auto' }}>
+    {Object.entries(groups).map(([group, items]) => <div key={group} data-testid="board-group" data-group={group}
+      onDragOver={event => event.preventDefault()} onDrop={() => { void move(group) }}
+      style={{ minWidth: 220, padding: 8, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}>
+      <strong>{group} ({items.length})</strong>
+      {items.map(item => <div data-testid="board-card" key={item.id} draggable
+        onDragStart={() => setDragId(item.id)} onDragEnd={() => setDragId(null)}
+        style={{ padding: 8, marginTop: 8, cursor: 'grab', border: '1px solid var(--border)', borderRadius: 6 }}>
+        {item.title} <button onClick={() => item.pageId && onOpenRecord?.(item.pageId)}>Open</button>
+      </div>)}
+    </div>)}
+  </div>
 }
-
-function CalendarView({ records, props }: any) {
-  const dateProp = props.find((p: DBProperty) => p.type === 'date')
-  const [cursor, setCursor] = useState(new Date())
+function calendarDay(year: number, month: number, day: number): string {
+  return [year, String(month + 1).padStart(2, '0'), String(day).padStart(2, '0')].join('-')
+}
+function CalendarView({ records, props, updateRecord, dateProperty, onOpenRecord }: {
+  records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; dateProperty: string; onOpenRecord?: OpenRecord
+}) {
+  const [cursor, setCursor] = useState(() => new Date())
+  const dateProp = props.find(p => p.id === dateProperty && p.type === 'date') || props.find(p => p.type === 'date')
   const year = cursor.getFullYear()
   const month = cursor.getMonth()
-  const firstDay = new Date(year, month, 1)
-  const startWeekday = firstDay.getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const cells: (number | null)[] = []
-  for (let i = 0; i < startWeekday; i++) cells.push(null)
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
-  const byDay: Record<number, DBRecord[]> = {}
-  records.forEach((r: DBRecord) => {
-    const v = dateProp ? r.values?.[dateProp.id] : null
-    if (v) {
-      const dt = new Date(String(v))
-      if (dt.getFullYear() === year && dt.getMonth() === month) {
-        const day = dt.getDate()
-        ;(byDay[day] = byDay[day] || []).push(r)
-      }
-    }
-  })
-  return (
-    <div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-        <button className="btn" onClick={() => setCursor(new Date(year, month - 1, 1))}>‹</button>
-        <div style={{ fontWeight: 600 }}>{cursor.toLocaleString('default', { month: 'long', year: 'numeric' })}</div>
-        <button className="btn" onClick={() => setCursor(new Date(year, month + 1, 1))}>›</button>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} style={{ fontWeight: 600, textAlign: 'center' }}>{d}</div>)}
-        {cells.map((c, i) => (
-          <div key={i} style={{ minHeight: 60, border: '1px solid var(--border)', padding: 4, background: 'var(--card)' }}>
-            {c && <div style={{ fontSize: 12, color: 'var(--muted)' }}>{c}</div>}
-            {c && (byDay[c] || []).map(r => <div key={r.id} style={{ fontSize: 12 }}>{r.title}</div>)}
-          </div>
-        ))}
-      </div>
+  const offset = new Date(year, month, 1).getDay()
+  const cells: (number | null)[] = [...Array<null>(offset).fill(null), ...Array.from({ length: daysInMonth }, (_, index) => index + 1)]
+  if (!dateProp) return <p>Add a Date property to use Calendar view.</p>
+  return <div>
+    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
+      <button onClick={() => setCursor(new Date(year, month - 1, 1))}>Previous</button>
+      <strong>{cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</strong>
+      <button onClick={() => setCursor(new Date(year, month + 1, 1))}>Next</button>
     </div>
-  )
-}
-
-function ListView({ records }: { records: DBRecord[] }) {
-  const [open, setOpen] = useState<string | null>(null)
-  return (
-    <ul style={{ listStyle: 'none', padding: 0 }}>
-      {records.map(r => (
-        <li key={r.id} style={{ padding: 8, borderBottom: '1px solid var(--border)', cursor: 'pointer' }} onClick={() => setOpen(open === r.id ? null : r.id)}>
-          <div style={{ fontWeight: 600 }}>{r.title}</div>
-          {open === r.id && (
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
-              {Object.entries(r.values || {}).map(([k, v]) => <div key={k}>{k}: {String(v)}</div>)}
-            </div>
-          )}
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function GalleryView({ records }: { records: DBRecord[] }) {
-  const [open, setOpen] = useState<string | null>(null)
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
-      {records.map(r => (
-        <div key={r.id} onClick={() => setOpen(open === r.id ? null : r.id)} style={{ padding: 12, background: 'var(--card)', borderRadius: 8, border: '1px solid var(--border)', cursor: 'pointer' }}>
-          <div style={{ fontWeight: 600 }}>{r.title}</div>
-          {open === r.id && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{Object.entries(r.values || {}).map(([k, v]) => <div key={k}>{k}: {String(v)}</div>)}</div>}
-        </div>
-      ))}
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(90px, 1fr))', overflowX: 'auto', gap: 4 }}>
+      {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(name => <strong key={name}>{name}</strong>)}
+      {cells.map((day,index) => <div data-testid="calendar-cell" data-date={day ? calendarDay(year, month, day) : ''}
+        key={index} style={{ border: '1px solid var(--border)', background: 'var(--card)', padding: 4, minHeight: 80 }}>
+        <small>{day || ''}</small>
+        {day && records.filter(rec => String(rec.values?.[dateProp.id] ?? '').slice(0,10) === calendarDay(year,month,day)).map(rec => <div key={rec.id}>
+          <button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>{rec.title}</button>
+          <input type="date" aria-label={'Date for ' + rec.title} value={String(rec.values?.[dateProp.id] ?? '').slice(0,10)}
+            onChange={e => { void updateRecord(rec, { values: { [dateProp.id]: e.target.value || null } }) }} />
+        </div>)}
+      </div>)}
     </div>
-  )
+  </div>
+}
+function ListView({ records, onOpenRecord }: { records: DBRecord[]; onOpenRecord?: OpenRecord }) {
+  return <div style={{ display: 'grid', gap: 8 }}>{records.map(rec => <div data-testid="list-record" key={rec.id} style={{ borderBottom: '1px solid var(--border)', padding: 8 }}>
+    <strong>{rec.title}</strong> <button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>Open page</button>
+  </div>)}</div>
+}
+function GalleryView({ records, onOpenRecord }: { records: DBRecord[]; onOpenRecord?: OpenRecord }) {
+  return <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+    {records.map(rec => <div data-testid="gallery-record" key={rec.id} style={{ border: '1px solid var(--border)', background: 'var(--card)', padding: 12, borderRadius: 8 }}>
+      <strong>{rec.title}</strong><div>{Object.values(rec.values || {}).slice(0,3).map((value,index) => <span key={index}>{String(value ?? '')} </span>)}</div>
+      <button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>Open page</button>
+    </div>)}
+  </div>
 }
