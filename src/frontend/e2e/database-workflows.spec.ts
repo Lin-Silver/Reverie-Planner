@@ -126,3 +126,38 @@ test('database creates each view type through the visible interface',async({page
   const db=await res.json() as {views:{type:string}[]}
   for(const type of ['table','board','calendar','list','gallery'])expect(db.views.some(v=>v.type===type)).toBe(true)
 })
+
+
+test('linked database page reopens and shares its source records', async ({page}) => {
+  const host = await makeDatabase(page)
+  const original = await record(page, host.databaseId, 'Shared source record')
+  await reopen(page, host)
+  const dbResponse = await page.request.get(API + '/databases?id=' + host.databaseId)
+  const db = await dbResponse.json() as {title:string}
+  page.on('dialog', async dialog => { await dialog.accept() })
+  await page.getByText('+ Linked view page').click()
+  const linkedTitle = db.title + ' (linked)'
+  await expect.poll(async () => {
+    const response = await page.request.get(API + '/pages')
+    const all: {id:string;title:string}[] = await response.json()
+    return all.find(x => x.title === linkedTitle)?.id || ''
+  }, {timeout:15000}).not.toBe('')
+  const response = await page.request.get(API + '/pages')
+  const all: {id:string;title:string}[] = await response.json()
+  const linked = all.find(x => x.title === linkedTitle)
+  expect(linked?.id).toBeTruthy()
+  const detail = await (await page.request.get(API + '/pages?id=' + linked!.id)).json() as {linkedDatabaseId:string;linkedViewId:string}
+  expect(detail.linkedDatabaseId).toBe(host.databaseId)
+  expect(detail.linkedViewId).toBeTruthy()
+  await page.reload()
+  await page.locator('.tree-item').filter({hasText: linkedTitle}).first().click()
+  await expect(page.getByLabel('Active database view')).toBeVisible({timeout:15000})
+  const row = page.getByTestId('database-record-row').filter({hasText:'Shared source record'})
+  await expect(row).toBeVisible()
+  const input = row.locator('input').first()
+  await input.fill('Shared edited from linked view')
+  await input.blur()
+  await expect.poll(async()=> (await rows(page,host.databaseId)).find(x=>x.id===original.id)?.title,{timeout:15000}).toBe('Shared edited from linked view')
+  await reopen(page,host)
+  await expect(page.getByTestId('database-record-row')).toContainText('Shared edited from linked view')
+})
