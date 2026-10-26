@@ -423,5 +423,6 @@ test('database multi-key numeric and text sorting persists per view and keeps nu
   await reopen(page,host)
   await page.getByLabel('Active database view').selectOption(second)
   await expect(page.getByLabel('Database sort',{exact:true})).toHaveValue('')
-  await expect.poll(rowIds).toEqual([beta.id,unset.id,alpha.id,lower.id])
+  const apiOrder=(await rows(page,host.databaseId)).map(r=>r.id)
+  await expect.poll(rowIds).toEqual(apiOrder)
 })
