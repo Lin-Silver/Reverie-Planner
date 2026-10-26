@@ -32,7 +32,7 @@ func validateDBReferenceValue(tx *sql.Tx, kind, config string, val any) error {
             if used[id]{return fmt.Errorf("duplicate relation record ID")}
             used[id]=true
             var count int
-            if err:=tx.QueryRow("SELECT COUNT(*) FROM db_records WHERE id=? AND database_id=?",id,def.TargetDatabaseID).Scan(&count);err!=nil{return err}
+            if err:=tx.QueryRow("SELECT COUNT(*) FROM db_records WHERE id=? AND database_id=? AND deleted_at IS NULL",id,def.TargetDatabaseID).Scan(&count);err!=nil{return err}
             if count!=1{return fmt.Errorf("relation record is missing from target database")}
         }
     }
