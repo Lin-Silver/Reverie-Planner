@@ -23,7 +23,7 @@ test('database: create, add property and record, edit cell, switch views', async
   await page.getByText('+ New').click()
   await page.waitForTimeout(300)
 
-  const titleInput = page.locator('table input').first()
+  const titleInput = page.locator('table tbody input[aria-label="Name"]').first()
   await titleInput.fill('My record')
   await titleInput.blur()
   await expect(titleInput).toHaveValue('My record')
