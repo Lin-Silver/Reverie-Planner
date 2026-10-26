@@ -11,10 +11,12 @@ This file records concrete, SHA-specific evidence. A successful CI run proves th
 
 ## Most recent independently verified green baseline
 
-- Commit: `41b64ff589c770e32b879cf4d6756182365cdb9e`.
-- Windows GitHub Actions: [run 40275367885](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40275367885), **success**.
+- Commit: `5eb8e633c1ef9237b3df3bab6323facb4f2a3d60`.
+- Windows GitHub Actions: [run 40292259655](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40292259655), **success**.
 - Windows steps: Go backend tests, frontend build/type-check, lint, Chromium Playwright **28/28**, service start/stop, launcher ownership check and portable package.
 - New SQLite recovery tests: `backup_snapshot_test.go` checks a real integrity-checked `VACUUM INTO` snapshot and isolation from subsequent live writes; `backup_restore_test.go` copies the snapshot to an independent temporary root, verifies restored data, reopens it through application initialization and confirms the source database and provider configuration were not changed.
+- SQLite backup publication hardening: `957e876bd3771a1cef173f493de67177b5a0d248`, [Windows CI 40291519811](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40291519811), success. Pending snapshots are validated (SQLite integrity and foreign keys) before atomic publication; canceled or invalid snapshots are not left in the published backup directory, with source and provider preservation tests. This remains a SQLite-only backup.
+- Database mutation request validation: `5eb8e633c1ef9237b3df3bab6323facb4f2a3d60`. Nine database/record/property/view/linked-view write endpoints reject trailing JSON values and requests larger than 4 MiB; 10 negative mutation regression cases check no data, version or provider changes. Verified by [Windows CI 40292259655](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40292259655), success (Go, build, lint 17 warnings, 28/28 Playwright, Windows launcher/package). Remaining API validation and query/performance requirements are open.
 - Earlier visual evidence: commit `01ebf1609477365588d0e71d92c7e2bfd264b9a6`, [Windows CI 40266939979](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266939979), success, **28/28 Playwright**, five populated UI screenshots in artifact `Reverie-Database-UI-Evidence` (ID `12627116333`).
 - **Scope limit:** isolated SQLite restoration is test coverage, not an exposed production restore feature. SQLite backup does not include separate attachment files or AI provider configuration; whole-workspace backup/recovery and historic migration stress testing remain incomplete.
 
