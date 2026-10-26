@@ -470,3 +470,34 @@ test('database keyboard cell edits commit on Enter, cancel on Escape, and avoid 
   await reopen(page,host)
   await expect(page.locator('[data-record-id="'+item.id+'"]').getByLabel('Note',{exact:true})).toHaveValue('Saved by Enter')
 })
+
+
+test('database visual evidence captures five real views with persisted records',async({page})=>{
+  const host=await makeDatabase(page)
+  const status=await property(page,host.databaseId,'Status','select',JSON.stringify({options:['Todo','Done']}))
+  const due=await property(page,host.databaseId,'Due','date')
+  const first=await record(page,host.databaseId,'Evidence Alpha')
+  const second=await record(page,host.databaseId,'Evidence Beta')
+  const today=await page.evaluate(()=>{
+    const date=new Date()
+    return date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0')
+  })
+  for(const [rec,value] of [[first,'Todo'],[second,'Done']] as const){
+    const updated=await page.request.put(API+'/db/records',{data:{
+      id:rec.id,title:rec.title,version:rec.version,values:{[status.id]:value,[due.id]:today}
+    }})
+    expect(updated.status()).toBe(200)
+  }
+  await reopen(page,host)
+  await expect(page.getByTestId('database-record-row')).toHaveCount(2)
+  await page.screenshot({path:'test-results/database-evidence/table.png',fullPage:true})
+  for(const type of ['board','calendar','list','gallery'] as const){
+    const id=await makeView(page,host.databaseId,type)
+    await page.getByLabel('Active database view').selectOption(id)
+    if(type==='board')await expect(page.getByTestId('board-card')).toHaveCount(2)
+    if(type==='calendar')await expect(page.locator('[data-testid="calendar-record"]')).toHaveCount(2)
+    if(type==='list')await expect(page.getByTestId('list-record')).toHaveCount(2)
+    if(type==='gallery')await expect(page.getByTestId('gallery-record')).toHaveCount(2)
+    await page.screenshot({path:'test-results/database-evidence/'+type+'.png',fullPage:true})
+  }
+})
