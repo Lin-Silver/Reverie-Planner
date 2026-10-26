@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
 const API = 'http://127.0.0.1:18765/api'
-type RecordRow = { id: string; pageId: string; version: number; values: Record<string, unknown> }
+type RecordRow = { id: string; pageId: string; title: string; version: number; values: Record<string, unknown> }
 type Host = { databaseId: string; title: string }
 
 async function makeDatabase(page: Page): Promise<Host> {
@@ -160,4 +160,40 @@ test('linked database page reopens and shares its source records', async ({page}
   await expect.poll(async()=> (await rows(page,host.databaseId)).find(x=>x.id===original.id)?.title,{timeout:15000}).toBe('Shared edited from linked view')
   await reopen(page,host)
   await expect(page.getByTestId('database-record-row')).toContainText('Shared edited from linked view')
+})
+
+
+test('database concurrent edits preserve stale draft until explicit Retry or Reload latest', async ({browser}) => {
+  const a=await browser.newContext()
+  const b=await browser.newContext()
+  try {
+    const pageA=await a.newPage(), pageB=await b.newPage()
+    const host=await makeDatabase(pageA)
+    const item=await record(pageA,host.databaseId,'Original concurrent record')
+    await reopen(pageB,host)
+    const first=await pageA.request.put(API+'/db/records',{data:{id:item.id,title:'Remote version A',version:item.version,values:{}}})
+    expect(first.status()).toBe(200)
+    const stale=pageB.getByTestId('database-record-row').filter({hasText:'Original concurrent record'})
+    const input=stale.locator('input').first()
+    await input.fill('Local version B')
+    await input.blur()
+    await expect(pageB.getByRole('alert')).toContainText('Save failed')
+    await expect(pageB.getByText('Retry my changes')).toBeVisible()
+    expect((await rows(pageB,host.databaseId)).find(r=>r.id===item.id)!.title).toBe('Remote version A')
+    await pageB.getByText('← Back').click()
+    await expect(pageB.getByRole('alert')).toContainText('Unsaved database edit')
+    await pageB.getByText('Retry my changes').click()
+    await expect.poll(async()=> (await rows(pageB,host.databaseId)).find(r=>r.id===item.id)!.title,{timeout:15000}).toBe('Local version B')
+    const afterRetry=(await rows(pageB,host.databaseId)).find(r=>r.id===item.id)!
+    expect(afterRetry.version).toBeGreaterThan(item.version+1)
+    const second=await pageA.request.put(API+'/db/records',{data:{id:item.id,title:'Later remote version',version:afterRetry.version,values:{}}})
+    expect(second.status()).toBe(200)
+    const next=pageB.getByTestId('database-record-row').filter({hasText:'Local version B'})
+    await next.locator('input').first().fill('Unwanted local revision')
+    await next.locator('input').first().blur()
+    await expect(pageB.getByText('Retry my changes')).toBeVisible()
+    await pageB.getByText('Reload latest').click()
+    await expect(pageB.getByTestId('database-record-row')).toContainText('Later remote version')
+    expect((await rows(pageB,host.databaseId)).find(r=>r.id===item.id)!.title).toBe('Later remote version')
+  } finally {await a.close(); await b.close()}
 })
