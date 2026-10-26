@@ -615,9 +615,8 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		if v.ID == "" {
 			v.ID = newID("view")
 		}
-		if v.Config == "" {
-			v.Config = "{}"
-		}
+		if v.Config == "" {v.Config="{}"}
+        if err:=validateDBViewConfig(v.Type,v.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
 		var maxPos sql.NullInt64
 		_ = a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_views WHERE database_id=?`, v.DatabaseID).Scan(&maxPos)
 		v.Position = int(maxPos.Int64)
@@ -635,33 +634,49 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "id and version required"})
 			return
 		}
-		if v.Config == "" {
-			v.Config = "{}"
-		}
+		if v.Config == "" {v.Config="{}"}
+        if err:=validateDBViewConfig(v.Type,v.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
 		res, err := a.DB.Exec(`UPDATE db_views SET name=?, type=?, config=?, version=version+1 WHERE id=? AND version=?`, v.Name, v.Type, v.Config, v.ID, v.Version)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		n, _ := res.RowsAffected()
+		n,err:=res.RowsAffected()
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 		if n == 0 {
 			writeJSON(w, 409, map[string]string{"error": "version conflict"})
 			return
 		}
-		_ = a.DB.QueryRow(`SELECT id, database_id, name, type, config, position, version FROM db_views WHERE id=?`, v.ID).Scan(&v.ID, &v.DatabaseID, &v.Name, &v.Type, &v.Config, &v.Position, &v.Version)
+		if err:=a.DB.QueryRow(`SELECT id, database_id, name, type, config, position, version FROM db_views WHERE id=?`, v.ID).Scan(&v.ID, &v.DatabaseID, &v.Name, &v.Type, &v.Config, &v.Position, &v.Version);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 		writeJSON(w, 200, v)
 	case http.MethodDelete:
-		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM db_views WHERE id=?`, id)
-		w.WriteHeader(204)
+        id:=r.URL.Query().Get("id")
+        tx,err:=a.DB.Begin()
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        defer tx.Rollback()
+        var dbID string
+        if err:=tx.QueryRow("SELECT database_id FROM db_views WHERE id=?",id).Scan(&dbID);err!=nil {writeJSON(w,404,map[string]string{"error":"view not found"});return}
+        var refs int
+        if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE linked_view_id=?",id).Scan(&refs);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        if refs!=0 {writeJSON(w,409,map[string]string{"error":"linked view is still used by pages"});return}
+        var total int
+        if err:=tx.QueryRow("SELECT COUNT(*) FROM db_views WHERE database_id=?",dbID).Scan(&total);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        if total<=1 {writeJSON(w,409,map[string]string{"error":"cannot remove last database view"});return}
+        deleted,err:=tx.Exec("DELETE FROM db_views WHERE id=?",id)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        count,err:=deleted.RowsAffected()
+        if err!=nil || count!=1 {writeJSON(w,409,map[string]string{"error":"view changed during deletion"});return}
+        if err:=tx.Commit();err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        w.WriteHeader(204)
 	case http.MethodGet:
 		dbID := r.URL.Query().Get("databaseId")
 		if dbID == "" {
 			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
 			return
 		}
-		vs, _ := a.listViews(dbID)
-		writeJSON(w, 200, vs)
+		vs,err:=a.listViews(dbID)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+		writeJSON(w,200,vs)
 	default:
 		w.WriteHeader(405)
 	}
@@ -833,4 +848,17 @@ func validatePropertyDefinition(kind, config string) error {
     default:
         return fmt.Errorf("unsupported property type: %s", kind)
     }
+}
+
+
+func validateDBViewConfig(kind,config string) error {
+    switch kind {
+    case "table","board","calendar","list","gallery":
+    default:return fmt.Errorf("unsupported database view type: %s",kind)
+    }
+    if len(config)>64*1024{return fmt.Errorf("view config exceeds 64KB")}
+    var body map[string]json.RawMessage
+    if err:=json.Unmarshal([]byte(config),&body);err!=nil{return fmt.Errorf("view config must be a JSON object: %w",err)}
+    if body==nil{return fmt.Errorf("view config must be an object")}
+    return nil
 }
