@@ -75,6 +75,15 @@ func TestDatabaseBackupRestoresIntoIsolatedRootWithoutChangingSource(t *testing.
 	if err := app.DB.QueryRow("SELECT value FROM app_state WHERE key=?", key).Scan(&got); err != nil || got != saved {
 		t.Fatalf("restore mutated source: %q, %v", got, err)
 	}
+	// The restored snapshot must also survive the application's normal startup path.
+	reopened, err := initializeDatabase(restoredRoot)
+	if err != nil {
+		t.Fatalf("initialize restored application database: %v", err)
+	}
+	defer reopened.Close()
+	if err := reopened.QueryRow("SELECT value FROM app_state WHERE key=?", key).Scan(&got); err != nil || got != "restored-only" {
+		t.Fatalf("restored data lost on application startup: %q, %v", got, err)
+	}
 	providersAfter, err := os.ReadFile(providersPath)
 	if err != nil {
 		t.Fatalf("re-read provider configuration: %v", err)
