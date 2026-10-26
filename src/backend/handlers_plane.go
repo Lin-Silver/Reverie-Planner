@@ -580,7 +580,10 @@ func (a *AppContext) handleDrafts(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var d Draft
-		_ = json.NewDecoder(r.Body).Decode(&d)
+		if _, err := decodeJSONRequest(r, &d); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON payload"})
+			return
+		}
 		if d.ID == "" {
 			d.ID = newID("draft")
 		}
@@ -590,18 +593,53 @@ func (a *AppContext) handleDrafts(w http.ResponseWriter, r *http.Request) {
 		now := time.Now().UTC().Truncate(time.Second)
 		d.CreatedAt = now
 		d.UpdatedAt = now
-		_, _ = a.DB.Exec(`INSERT INTO drafts (id, kind, title, content, created_at, updated_at) VALUES (?,?,?,?,?,?)`, d.ID, d.Kind, d.Title, d.Content, d.CreatedAt.Format(time.RFC3339), d.UpdatedAt.Format(time.RFC3339))
-		writeJSON(w, 201, d)
-	case http.MethodPut:
-		var d Draft
-		_ = json.NewDecoder(r.Body).Decode(&d)
-		if d.ID == "" {
-			writeJSON(w, 400, map[string]string{"error": "id required"})
+		if _, err := a.DB.Exec(`INSERT INTO drafts (id, kind, title, content, created_at, updated_at) VALUES (?,?,?,?,?,?)`, d.ID, d.Kind, d.Title, d.Content, d.CreatedAt.Format(time.RFC3339), d.UpdatedAt.Format(time.RFC3339)); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create draft"})
 			return
 		}
+		writeJSON(w, http.StatusCreated, d)
+	case http.MethodPut:
+		var d Draft
+		fields, err := decodeJSONRequest(r, &d)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON payload"})
+			return
+		}
+		if d.ID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"})
+			return
+		}
+		_, hasKind := fields["kind"]
+		_, hasTitle := fields["title"]
+		_, hasContent := fields["content"]
 		d.UpdatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`UPDATE drafts SET kind=?, title=?, content=?, updated_at=? WHERE id=?`, d.Kind, d.Title, d.Content, d.UpdatedAt.Format(time.RFC3339), d.ID)
-		writeJSON(w, 200, d)
+		result, err := a.DB.Exec(`UPDATE drafts SET
+			kind=CASE WHEN ? THEN ? ELSE kind END,
+			title=CASE WHEN ? THEN ? ELSE title END,
+			content=CASE WHEN ? THEN ? ELSE content END,
+			updated_at=? WHERE id=?`,
+			hasKind, d.Kind, hasTitle, d.Title, hasContent, d.Content,
+			d.UpdatedAt.Format(time.RFC3339), d.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update draft"})
+			return
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to verify draft update"})
+			return
+		}
+		if rows == 0 {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "draft not found"})
+			return
+		}
+		var created string
+		if err := a.DB.QueryRow(`SELECT kind, title, content, created_at FROM drafts WHERE id=?`, d.ID).Scan(&d.Kind, &d.Title, &d.Content, &created); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read updated draft"})
+			return
+		}
+		d.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		writeJSON(w, http.StatusOK, d)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
 		_, _ = a.DB.Exec(`DELETE FROM drafts WHERE id=?`, id)
