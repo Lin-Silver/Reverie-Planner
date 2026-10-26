@@ -814,7 +814,11 @@ func (a *AppContext) handlePageMove(w http.ResponseWriter, r *http.Request) {
 		ParentID string `json:"parentId"`
 		Version  int    `json:"version"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.ID == "" {
+	if _, err := decodeJSONRequest(r, &payload); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid page move payload"})
+		return
+	}
+	if payload.ID == "" {
 		writeJSON(w, 400, map[string]string{"error": "id required"})
 		return
 	}
