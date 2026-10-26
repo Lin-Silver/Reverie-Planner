@@ -321,7 +321,16 @@ function Cell({ prop, recordId, value, onChange }: { prop: DBProperty; recordId:
   if (prop.type === 'relation') return <RelationCell prop={prop} value={value} onChange={onChange} />
   if (prop.type === 'person') return <PersonCell prop={prop} value={value} onChange={onChange} />
   if (prop.type === 'checkbox') return <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />
-  if (prop.type === 'number') return <input aria-label={prop.name} type="number" key={String(value)} defaultValue={value ?? ''} onBlur={e => onChange(e.target.value === '' ? null : Number(e.target.value))} />
+  if (prop.type === 'number') return <input aria-label={prop.name} type="number" key={String(value)} defaultValue={value ?? ''}
+    onBlur={e => {
+      const edited=e.currentTarget.value === '' ? null : Number(e.currentTarget.value)
+      const original=value==null || value==='' ? null : Number(value)
+      if (edited!==original) onChange(edited)
+    }}
+    onKeyDown={e => {
+      if(e.key==='Enter')e.currentTarget.blur()
+      if(e.key==='Escape'){e.currentTarget.value=String(value??'');e.currentTarget.blur()}
+    }} />
   if (prop.type === 'date') return <input aria-label={prop.name} type="date" value={String(value ?? '').slice(0, 10)} onChange={e => onChange(e.target.value || null)} />
   if (prop.type === 'select') {
     let options: string[] = []
@@ -330,8 +339,23 @@ function Cell({ prop, recordId, value, onChange }: { prop: DBProperty; recordId:
       <option value="">—</option>{options.map(o => <option key={o} value={o}>{o}</option>)}
     </select>
   }
-  if (prop.type === 'multi_select') return <input aria-label={prop.name} key={JSON.stringify(value)} defaultValue={Array.isArray(value) ? value.join(',') : ''} onBlur={e => onChange(e.target.value.split(',').map(x => x.trim()).filter(Boolean))} />
-  return <input aria-label={prop.name} key={String(value)} defaultValue={value ?? ''} onBlur={e => { if (String(value ?? '') !== e.target.value) onChange(e.target.value) }} style={{ width: '100%', border: 'none', background: 'transparent' }} />
+  if (prop.type === 'multi_select') return <input aria-label={prop.name} key={JSON.stringify(value)} defaultValue={Array.isArray(value) ? value.join(',') : ''}
+    onBlur={e => {
+      const edited=e.currentTarget.value.split(',').map(x=>x.trim()).filter(Boolean)
+      const original=Array.isArray(value)?value:[]
+      if(JSON.stringify(edited)!==JSON.stringify(original))onChange(edited)
+    }}
+    onKeyDown={e => {
+      if(e.key==='Enter')e.currentTarget.blur()
+      if(e.key==='Escape'){e.currentTarget.value=Array.isArray(value)?value.join(','):'';e.currentTarget.blur()}
+    }} />
+  return <input aria-label={prop.name} key={String(value)} defaultValue={value ?? ''}
+    onBlur={e => { if (String(value ?? '') !== e.currentTarget.value) onChange(e.currentTarget.value) }}
+    onKeyDown={e => {
+      if(e.key==='Enter')e.currentTarget.blur()
+      if(e.key==='Escape'){e.currentTarget.value=String(value??'');e.currentTarget.blur()}
+    }}
+    style={{ width: '100%', border: 'none', background: 'transparent' }} />
 }
 
 function RelationCell({ prop, value, onChange }: {prop:DBProperty;value:unknown;onChange:(v:unknown)=>void}) {
