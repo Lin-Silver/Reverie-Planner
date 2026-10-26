@@ -14,7 +14,11 @@ test('database: create, add property and record, edit cell, switch views', async
   await expect(page.getByText('+ Property')).toBeVisible({ timeout: 20000 })
 
   await page.getByText('+ Property').click()
-  await page.waitForTimeout(300)
+  await expect(page.getByRole('dialog', {name:'New database property'})).toBeVisible()
+  await page.getByLabel('Property name').fill('Status')
+  await page.getByLabel('Property type').selectOption('text')
+  await page.getByRole('button',{name:'Create property'}).click()
+  await expect(page.getByRole('dialog', {name:'New database property'})).toBeHidden()
 
   await page.getByText('+ New').click()
   await page.waitForTimeout(300)
