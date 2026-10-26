@@ -630,7 +630,14 @@ func (a *AppContext) handleComments(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var c Comment
-		_ = json.NewDecoder(r.Body).Decode(&c)
+		if _, err := decodeJSONRequest(r, &c); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid comment payload")
+			return
+		}
+		if strings.TrimSpace(c.Entity) == "" || strings.TrimSpace(c.EntityID) == "" || strings.TrimSpace(c.Body) == "" {
+			writeJSONError(w, http.StatusBadRequest, "entity, entityId and body required")
+			return
+		}
 		if c.ID == "" {
 			c.ID = newID("comment")
 		}
@@ -638,12 +645,32 @@ func (a *AppContext) handleComments(w http.ResponseWriter, r *http.Request) {
 			c.Author = "You"
 		}
 		c.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`INSERT INTO comments (id, entity, entity_id, author, body, created_at) VALUES (?,?,?,?,?,?)`, c.ID, c.Entity, c.EntityID, c.Author, c.Body, c.CreatedAt.Format(time.RFC3339))
-		writeJSON(w, 201, c)
+		if _, err := a.DB.Exec(`INSERT INTO comments (id, entity, entity_id, author, body, created_at) VALUES (?,?,?,?,?,?)`, c.ID, c.Entity, c.EntityID, c.Author, c.Body, c.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		writeJSON(w, http.StatusCreated, c)
 	case http.MethodDelete:
-		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM comments WHERE id=?`, id)
-		w.WriteHeader(204)
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			writeJSONError(w, http.StatusBadRequest, "id required")
+			return
+		}
+		res, err := a.DB.Exec(`DELETE FROM comments WHERE id=?`, id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		if affected == 0 {
+			writeJSONError(w, http.StatusNotFound, "comment not found")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(405)
 	}
@@ -676,7 +703,14 @@ func (a *AppContext) handleActivity(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var act Activity
-		_ = json.NewDecoder(r.Body).Decode(&act)
+		if _, err := decodeJSONRequest(r, &act); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid activity payload")
+			return
+		}
+		if strings.TrimSpace(act.Entity) == "" || strings.TrimSpace(act.EntityID) == "" || strings.TrimSpace(act.Action) == "" {
+			writeJSONError(w, http.StatusBadRequest, "entity, entityId and action required")
+			return
+		}
 		if act.ID == "" {
 			act.ID = newID("activity")
 		}
@@ -684,8 +718,11 @@ func (a *AppContext) handleActivity(w http.ResponseWriter, r *http.Request) {
 			act.Actor = "You"
 		}
 		act.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`INSERT INTO activity (id, entity, entity_id, action, actor, details, created_at) VALUES (?,?,?,?,?,?,?)`, act.ID, act.Entity, act.EntityID, act.Action, act.Actor, nullStr(act.Details), act.CreatedAt.Format(time.RFC3339))
-		writeJSON(w, 201, act)
+		if _, err := a.DB.Exec(`INSERT INTO activity (id, entity, entity_id, action, actor, details, created_at) VALUES (?,?,?,?,?,?,?)`, act.ID, act.Entity, act.EntityID, act.Action, act.Actor, nullStr(act.Details), act.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		writeJSON(w, http.StatusCreated, act)
 	default:
 		w.WriteHeader(405)
 	}
