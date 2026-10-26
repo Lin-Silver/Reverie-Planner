@@ -416,14 +416,20 @@ function CalendarView({ records, props, updateRecord, dateProperty, onOpenRecord
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(90px, 1fr))', overflowX: 'auto', gap: 4 }}>
       {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(name => <strong key={name}>{name}</strong>)}
       {cells.map((day,index) => <div data-testid="calendar-cell" data-date={day ? calendarDay(year, month, day) : ''}
-        key={index} onDragOver={event=>{if(day)event.preventDefault()}} onDrop={()=>{
-          if(!day || !draggedRecord)return
-          const record=records.find(r=>r.id===draggedRecord)
+        key={index} onDragOver={event=>{if(day){event.preventDefault();event.dataTransfer.dropEffect='move'}}} onDrop={event=>{
+          if(!day)return
+          event.preventDefault()
+          const recordID=event.dataTransfer.getData('application/x-reverie-record') || draggedRecord
+          if(!recordID)return
+          const record=records.find(r=>r.id===recordID)
           setDraggedRecord(null)
           if(record)void updateRecord(record,{values:{[dateProp.id]:calendarDay(year,month,day)}})
         }} style={{ border: '1px solid var(--border)', background: 'var(--card)', padding: 4, minHeight: 80 }}>
         <small>{day || ''}</small>
-        {day && records.filter(rec => String(rec.values?.[dateProp.id] ?? '').slice(0,10) === calendarDay(year,month,day)).map(rec => <div key={rec.id} data-testid="calendar-record" draggable onDragStart={()=>setDraggedRecord(rec.id)} onDragEnd={()=>setDraggedRecord(null)}>
+        {day && records.filter(rec => String(rec.values?.[dateProp.id] ?? '').slice(0,10) === calendarDay(year,month,day)).map(rec => <div key={rec.id} data-testid="calendar-record">
+          <span data-testid="calendar-drag-handle" draggable aria-label={'Drag '+rec.title+' to another day'} title="Drag to move date"
+            onDragStart={event=>{event.dataTransfer.setData('application/x-reverie-record',rec.id);event.dataTransfer.effectAllowed='move';setDraggedRecord(rec.id)}}
+            onDragEnd={()=>setDraggedRecord(null)} style={{cursor:'grab',userSelect:'none',display:'inline-block',padding:'4px 8px'}}>⋮⋮</span>
           <button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>{rec.title}</button>
           <input type="date" aria-label={'Date for ' + rec.title} value={String(rec.values?.[dateProp.id] ?? '').slice(0,10)}
             onChange={e => { void updateRecord(rec, { values: { [dateProp.id]: e.target.value || null } }) }} />
