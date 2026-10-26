@@ -1,7 +1,9 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -200,33 +202,116 @@ func (a *AppContext) handleCycles(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var c Cycle
-		_ = json.NewDecoder(r.Body).Decode(&c)
+		if _, err := decodeJSONRequest(r, &c); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid cycle payload")
+			return
+		}
 		if c.ID == "" {
 			c.ID = newID("cycle")
 		}
-		if c.Name == "" {
-			writeJSON(w, 400, map[string]string{"error": "name required"})
+		if strings.TrimSpace(c.Name) == "" || strings.TrimSpace(c.ProjectID) == "" {
+			writeJSONError(w, http.StatusBadRequest, "name and projectId required")
 			return
 		}
 		if c.Status == "" {
 			c.Status = "draft"
 		}
+		if (c.StartDate != "" && !validISODate(c.StartDate)) || (c.EndDate != "" && !validISODate(c.EndDate)) {
+			writeJSONError(w, http.StatusBadRequest, "invalid cycle date")
+			return
+		}
 		c.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`INSERT INTO cycles (id, project_id, name, description, start_date, end_date, status, created_at) VALUES (?,?,?,?,?,?,?,?)`, c.ID, c.ProjectID, c.Name, nullStr(c.Description), nullStr(c.StartDate), nullStr(c.EndDate), c.Status, c.CreatedAt.Format(time.RFC3339))
+		_, err := a.DB.Exec(`INSERT INTO cycles (id, project_id, name, description, start_date, end_date, status, created_at) VALUES (?,?,?,?,?,?,?,?)`, c.ID, c.ProjectID, c.Name, nullStr(c.Description), nullStr(c.StartDate), nullStr(c.EndDate), c.Status, c.CreatedAt.Format(time.RFC3339))
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "cycle could not be saved")
+			return
+		}
 		writeJSON(w, 201, c)
 	case http.MethodPut:
 		var c Cycle
-		_ = json.NewDecoder(r.Body).Decode(&c)
-		if c.ID == "" {
-			writeJSON(w, 400, map[string]string{"error": "id required"})
+		fields, err := decodeJSONRequest(r, &c)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid cycle payload")
 			return
 		}
-		_, _ = a.DB.Exec(`UPDATE cycles SET name=?, description=?, start_date=?, end_date=?, status=? WHERE id=?`, c.Name, nullStr(c.Description), nullStr(c.StartDate), nullStr(c.EndDate), c.Status, c.ID)
-		writeJSON(w, 200, c)
+		if strings.TrimSpace(c.ID) == "" {
+			writeJSONError(w, http.StatusBadRequest, "id required")
+			return
+		}
+		var existing Cycle
+		var description, startDate, endDate sqlNullString
+		err = a.DB.QueryRow(`SELECT project_id, name, description, start_date, end_date, status FROM cycles WHERE id=?`, c.ID).
+			Scan(&existing.ProjectID, &existing.Name, &description, &startDate, &endDate, &existing.Status)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "cycle not found")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "cycle could not be loaded")
+			return
+		}
+		existing.Description, existing.StartDate, existing.EndDate = description.String, startDate.String, endDate.String
+		if _, ok := fields["projectId"]; ok && c.ProjectID != existing.ProjectID {
+			writeJSONError(w, http.StatusBadRequest, "projectId cannot be changed")
+			return
+		}
+		if _, ok := fields["name"]; !ok { c.Name = existing.Name }
+		if _, ok := fields["description"]; !ok { c.Description = existing.Description }
+		if _, ok := fields["startDate"]; !ok { c.StartDate = existing.StartDate }
+		if _, ok := fields["endDate"]; !ok { c.EndDate = existing.EndDate }
+		if _, ok := fields["status"]; !ok { c.Status = existing.Status }
+		if strings.TrimSpace(c.Name) == "" {
+			writeJSONError(w, http.StatusBadRequest, "name required")
+			return
+		}
+		for _, key := range []string{"startDate", "endDate"} {
+			if _, ok := fields[key]; ok {
+				value := c.StartDate
+				if key == "endDate" { value = c.EndDate }
+				if value != "" && !validISODate(value) {
+					writeJSONError(w, http.StatusBadRequest, "invalid cycle date")
+					return
+				}
+			}
+		}
+		result, err := a.DB.Exec(`UPDATE cycles SET name=?, description=?, start_date=?, end_date=?, status=? WHERE id=?`,
+			c.Name, nullStr(c.Description), nullStr(c.StartDate), nullStr(c.EndDate), c.Status, c.ID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "cycle could not be updated")
+			return
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "cycle update could not be verified")
+			return
+		}
+		if changed == 0 {
+			writeJSONError(w, http.StatusNotFound, "cycle not found")
+			return
+		}
+		c.ProjectID = existing.ProjectID
+		writeJSON(w, http.StatusOK, c)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM cycles WHERE id=?`, id)
-		w.WriteHeader(204)
+		if strings.TrimSpace(id) == "" {
+			writeJSONError(w, http.StatusBadRequest, "id required")
+			return
+		}
+		result, err := a.DB.Exec(`DELETE FROM cycles WHERE id=?`, id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "cycle could not be deleted")
+			return
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "cycle deletion could not be verified")
+			return
+		}
+		if changed == 0 {
+			writeJSONError(w, http.StatusNotFound, "cycle not found")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(405)
 	}
