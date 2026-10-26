@@ -2,6 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 
 
 
+type ViewType = 'table' | 'board' | 'calendar' | 'list' | 'gallery'
+const VIEW_TYPES: ViewType[] = ['table', 'board', 'calendar', 'list', 'gallery']
+type ViewConfig = { filter?: string; sort?: string; groupBy?: string; dateProperty?: string }
+
 type DBProperty = { id: string; databaseId: string; name: string; type: string; config: string; position: number; visible: boolean; version: number }
 type DBView = { id: string; databaseId: string; name: string; type: string; config: string; position: number; version: number }
 type Database = { id: string; pageId: string; title: string; icon: string; properties: DBProperty[]; views: DBView[]; version: number }
@@ -14,10 +18,15 @@ async function api(path: string, opts?: RequestInit) {
   return res.json()
 }
 
-export default function DatabaseView({ databaseId, viewId: initialViewId, onBack }: { databaseId: string; viewId?: string; onBack: () => void }) {
+export default function DatabaseView({ databaseId, viewId: initialViewId, onBack, onOpenRecord, onLinkedPageCreated }: { databaseId: string; viewId?: string; onBack: () => void; onOpenRecord?: (pageId: string) => void; onLinkedPageCreated?: () => void }) {
   const [db, setDb] = useState<Database | null>(null)
   const [records, setRecords] = useState<DBRecord[]>([])
   const [viewId, setViewId] = useState<string>(initialViewId || '')
+  const [newViewType, setNewViewType] = useState<ViewType>('table')
+  const [filterText, setFilterText] = useState('')
+  const [sortProp, setSortProp] = useState('')
+  const [groupBy, setGroupBy] = useState('')
+  const [dateProperty, setDateProperty] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -27,24 +36,51 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
       const d = await api(`/api/databases?id=${databaseId}`) as Database
       setDb(d)
       const vs = d.views || []
-      if (!viewId && vs.length) setViewId(vs[0].id)
+      setViewId(old => vs.some(v => v.id === old) ? old : (vs.find(v => v.id === initialViewId)?.id || vs[0]?.id || ''))
       const recs = await api(`/api/db/records?databaseId=${databaseId}`) as DBRecord[]
       setRecords(recs || [])
     } catch (e) { setError((e as Error).message) }
     setLoading(false)
-  }, [databaseId, viewId])
+  }, [databaseId, initialViewId])
 
   useEffect(() => { load() }, [load])
 
   const view = db?.views.find(v => v.id === viewId) || db?.views[0]
   const props = db?.properties || []
+  useEffect(() => {
+    let cfg: ViewConfig = {}
+    try { cfg = JSON.parse(view?.config || '{}') as ViewConfig } catch { /* old invalid view */ }
+    setFilterText(cfg.filter || '')
+    setSortProp(cfg.sort || '')
+    setGroupBy(cfg.groupBy || '')
+    setDateProperty(cfg.dateProperty || '')
+  }, [view?.id, view?.config])
+
+  const saveViewSettings = async () => {
+    if (!view) return
+    try {
+      const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...view, config: JSON.stringify({ filter: filterText, sort: sortProp, groupBy, dateProperty }) }) }) as DBView
+      setDb(current => current && ({ ...current, views: current.views.map(v => v.id === updated.id ? updated : v) }))
+      setError('')
+    } catch (e) { setError((e as Error).message) }
+  }
+  const visibleRecords = records.filter(rec => !filterText || (rec.title + ' ' + Object.values(rec.values || {}).join(' ')).toLowerCase().includes(filterText.toLowerCase())).sort((a,b) => {
+    if (!sortProp) return 0
+    const left = sortProp === 'title' ? a.title : a.values?.[sortProp]
+    const right = sortProp === 'title' ? b.title : b.values?.[sortProp]
+    return typeof left === 'number' && typeof right === 'number' ? left-right : String(left ?? '').localeCompare(String(right ?? ''), undefined, {numeric:true})
+  })
 
   const updateRecord = async (rec: DBRecord, patch: { title?: string; values?: Record<string, any> }) => {
     const body: any = { id: rec.id, title: patch.title ?? rec.title, values: patch.values ?? {}, version: rec.version }
     const updated = await api('/api/db/records', { method: 'PUT', body: JSON.stringify(body) }) as DBRecord
+    setError('')
     setRecords(rs => rs.map(r => r.id === rec.id ? { ...r, ...updated, values: { ...r.values, ...(updated.values || {}) } } : r))
   }
 
+  const safelyUpdateRecord = async (rec: DBRecord, patch: { title?: string; values?: Record<string, any> }) => {
+    try { await updateRecord(rec, patch) } catch (e) { setError(`Save failed: ${(e as Error).message}`) }
+  }
   const addRecord = async () => {
     const rec = await api('/api/db/records', { method: 'POST', body: JSON.stringify({ databaseId, title: 'Untitled' }) }) as DBRecord
     setRecords(rs => [...rs, rec])
@@ -53,7 +89,13 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const addProperty = async () => {
     const name = prompt('Property name?') || 'Property'
     const type = prompt('Type (text/number/checkbox/select/date/url/email)?') || 'text'
-    await api('/api/db/properties', { method: 'POST', body: JSON.stringify({ databaseId, name, type }) })
+    let config = '{}'
+    if (type === 'select' || type === 'multi_select') {
+      const raw = prompt('Options, comma-separated (for example: Todo,Done)', 'Todo,Done')
+      if (raw === null) return
+      config = JSON.stringify({ options: [...new Set(raw.split(',').map(x => x.trim()).filter(Boolean))] })
+    }
+    await api('/api/db/properties', { method: 'POST', body: JSON.stringify({ databaseId, name, type, config }) })
     await load()
   }
 
@@ -70,11 +112,12 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   }
 
   if (loading) return <div style={{ padding: 24 }}>Loading database…</div>
-  if (error) return <div style={{ padding: 24, color: 'red' }}>{error}</div>
+  // Save errors remain visible without hiding the editor or unsaved input.
   if (!db) return <div style={{ padding: 24 }}>Not found</div>
 
   return (
     <div style={{ padding: 16 }}>
+      {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} <button onClick={() => { setError(''); void load() }}>Reload latest</button></div>}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <button className="btn" onClick={onBack}>← Back</button>
         <h2 style={{ margin: 0 }}>{db.icon} {db.title}</h2>
@@ -82,27 +125,39 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         <button className="btn" onClick={addProperty}>+ Property</button>
         <button className="btn primary" onClick={addRecord}>+ New</button>
         <div style={{ flex: 1 }} />
-        <select value={viewId} onChange={e => setViewId(e.target.value)}>
+        <select aria-label="Active database view" value={viewId} onChange={e => setViewId(e.target.value)}>
           {db.views.map(v => <option key={v.id} value={v.id}>{v.name} ({v.type})</option>)}
         </select>
+        <select aria-label="New view type" value={newViewType} onChange={e => setNewViewType(e.target.value as ViewType)}>{VIEW_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
         <button className="btn" onClick={async () => {
-          const v = await api('/api/db/views', { method: 'POST', body: JSON.stringify({ databaseId, name: 'New view', type: 'table' }) }) as DBView
-          setDb({ ...db, views: [...db.views, v] })
-          setViewId(v.id)
+          try {
+            const v = await api('/api/db/views', { method: 'POST', body: JSON.stringify({ databaseId, name: newViewType[0].toUpperCase()+newViewType.slice(1), type: newViewType }) }) as DBView
+            setDb(current => current && ({ ...current, views: [...current.views, v] }))
+            setViewId(v.id)
+            setError('')
+          } catch (e) { setError((e as Error).message) }
         }}>+ View</button>
         <button className="btn" onClick={async () => {
           try {
             const pg = await api('/api/pages', { method: 'POST', body: JSON.stringify({ title: `${db.title} (linked)`, workspace: true, createdBy: 'You' }) }) as any
             await api('/api/db/linked-view', { method: 'POST', body: JSON.stringify({ databaseId, pageId: pg.id, name: 'Linked view' }) })
+            onLinkedPageCreated?.()
             alert('Linked view page created: open it from the sidebar.')
           } catch (e) { setError((e as Error).message) }
         }}>+ Linked view page</button>
       </div>
-      {view?.type === 'table' && <TableView records={records} props={props} updateRecord={updateRecord} deleteProperty={deleteProperty} />}
-      {view?.type === 'board' && <BoardView records={records} props={props} updateRecord={updateRecord} />}
-      {view?.type === 'calendar' && <CalendarView records={records} props={props} />}
-      {view?.type === 'list' && <ListView records={records} />}
-      {view?.type === 'gallery' && <GalleryView records={records} />}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        <input aria-label="Database filter" placeholder="Filter records" value={filterText} onChange={e => setFilterText(e.target.value)} />
+        <select aria-label="Database sort" value={sortProp} onChange={e => setSortProp(e.target.value)}><option value="">No sort</option><option value="title">Title</option>{props.filter(p => p.type !== 'title').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+        {view?.type === 'board' && <select aria-label="Board group by" value={groupBy} onChange={e => setGroupBy(e.target.value)}><option value="">First select property</option>{props.filter(p => p.type === 'select').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
+        {view?.type === 'calendar' && <select aria-label="Calendar date property" value={dateProperty} onChange={e => setDateProperty(e.target.value)}><option value="">First date property</option>{props.filter(p => p.type === 'date').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
+        <button onClick={() => void saveViewSettings()}>Save view settings</button>
+      </div>
+      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} onOpenRecord={onOpenRecord} />}
+      {view?.type === 'board' && <BoardView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={onOpenRecord} />}
+      {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={onOpenRecord} />}
+      {view?.type === 'list' && <ListView records={visibleRecords} onOpenRecord={onOpenRecord} />}
+      {view?.type === 'gallery' && <GalleryView records={visibleRecords} onOpenRecord={onOpenRecord} />}
       {!['table', 'board', 'calendar', 'list', 'gallery'].includes(view?.type || '') && <div>Unknown view</div>}
     </div>
   )
