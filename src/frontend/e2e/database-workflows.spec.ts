@@ -492,8 +492,9 @@ test('database visual evidence captures five real views with persisted records',
   await expect(page.getByTestId('database-record-row')).toHaveCount(2)
   await page.screenshot({path:'test-results/database-evidence/table.png',fullPage:true})
   for(const type of ['board','calendar','list','gallery'] as const){
-    const id=await makeView(page,host.databaseId,type)
-    await page.getByLabel('Active database view').selectOption(id)
+    await page.getByLabel('New view type').selectOption(type)
+    await page.getByText('+ View').click()
+    await expect(page.getByLabel('Active database view').locator('option:checked')).toContainText(type)
     if(type==='board')await expect(page.getByTestId('board-card')).toHaveCount(2)
     if(type==='calendar')await expect(page.locator('[data-testid="calendar-record"]')).toHaveCount(2)
     if(type==='list')await expect(page.getByTestId('list-record')).toHaveCount(2)
