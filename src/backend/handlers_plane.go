@@ -1065,43 +1065,102 @@ func (a *AppContext) handleIntake(w http.ResponseWriter, r *http.Request) {
 			args = append(args, projectID)
 		}
 		q += ` ORDER BY created_at DESC`
-		rows, _ := a.DB.Query(q, args...)
+		rows, err := a.DB.Query(q, args...)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to list intake"})
+			return
+		}
 		defer rows.Close()
 		out := []IntakeItem{}
 		for rows.Next() {
 			var it IntakeItem
 			var created string
 			var body sqlNullString
-			_ = rows.Scan(&it.ID, &it.ProjectID, &it.Title, &body, &it.Status, &created)
+			if err := rows.Scan(&it.ID, &it.ProjectID, &it.Title, &body, &it.Status, &created); err != nil {
+				writeJSON(w, 500, map[string]string{"error": "failed to read intake"})
+				return
+			}
 			it.Body = body.String
 			it.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			out = append(out, it)
 		}
+		if err := rows.Err(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to list intake"})
+			return
+		}
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var it IntakeItem
-		_ = json.NewDecoder(r.Body).Decode(&it)
+		if _, err := decodeJSONRequest(r, &it); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid intake payload"})
+			return
+		}
+		if strings.TrimSpace(it.ProjectID) == "" || strings.TrimSpace(it.Title) == "" {
+			writeJSON(w, 400, map[string]string{"error": "projectId and title required"})
+			return
+		}
 		if it.ID == "" {
 			it.ID = newID("intake")
 		}
 		if it.Status == "" {
 			it.Status = "pending"
 		}
+		if strings.TrimSpace(it.Status) == "" {
+			writeJSON(w, 400, map[string]string{"error": "status cannot be blank"})
+			return
+		}
 		it.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`INSERT INTO intake (id, project_id, title, body, status, created_at) VALUES (?,?,?,?,?,?)`, it.ID, it.ProjectID, it.Title, nullStr(it.Body), it.Status, it.CreatedAt.Format(time.RFC3339))
+		if _, err := a.DB.Exec(`INSERT INTO intake (id, project_id, title, body, status, created_at) VALUES (?,?,?,?,?,?)`,
+			it.ID, it.ProjectID, it.Title, nullStr(it.Body), it.Status, it.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to create intake"})
+			return
+		}
 		writeJSON(w, 201, it)
 	case http.MethodPut:
 		var it IntakeItem
-		_ = json.NewDecoder(r.Body).Decode(&it)
-		if it.ID == "" {
-			writeJSON(w, 400, map[string]string{"error": "id required"})
+		if _, err := decodeJSONRequest(r, &it); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid intake payload"})
 			return
 		}
-		_, _ = a.DB.Exec(`UPDATE intake SET status=? WHERE id=?`, it.Status, it.ID)
+		if it.ID == "" || strings.TrimSpace(it.Status) == "" {
+			writeJSON(w, 400, map[string]string{"error": "id and status required"})
+			return
+		}
+		result, err := a.DB.Exec(`UPDATE intake SET status=? WHERE id=?`, it.Status, it.ID)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to update intake"})
+			return
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to verify intake update"})
+			return
+		}
+		if affected == 0 {
+			writeJSON(w, 404, map[string]string{"error": "intake item not found"})
+			return
+		}
 		writeJSON(w, 200, it)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM intake WHERE id=?`, id)
+		if id == "" {
+			writeJSON(w, 400, map[string]string{"error": "id required"})
+			return
+		}
+		result, err := a.DB.Exec(`DELETE FROM intake WHERE id=?`, id)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to delete intake"})
+			return
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to verify intake deletion"})
+			return
+		}
+		if affected == 0 {
+			writeJSON(w, 404, map[string]string{"error": "intake item not found"})
+			return
+		}
 		w.WriteHeader(204)
 	default:
 		w.WriteHeader(405)
@@ -1243,36 +1302,73 @@ func (a *AppContext) handlePageMove(w http.ResponseWriter, r *http.Request) {
 func (a *AppContext) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		rows, _ := a.DB.Query(`SELECT id, name, slug, description, created_at FROM workspaces ORDER BY created_at DESC`)
-		defer rows.Close()
+		rows, err := a.DB.Query(`SELECT id, name, slug, description, created_at FROM workspaces ORDER BY created_at DESC`)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to list workspaces"})
+			return
+		}
 		out := []Workspace{}
 		for rows.Next() {
 			var ws Workspace
 			var created string
 			var desc, slug sqlNullString
-			_ = rows.Scan(&ws.ID, &ws.Name, &slug, &desc, &created)
+			if err := rows.Scan(&ws.ID, &ws.Name, &slug, &desc, &created); err != nil {
+				rows.Close()
+				writeJSON(w, 500, map[string]string{"error": "failed to read workspace"})
+				return
+			}
 			ws.Slug = slug.String
 			ws.Description = desc.String
 			ws.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			out = append(out, ws)
 		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			writeJSON(w, 500, map[string]string{"error": "failed to list workspaces"})
+			return
+		}
+		if err := rows.Close(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to close workspace query"})
+			return
+		}
 		if len(out) == 0 {
-			ws2 := Workspace{ID: "ws-default", Name: "Workspace", Slug: "workspace", CreatedAt: time.Now().UTC().Truncate(time.Second)}
-			_, _ = a.DB.Exec(`INSERT INTO workspaces (id, name, slug, created_at) VALUES (?,?,?,?)`, ws2.ID, ws2.Name, ws2.Slug, ws2.CreatedAt.Format(time.RFC3339))
-			out = append(out, ws2)
+			ws := Workspace{ID: "ws-default", Name: "Workspace", Slug: "workspace", CreatedAt: time.Now().UTC().Truncate(time.Second)}
+			if _, err := a.DB.Exec(`INSERT OR IGNORE INTO workspaces (id, name, slug, created_at) VALUES (?,?,?,?)`,
+				ws.ID, ws.Name, ws.Slug, ws.CreatedAt.Format(time.RFC3339)); err != nil {
+				writeJSON(w, 500, map[string]string{"error": "failed to initialize workspace"})
+				return
+			}
+			var created string
+			var slug, desc sqlNullString
+			if err := a.DB.QueryRow(`SELECT id, name, slug, description, created_at FROM workspaces WHERE id=?`, ws.ID).
+				Scan(&ws.ID, &ws.Name, &slug, &desc, &created); err != nil {
+				writeJSON(w, 500, map[string]string{"error": "failed to load workspace"})
+				return
+			}
+			ws.Slug = slug.String
+			ws.Description = desc.String
+			ws.CreatedAt, _ = time.Parse(time.RFC3339, created)
+			out = append(out, ws)
 		}
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var ws Workspace
-		_ = json.NewDecoder(r.Body).Decode(&ws)
+		if _, err := decodeJSONRequest(r, &ws); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid workspace payload"})
+			return
+		}
 		if ws.ID == "" {
 			ws.ID = newID("ws")
 		}
-		if ws.Name == "" {
+		if strings.TrimSpace(ws.Name) == "" {
 			ws.Name = "Workspace"
 		}
 		ws.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`INSERT INTO workspaces (id, name, slug, description, created_at) VALUES (?,?,?,?,?)`, ws.ID, ws.Name, nullStr(ws.Slug), nullStr(ws.Description), ws.CreatedAt.Format(time.RFC3339))
+		if _, err := a.DB.Exec(`INSERT INTO workspaces (id, name, slug, description, created_at) VALUES (?,?,?,?,?)`,
+			ws.ID, ws.Name, nullStr(ws.Slug), nullStr(ws.Description), ws.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "failed to create workspace"})
+			return
+		}
 		writeJSON(w, 201, ws)
 	default:
 		w.WriteHeader(405)
