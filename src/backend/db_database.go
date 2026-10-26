@@ -257,6 +257,12 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			p.Config = "{}"
 		}
 		if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
+		if p.Type=="relation" {
+			var cfg struct {TargetDatabaseID string `json:"targetDatabaseId"`}
+			_ = json.Unmarshal([]byte(p.Config), &cfg)
+			var target int
+			if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=?",cfg.TargetDatabaseID).Scan(&target);err!=nil || target!=1 {writeJSON(w,400,map[string]string{"error":"relation target database not found"});return}
+		}
 		// position: append
 		var maxPos sql.NullInt64
 		_ = a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_properties WHERE database_id=?`, p.DatabaseID).Scan(&maxPos)
@@ -339,7 +345,8 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
 			return
 		}
-		rows, _ := a.DB.Query(`SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE database_id=? ORDER BY created_at ASC`, dbID)
+		rows,err := a.DB.Query(`SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE database_id=? ORDER BY created_at ASC`, dbID)
+		if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 		type rawRec struct {
 			rec    DBRecord
 			pageID sql.NullString
@@ -348,10 +355,13 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		var raws []rawRec
 		for rows.Next() {
 			var r rawRec
-			_ = rows.Scan(&r.rec.ID, &r.rec.DatabaseID, &r.rec.Title, &r.pageID, &r.rec.Version, &r.created, &r.updated)
+			if err:=rows.Scan(&r.rec.ID, &r.rec.DatabaseID, &r.rec.Title, &r.pageID, &r.rec.Version, &r.created, &r.updated);err!=nil {rows.Close();writeJSON(w,500,map[string]string{"error":err.Error()});return}
 			raws = append(raws, r)
 		}
+		if err:=rows.Err();err!=nil {rows.Close();writeJSON(w,500,map[string]string{"error":err.Error()});return}
 		rows.Close()
+		fields,err:=a.listProperties(dbID)
+		if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 		out := []DBRecord{}
 		for _, r := range raws {
 			rec := r.rec
@@ -359,6 +369,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			rec.CreatedAt = r.created
 			rec.UpdatedAt = r.updated
 			rec.Values = a.recordValues(rec.ID)
+			appendDBSystemValues(rec.Values, fields, rec)
 			out = append(out, rec)
 		}
 		writeJSON(w, 200, out)
@@ -467,12 +478,14 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, 400, map[string]string{"error": "unknown property"})
 				return
 			}
+			if def.kind=="title" {tx.Rollback();writeJSON(w,400,map[string]string{"error":"title must be changed through record title"});return}
 			if err := validatePropertyValue(def.kind, val); err != nil {
 				tx.Rollback()
 				writeJSON(w, 400, map[string]string{"error": err.Error()})
 				return
 			}
 			if err := validateConfiguredPropertyValue(def.kind, def.config, val); err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
+			if err := validateDBReferenceValue(tx,def.kind,def.config,val); err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
 			vb, err := json.Marshal(val)
 			if err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": "invalid property value"}); return }
 			// upsert
@@ -546,6 +559,9 @@ func (a *AppContext) getDBRecord(id string) (DBRecord, error) {
 	rec.CreatedAt = created
 	rec.UpdatedAt = updated
 	rec.Values = a.recordValues(rec.ID)
+	fields,err:=a.listProperties(rec.DatabaseID)
+	if err!=nil {return rec,err}
+	appendDBSystemValues(rec.Values,fields,rec)
 	return rec, nil
 }
 
@@ -732,8 +748,13 @@ func validatePropertyValue(propType string, val any) error {
 				}
 			}
 		}
-	case "url", "email", "text", "title":
+	case "url", "email", "text", "title", "person":
         if _, ok := val.(string); !ok { return fmt.Errorf("invalid %s value", propType) }
+    case "relation":
+        values,ok:=val.([]any); if !ok {return fmt.Errorf("relation must be an array of IDs")}
+        for _,v:=range values {if _,ok:=v.(string);!ok{return fmt.Errorf("invalid relation ID")}}
+    case "created_time","last_edited_time":
+        return fmt.Errorf("system timestamp is read-only")
     default:
         return fmt.Errorf("unsupported property type: %s", propType)
     }
@@ -766,7 +787,11 @@ func validateConfiguredPropertyValue(kind, config string, val any) error {
 
 func validatePropertyDefinition(kind, config string) error {
     switch kind {
-    case "text", "number", "checkbox", "date", "email", "url":
+    case "text", "number", "checkbox", "date", "email", "url", "person", "created_time", "last_edited_time":
+        return nil
+    case "relation":
+        var v struct { TargetDatabaseID string `json:"targetDatabaseId"` }
+        if err:=json.Unmarshal([]byte(config),&v);err!=nil || v.TargetDatabaseID=="" {return fmt.Errorf("relation targetDatabaseId required")}
         return nil
     case "select", "multi_select":
         if config == "" { return nil }
