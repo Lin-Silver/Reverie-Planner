@@ -354,14 +354,16 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 		fields,err:=a.listProperties(dbID)
 		if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+		valueIndex,err:=a.recordValuesForDatabase(dbID)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 		out := []DBRecord{}
 		for _, r := range raws {
 			rec := r.rec
 			rec.PageID = r.pageID.String
 			rec.CreatedAt = r.created
 			rec.UpdatedAt = r.updated
-			rec.Values, err = a.recordValues(rec.ID)
-            if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+			rec.Values=valueIndex[rec.ID]
+            if rec.Values==nil {rec.Values=map[string]any{}}
 			appendDBSystemValues(rec.Values, fields, rec)
 			if err:=a.appendComputedValues(fields,&rec);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 			out = append(out, rec)
@@ -571,6 +573,31 @@ func (a *AppContext) recordValues(recordID string) (map[string]any,error) {
     }
     if err:=rows.Err();err!=nil{return nil,err}
     return out,nil
+}
+
+
+// Read values in one indexed join rather than one query per record. The
+// database has a single SQLite connection; all rows close before related
+// rollup computations execute.
+func (a *AppContext) recordValuesForDatabase(databaseID string) (map[string]map[string]any,error) {
+    rows,err:=a.DB.Query(`SELECT dv.record_id,dv.property_id,dv.value
+        FROM db_records dr
+        JOIN db_values dv ON dv.record_id=dr.id
+        JOIN db_properties dp ON dp.id=dv.property_id AND dp.deleted_at IS NULL
+        WHERE dr.database_id=? AND dr.deleted_at IS NULL`,databaseID)
+    if err!=nil{return nil,err}
+    defer rows.Close()
+    output:=map[string]map[string]any{}
+    for rows.Next() {
+        var recordID,propertyID,raw string
+        if err:=rows.Scan(&recordID,&propertyID,&raw);err!=nil{return nil,err}
+        var value any
+        if err:=json.Unmarshal([]byte(raw),&value);err!=nil{return nil,fmt.Errorf("corrupt property %s of record %s: %w",propertyID,recordID,err)}
+        if output[recordID]==nil{output[recordID]=map[string]any{}}
+        output[recordID][propertyID]=value
+    }
+    if err:=rows.Err();err!=nil{return nil,err}
+    return output,nil
 }
 
 func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
