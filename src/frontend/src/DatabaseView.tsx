@@ -4,12 +4,13 @@ import DatabaseFilterBuilder from './DatabaseFilterBuilder'
 import DatabasePropertyDialog from './DatabasePropertyDialog'
 import DatabaseTrash from './DatabaseTrash'
 import DatabaseFileCell from './DatabaseFileCell'
+import { sortDatabaseRecords, type DatabaseSortRule } from './databaseSorting'
 
 
 
 type ViewType = 'table' | 'board' | 'calendar' | 'list' | 'gallery'
 const VIEW_TYPES: ViewType[] = ['table', 'board', 'calendar', 'list', 'gallery']
-type ViewConfig = { filter?: string; sort?: string; groupBy?: string; dateProperty?: string; filterTree?: FilterGroup; columnOrder?: string[]; hiddenColumns?: string[]; columnWidths?: Record<string, number> }
+type ViewConfig = { filter?: string; sort?: string; sortRules?: DatabaseSortRule[]; groupBy?: string; dateProperty?: string; filterTree?: FilterGroup; columnOrder?: string[]; hiddenColumns?: string[]; columnWidths?: Record<string, number> }
 
 type DBProperty = { id: string; databaseId: string; name: string; type: string; config: string; position: number; visible: boolean; version: number }
 type DBView = { id: string; databaseId: string; name: string; type: string; config: string; position: number; version: number }
@@ -33,6 +34,9 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [filterText, setFilterText] = useState('')
   const [filterTree, setFilterTree] = useState<FilterGroup>(() => newFilterGroup())
   const [sortProp, setSortProp] = useState('')
+  const [sortDirection, setSortDirection] = useState<'asc'|'desc'>('asc')
+  const [secondarySortProp, setSecondarySortProp] = useState('')
+  const [secondarySortDirection, setSecondarySortDirection] = useState<'asc'|'desc'>('asc')
   const [groupBy, setGroupBy] = useState('')
   const [columnOrder,setColumnOrder] = useState<string[]>([])
   const [hiddenColumns,setHiddenColumns] = useState<string[]>([])
@@ -68,7 +72,11 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     try { cfg = JSON.parse(view?.config || '{}') as ViewConfig } catch { /* old invalid view */ }
     setFilterText(cfg.filter || '')
     setFilterTree(cfg.filterTree?.kind === 'group' && Array.isArray(cfg.filterTree.children) ? cfg.filterTree : newFilterGroup())
-    setSortProp(cfg.sort || '')
+    const savedRules=Array.isArray(cfg.sortRules)?cfg.sortRules:[]
+    setSortProp(savedRules[0]?.propertyId || cfg.sort || '')
+    setSortDirection(savedRules[0]?.direction === 'desc' ? 'desc' : 'asc')
+    setSecondarySortProp(savedRules[1]?.propertyId || '')
+    setSecondarySortDirection(savedRules[1]?.direction === 'desc' ? 'desc' : 'asc')
     setGroupBy(cfg.groupBy || '')
     setColumnOrder(Array.isArray(cfg.columnOrder)?cfg.columnOrder:[])
     setHiddenColumns(Array.isArray(cfg.hiddenColumns)?cfg.hiddenColumns:[])
@@ -76,20 +84,20 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     setDateProperty(cfg.dateProperty || '')
   }, [view?.id, view?.config])
 
+  const sortRules: DatabaseSortRule[] = [
+    ...(sortProp ? [{ propertyId: sortProp, direction: sortDirection }] : []),
+    ...(secondarySortProp && secondarySortProp !== sortProp ? [{ propertyId: secondarySortProp, direction: secondarySortDirection }] : [])
+  ]
   const saveViewSettings = async () => {
     if (!view) return
     try {
-      const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...view, config: JSON.stringify({ filter: filterText, filterTree, sort: sortProp, groupBy, dateProperty, columnOrder, hiddenColumns, columnWidths }) }) }) as DBView
+      const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...view, config: JSON.stringify({ filter: filterText, filterTree, sort: sortProp, sortRules, groupBy, dateProperty, columnOrder, hiddenColumns, columnWidths }) }) }) as DBView
       setDb(current => current && ({ ...current, views: current.views.map(v => v.id === updated.id ? updated : v) }))
       setError('')
     } catch (e) { setError((e as Error).message) }
   }
-  const visibleRecords = records.filter(rec => matchesFilters(rec, props, filterTree) && (!filterText || (rec.title + ' ' + Object.values(rec.values || {}).join(' ')).toLowerCase().includes(filterText.toLowerCase()))).sort((a,b) => {
-    if (!sortProp) return 0
-    const left = sortProp === 'title' ? a.title : a.values?.[sortProp]
-    const right = sortProp === 'title' ? b.title : b.values?.[sortProp]
-    return typeof left === 'number' && typeof right === 'number' ? left-right : String(left ?? '').localeCompare(String(right ?? ''), undefined, {numeric:true})
-  })
+  const matchingRecords = records.filter(rec => matchesFilters(rec, props, filterTree) && (!filterText || (rec.title + ' ' + Object.values(rec.values || {}).join(' ')).toLowerCase().includes(filterText.toLowerCase())))
+  const visibleRecords = sortDatabaseRecords(matchingRecords, props, sortRules)
 
   const updateRecord = async (rec: DBRecord, patch: { title?: string; values?: Record<string, any> }) => {
     const body: any = { id: rec.id, title: patch.title ?? rec.title, values: patch.values ?? {}, version: rec.version }
@@ -220,6 +228,9 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
         <input aria-label="Database filter" placeholder="Filter records" value={filterText} onChange={e => setFilterText(e.target.value)} />
         <select aria-label="Database sort" value={sortProp} onChange={e => setSortProp(e.target.value)}><option value="">No sort</option><option value="title">Title</option>{props.filter(p => p.type !== 'title').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+        <select aria-label="Sort direction" value={sortDirection} disabled={!sortProp} onChange={e => setSortDirection(e.target.value as 'asc'|'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select>
+        <select aria-label="Secondary database sort" value={secondarySortProp} onChange={e => setSecondarySortProp(e.target.value)}><option value="">No secondary sort</option><option value="title" disabled={sortProp==='title'}>Title</option>{props.filter(p => p.type !== 'title').map(p => <option key={p.id} value={p.id} disabled={sortProp===p.id}>{p.name}</option>)}</select>
+        <select aria-label="Secondary sort direction" value={secondarySortDirection} disabled={!secondarySortProp} onChange={e => setSecondarySortDirection(e.target.value as 'asc'|'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select>
         {view?.type === 'board' && <select aria-label="Board group by" value={groupBy} onChange={e => setGroupBy(e.target.value)}><option value="">First select property</option>{props.filter(p => p.type === 'select').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
         {view?.type === 'calendar' && <select aria-label="Calendar date property" value={dateProperty} onChange={e => setDateProperty(e.target.value)}><option value="">First date property</option>{props.filter(p => p.type === 'date').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
         <button onClick={() => void saveViewSettings()}>Save view settings</button>
