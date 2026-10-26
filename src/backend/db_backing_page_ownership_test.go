@@ -18,7 +18,7 @@ func TestDatabaseCreateRejectsConflictingBackingPages(t *testing.T) {
 
     liveDB, liveRecord := dbRegressionCreate(t, app)
     trashedDB, _ := dbRegressionCreate(t, app)
-    recordOwner, trashedRecord := dbRegressionCreate(t, app)
+    _, trashedRecord := dbRegressionCreate(t, app)
 
     removed := dbRegressionCall(t, app, http.MethodDelete,
         "/api/databases?id="+trashedDB.ID, "", app.handleDatabases)
@@ -127,5 +127,4 @@ func TestDatabaseCreateRejectsConflictingBackingPages(t *testing.T) {
         t.Fatalf("duplicate host page changed row counts: before=%v after=%v", after, got)
     }
     checkHost()
-    _ = recordOwner // Ensure the active owner database remains available.
 }
