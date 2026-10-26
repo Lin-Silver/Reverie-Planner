@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 type PropertyInfo = { id: string; name: string; type: string; config: string }
 type DatabaseInfo = { id: string; title: string }
-const TYPES = ['text','number','checkbox','select','multi_select','date','url','email','person','relation','formula','rollup','created_time','last_edited_time'] as const
+const TYPES = ['text','number','checkbox','select','multi_select','date','url','email','person','file','relation','formula','rollup','created_time','last_edited_time'] as const
 
 export default function DatabasePropertyDialog({ databaseId, properties, onClose, onCreated }: {
   databaseId: string; properties: PropertyInfo[]; onClose: () => void; onCreated: () => void
