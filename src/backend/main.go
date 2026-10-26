@@ -242,6 +242,7 @@ func main() {
 	mux.HandleFunc("/api/db/views", ctx.handleDBViews)
 	mux.HandleFunc("/api/db/linked-view", ctx.handleDBLinkedView)
 	mux.HandleFunc("/api/db/trash", ctx.handleDBTrash)
+	mux.HandleFunc("/api/db/files", ctx.handleDBFiles)
 
 	if _, err := os.Stat(staticRoot); err == nil {
 		fileServer := http.FileServer(http.Dir(staticRoot))
@@ -580,6 +581,7 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 	// outside schema_migrations. It must preserve both legacy and fresh databases.
 	if err := migrateDatabaseLinkedColumns(db); err != nil { _ = db.Close(); return nil, err }
 	if err := migrateDatabaseTrash(db); err != nil { _ = db.Close(); return nil, err }
+	if err := migrateDatabaseFiles(db); err != nil { _ = db.Close(); return nil, err }
 	// Ensure extended task columns exist (idempotent).
 	for _, stmt := range []string{
 		`ALTER TABLE tasks ADD COLUMN state_id TEXT`,
@@ -670,6 +672,36 @@ func migrateDatabaseTrash(db *sql.DB) error {
         "CREATE INDEX IF NOT EXISTS idx_db_views_live ON db_views(database_id, deleted_at, position)",
     }{if _,err:=tx.Exec(sqlText);err!=nil{return err}}
     if _,err:=tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES (9,?)",time.Now().UTC().Format(time.RFC3339Nano));err!=nil{return err}
+    return tx.Commit()
+}
+
+
+func migrateDatabaseFiles(db *sql.DB) error {
+    var applied int
+    if err:=db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=10").Scan(&applied);err!=nil{return err}
+    if applied>0{return nil}
+    tx,err:=db.Begin()
+    if err!=nil{return err}
+    defer tx.Rollback()
+    stmts:=[]string{
+        `CREATE TABLE IF NOT EXISTS db_files (
+            id TEXT PRIMARY KEY,
+            database_id TEXT NOT NULL,
+            record_id TEXT NOT NULL,
+            original_name TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            sha256 TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            deleted_at TEXT,
+            FOREIGN KEY(database_id) REFERENCES databases(id),
+            FOREIGN KEY(record_id) REFERENCES db_records(id)
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_db_files_record ON db_files(record_id, deleted_at)",
+        "CREATE INDEX IF NOT EXISTS idx_db_files_database ON db_files(database_id)",
+    }
+    for _,stmt:=range stmts{if _,err:=tx.Exec(stmt);err!=nil{return err}}
+    if _,err:=tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES (10,?)",time.Now().UTC().Format(time.RFC3339Nano));err!=nil{return err}
     return tx.Commit()
 }
 
