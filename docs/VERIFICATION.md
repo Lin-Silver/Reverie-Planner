@@ -1,42 +1,43 @@
-# Verification
+# PR #2 Database Verification
 
-This document separates **verified results** from **features not yet verified or delivered**.
+This file records concrete, SHA-specific evidence. A successful CI run proves the code tested at **that** commit only; it does not certify full Notion parity or local-machine usability.
 
-## CI baseline
+## Repository and merge boundaries
 
-- Merged main baseline: `f46242329822170af2f811a685ed7b8f39756ec0` (PR #1).
-- PR #2: https://github.com/Lin-Silver/Reverie-Planner/pull/2 — keep open until independently approved.
+- Pull request: https://github.com/Lin-Silver/Reverie-Planner/pull/2 — **Open; do not merge without independent review**.
 - Feature branch: `feature/notion-database-system`.
-- Completed Windows CI for interactive database workflows: https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40256688012 — **success**, HEAD `e816da7e1145c7c7f6140ef81ebf73c187bd5efd`.
-- That run includes Go backend tests, frontend production build, TypeScript checks, lint (15 warnings, zero errors), Playwright **19/19**, launcher checks, graceful shutdown and Windows portable package upload.
-- Property schema hardening and Go regressions were also verified at https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40255913807. Later changes to app-level sidebar conflict guards require a separate SHA-matched CI result. Do **not** infer latest CI success from an older green run.
+- Merged `main` baseline: `f46242329822170af2f811a685ed7b8f39756ec0` (PR #1).
+- Living requirements and remaining work: [DATABASE_COMPLETION_PLAN.md](DATABASE_COMPLETION_PLAN.md).
 
-## Verified database browser cases
+## Most recent independently verified green baseline
 
-New `src/frontend/e2e/database-workflows.spec.ts` executes six separate tests with real backend HTTP persistence assertions:
+- Commit: `b0d34c68c4bc27cafa2389234d189819fc062814`.
+- Windows GitHub Actions: [run 40266607916](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266607916), **success**.
+- Real Windows steps: Go backend tests, frontend build/type-check, lint (**17 warnings, 0 errors**), Chromium Playwright **27/27**, service start/stop, launcher ownership check and portable package.
+- Fresh work after this baseline: populated screenshots of Table, Board, Calendar, List and Gallery, uploaded as a separate CI artifact if the screenshot test and upload step succeed. **Do not claim this artifact exists before its SHA-matched CI run completes**.
 
-1. Drag a record from Board group `Todo` to `Done`; assert persisted select value and increasing version; reopen database and verify group.
-2. Modify a Calendar record date; assert persisted date; reload and verify day cell plus persisted view date-field selection.
-3. Open a List record's actual backing page in BlockNote, type content and poll the backend page content.
-4. Create Board, Calendar, List, Gallery through the visible view selector and assert the five stored view types, including default Table.
-5. Create a linked database page, reload it, assert its persisted source/view association and edit the shared source record.
-6. Reproduce two-client version conflicts; verify stale edits remain recoverable and changes apply only after explicit Retry, or discard via Reload latest.
+## Representative regression evidence
 
-Existing 13 Playwright scenarios remain enabled, including page conflict/retry and persistence regressions.
+The suite uses real SQLite-backed HTTP requests and browser interaction, not mocked local arrays:
 
-## Backend data consistency work
+1. Create records/properties; edit table cells and the attached BlockNote page; assert database persistence after reopening.
+2. Move Board records between configured select groups; verify stored values and versions after reloading.
+3. Move Calendar records between day cells, edit dates, schedule unscheduled records; verify persisted dates.
+4. Create all five database views; save and restore view-local filters, sorting, grouping, date selection and table column layouts.
+5. Evaluate typed nested AND/OR filters and numeric comparisons; reload saved filter definitions.
+6. Use primary/secondary typed sort keys, ascending/descending order and stable null-last rules. Reopen, verify independent view settings.
+7. Use Tab/Enter/Escape keyboard edits, avoid unchanged-write version increments; use Alt+Arrow cell navigation across rows and columns.
+8. Create relation/formula properties through the visible UI; verify computed results in SQLite-backed records.
+9. Restore trashed records and properties without losing values or attachments; reject access while a parent database is trashed.
+10. Reproduce two-client stale-version conflict, preserve failed edits, require explicit retry or reload; prevent sidebar navigation during unresolved conflict.
+11. Go tests cover migrations 8/9, invalid JSON and property types, stale version rollback, transaction failure injection on database/page rename, file ownership and deleted relation targets.
 
-- Create database plus default property/view and record plus backing page in transactions.
-- Version-check record updates and include property values and backing-page title in one transaction.
-- Verify cross-database property ownership, property value type and configured select options, reject unknown types and invalid URLs/emails.
-- Avoid holding open the only SQLite connection while querying nested properties/views.
-- Regression tests check invalid-select rollback, missing linked record page rollback, nonempty database list termination, unsupported property definitions and protection of the required title property.
+## Remaining gaps (not complete)
 
-## Remaining requirements — NOT certified as complete
+- Spreadsheet-like multi-cell selection, keyboard clipboard paste/copy, undo for batches and bulk editing with rollback.
+- Database paging/virtualization and measured usability at 10,000+ records; current table loads all records.
+- More complete bidirectional relation, person/file and rollup lifecycle, formula dependency semantics and deletion policy.
+- Complete view arrangement, Gallery cover configuration, accessibility/responsive audits and linked-view independence.
+- Backup/restore compatibility across every historic migration and full manual Windows user testing; CI only is insufficient.
 
-- Rich typed filters with AND/OR operators, column resize/reorder and advanced spreadsheet keyboard behavior.
-- Relation, rollup, formula, person, file and other advanced property types.
-- Database-record concurrency conflict UI and unsaved-draft recovery parity with the BlockNote page editor.
-- Fully independent linked-view layout and configuration, complete record lifecycle/delete recovery, performance under very large datasets and UI polish.
-
-No claim of complete Notion feature parity is made. Do not merge PR #2 until a separate review approves its final scope.
+The broader feature checklist and exact required exit criteria remain in [DATABASE_COMPLETION_PLAN.md](DATABASE_COMPLETION_PLAN.md). **PR #2 is not yet approved for merge.**
