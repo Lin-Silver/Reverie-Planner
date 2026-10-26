@@ -402,21 +402,21 @@ test('database multi-key numeric and text sorting persists per view and keeps nu
   await reopen(page,host)
   const rowIds = () => page.getByTestId('database-record-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-record-id')))
   await page.getByLabel('Database sort',{exact:true}).selectOption(score.id)
-  await page.getByLabel('Sort direction').selectOption('desc')
+  await page.getByLabel('Sort direction',{exact:true}).selectOption('desc')
   await page.getByLabel('Secondary database sort').selectOption('title')
   await page.getByLabel('Secondary sort direction').selectOption('asc')
   await expect.poll(rowIds).toEqual([alpha.id,beta.id,lower.id,unset.id])
   await page.getByRole('button',{name:'Save view settings',exact:true}).click()
   await reopen(page,host)
   await expect(page.getByLabel('Database sort',{exact:true})).toHaveValue(score.id)
-  await expect(page.getByLabel('Sort direction')).toHaveValue('desc')
+  await expect(page.getByLabel('Sort direction',{exact:true})).toHaveValue('desc')
   await expect(page.getByLabel('Secondary database sort')).toHaveValue('title')
   await expect.poll(rowIds).toEqual([alpha.id,beta.id,lower.id,unset.id])
   const schema = await (await page.request.get(API+'/databases?id='+host.databaseId)).json() as {views:{config:string}[]}
   expect(JSON.parse(schema.views[0].config).sortRules).toEqual([
     {propertyId:score.id,direction:'desc'}, {propertyId:'title',direction:'asc'}
   ])
-  await page.getByLabel('Sort direction').selectOption('asc')
+  await page.getByLabel('Sort direction',{exact:true}).selectOption('asc')
   await expect.poll(rowIds).toEqual([lower.id,alpha.id,beta.id,unset.id])
   // A new view has independent persisted configuration.
   const second=await makeView(page,host.databaseId,'table')
