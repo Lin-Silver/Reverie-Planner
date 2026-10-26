@@ -116,6 +116,25 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// An existing page may host a new database, but it must not already
+		// back another database or record. Include soft-deleted owners so a
+		// future restore cannot silently create two owners of the same page.
+		if d.PageID != "" {
+			var available int
+			err := tx.QueryRow(`SELECT COUNT(*) FROM pages p WHERE p.id=?
+				AND NOT EXISTS (SELECT 1 FROM databases d WHERE d.page_id=p.id)
+				AND NOT EXISTS (SELECT 1 FROM db_records r WHERE r.page_id=p.id)`, d.PageID).Scan(&available)
+			if err != nil {
+				tx.Rollback()
+				writeJSON(w, 500, map[string]string{"error": "could not validate database backing page"})
+				return
+			}
+			if available != 1 {
+				tx.Rollback()
+				writeJSON(w, 409, map[string]string{"error": "database backing page is missing or already in use"})
+				return
+			}
+		}
 		if d.PageID == "" {
 			pageID := newID("page")
 			if _, err := tx.Exec(`INSERT INTO pages (id, title, icon, content, workspace, created_by, version) VALUES (?,?,?,?,1,'You',1)`, pageID, d.Title, nullStr(d.Icon), ""); err != nil {
