@@ -1,6 +1,7 @@
 package main
 
 import (
+    "net/http"
     "encoding/json"
     "strings"
     "testing"
@@ -86,4 +87,31 @@ func TestTrashedDatabaseDoesNotExposeOrAcceptChildRecords(t *testing.T) {
     if recovered.Code!=200{t.Fatalf("restore database: %d %s",recovered.Code,recovered.Body.String())}
     restored,err:=ctx.getDBRecord(record.ID)
     if err!=nil || restored.ID!=record.ID || restored.Title!=record.Title{t.Fatalf("restored record missing: %+v err=%v",restored,err)}
+}
+
+
+func TestTrashedDatabaseRejectsPropertyViewAndLinkedMutations(t *testing.T) {
+    ctx:=setupTestContext(t);defer ctx.DB.Close()
+    database,_:=dbRegressionCreate(t,ctx)
+    removed:=dbRegressionCall(t,ctx,"DELETE","/api/databases?id="+database.ID,"",ctx.handleDatabases)
+    if removed.Code!=204{t.Fatalf("delete database: %d %s",removed.Code,removed.Body.String())}
+    cases:=[]struct{
+        method,path,body string
+        handler http.HandlerFunc
+        expected int
+    }{
+        {"POST","/api/db/properties",`{"databaseId":"`+database.ID+`","name":"Stale","type":"text"}`,ctx.handleDBProperties,404},
+        {"POST","/api/db/views",`{"databaseId":"`+database.ID+`","name":"Stale","type":"table"}`,ctx.handleDBViews,404},
+        {"POST","/api/db/linked-view",`{"databaseId":"`+database.ID+`","pageId":"`+database.PageID+`"}`,ctx.handleDBLinkedView,404},
+    }
+    for _,c:=range cases {
+        res:=dbRegressionCall(t,ctx,c.method,c.path,c.body,c.handler)
+        if res.Code!=c.expected{t.Fatalf("%s %s: expected %d, got %d %s",c.method,c.path,c.expected,res.Code,res.Body.String())}
+    }
+    views:=dbRegressionCall(t,ctx,"PUT","/api/db/views",`{"id":"`+database.Views[0].ID+`","databaseId":"`+database.ID+`","name":"Stale","type":"table","config":"{}","version":1}`,ctx.handleDBViews)
+    if views.Code!=409{t.Fatalf("stale view update accepted: %d %s",views.Code,views.Body.String())}
+    var properties,viewCount int
+    if err:=ctx.DB.QueryRow("SELECT COUNT(*) FROM db_properties WHERE database_id=?",database.ID).Scan(&properties);err!=nil{t.Fatal(err)}
+    if err:=ctx.DB.QueryRow("SELECT COUNT(*) FROM db_views WHERE database_id=?",database.ID).Scan(&viewCount);err!=nil{t.Fatal(err)}
+    if properties!=1 || viewCount!=1{t.Fatalf("deleted database mutated: properties=%d views=%d",properties,viewCount)}
 }
