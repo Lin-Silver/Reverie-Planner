@@ -177,8 +177,8 @@ func TestVersionedMigrationsAndConsistentSQLiteBackup(t *testing.T) {
 	ctx := setupTestContext(t)
 	defer ctx.DB.Close()
 	var migrations int
-	if err := ctx.DB.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != 8 {
-		t.Fatalf("expected eight versioned migrations; count=%d err=%v", migrations, err)
+	if err := ctx.DB.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrations); err != nil || migrations != 9 {
+		t.Fatalf("expected nine versioned migrations; count=%d err=%v", migrations, err)
 	}
 	var emptyProjects int
 	if err := ctx.DB.QueryRow(`SELECT COUNT(*) FROM projects`).Scan(&emptyProjects); err != nil || emptyProjects != 0 {
