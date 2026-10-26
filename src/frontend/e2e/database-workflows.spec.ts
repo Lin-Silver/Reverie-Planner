@@ -375,7 +375,7 @@ test('database calendar drag and unscheduled tray update actual dates',async({pa
   const calendar=await makeView(page,host.databaseId,'calendar')
   await reopen(page,host)
   await page.getByLabel('Active database view').selectOption(calendar)
-  const origin=page.locator('[data-testid="calendar-cell"][data-date="'+date1+'"] [data-testid="calendar-record"]')
+  const origin=page.locator('[data-testid="calendar-cell"][data-date="'+date1+'"] [data-testid="calendar-drag-handle"]')
   const dest=page.locator('[data-testid="calendar-cell"][data-date="'+date2+'"]')
   await expect(origin).toBeVisible()
   await origin.dragTo(dest)
