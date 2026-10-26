@@ -29,6 +29,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [dateProperty, setDateProperty] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [failedEdit, setFailedEdit] = useState<{recordId: string; patch: {title?: string; values?: Record<string, any>}} | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -39,6 +40,8 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
       setViewId(old => vs.some(v => v.id === old) ? old : (vs.find(v => v.id === initialViewId)?.id || vs[0]?.id || ''))
       const recs = await api(`/api/db/records?databaseId=${databaseId}`) as DBRecord[]
       setRecords(recs || [])
+      setFailedEdit(null)
+      setError('')
     } catch (e) { setError((e as Error).message) }
     setLoading(false)
   }, [databaseId, initialViewId])
@@ -79,7 +82,33 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   }
 
   const safelyUpdateRecord = async (rec: DBRecord, patch: { title?: string; values?: Record<string, any> }) => {
-    try { await updateRecord(rec, patch) } catch (e) { setError(`Save failed: ${(e as Error).message}`) }
+    if (failedEdit) { setError('Resolve the outstanding edit using Retry or Reload latest first.'); return }
+    try { await updateRecord(rec, patch) }
+    catch (e) {
+      setFailedEdit({recordId: rec.id, patch})
+      setError('Save failed: ' + (e as Error).message + '. Your draft is retained until Retry or Reload latest.')
+    }
+  }
+  const retryFailedEdit = async () => {
+    if (!failedEdit) return
+    try {
+      const latest = await api('/api/db/records?databaseId=' + encodeURIComponent(databaseId)) as DBRecord[]
+      const remote = latest.find(r => r.id === failedEdit.recordId)
+      if (!remote) { setError('Cannot retry: the record no longer exists.'); return }
+      const body = { id: remote.id, version: remote.version, title: failedEdit.patch.title ?? remote.title, values: failedEdit.patch.values ?? {} }
+      const saved = await api('/api/db/records', {method:'PUT', body:JSON.stringify(body)}) as DBRecord
+      setRecords(rows => rows.map(r => r.id === saved.id ? saved : r))
+      setFailedEdit(null)
+      setError('')
+    } catch (e) { setError('Retry failed; your draft remains available: ' + (e as Error).message) }
+  }
+  const guardedBack = () => {
+    if (failedEdit) { setError('Unsaved database edit: resolve it with Retry or Reload latest before leaving.'); return }
+    onBack()
+  }
+  const guardedOpen = (pageId: string) => {
+    if (failedEdit) { setError('Unsaved database edit: resolve it before opening another page.'); return }
+    onOpenRecord?.(pageId)
   }
   const addRecord = async () => {
     const rec = await api('/api/db/records', { method: 'POST', body: JSON.stringify({ databaseId, title: 'Untitled' }) }) as DBRecord
@@ -117,9 +146,9 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
 
   return (
     <div style={{ padding: 16 }}>
-      {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} <button onClick={() => { setError(''); void load() }}>Reload latest</button></div>}
+      {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} {failedEdit && <button onClick={() => void retryFailedEdit()}>Retry my changes</button>} <button onClick={() => { void load() }}>Reload latest</button></div>}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <button className="btn" onClick={onBack}>← Back</button>
+        <button className="btn" onClick={guardedBack}>← Back</button>
         <h2 style={{ margin: 0 }}>{db.icon} {db.title}</h2>
         <button className="btn" onClick={renameDb}>Rename</button>
         <button className="btn" onClick={addProperty}>+ Property</button>
@@ -153,11 +182,11 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         {view?.type === 'calendar' && <select aria-label="Calendar date property" value={dateProperty} onChange={e => setDateProperty(e.target.value)}><option value="">First date property</option>{props.filter(p => p.type === 'date').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
         <button onClick={() => void saveViewSettings()}>Save view settings</button>
       </div>
-      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} onOpenRecord={onOpenRecord} />}
-      {view?.type === 'board' && <BoardView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={onOpenRecord} />}
-      {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={onOpenRecord} />}
-      {view?.type === 'list' && <ListView records={visibleRecords} onOpenRecord={onOpenRecord} />}
-      {view?.type === 'gallery' && <GalleryView records={visibleRecords} onOpenRecord={onOpenRecord} />}
+      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} onOpenRecord={guardedOpen} />}
+      {view?.type === 'board' && <BoardView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={guardedOpen} />}
+      {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={guardedOpen} />}
+      {view?.type === 'list' && <ListView records={visibleRecords} onOpenRecord={guardedOpen} />}
+      {view?.type === 'gallery' && <GalleryView records={visibleRecords} onOpenRecord={guardedOpen} />}
       {!['table', 'board', 'calendar', 'list', 'gallery'].includes(view?.type || '') && <div>Unknown view</div>}
     </div>
   )
