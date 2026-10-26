@@ -238,3 +238,49 @@ test('database typed AND/OR filters persist and apply consistently after reopeni
   expect(filterTree.join).toBe('or')
   expect(filterTree.children).toHaveLength(2)
 })
+
+
+test('database property dialog creates relation and formula with persisted computed results', async ({page}) => {
+  const host=await makeDatabase(page)
+  const targetRes=await page.request.post(API+'/databases',{data:{title:'Target DB for relations'}})
+  expect(targetRes.status()).toBe(201)
+  const target=await targetRes.json() as {id:string}
+  const targetRecord=await record(page,target.id,'Target item')
+  const a=await property(page,host.databaseId,'A','number')
+  const b=await property(page,host.databaseId,'B','number')
+  const source=await record(page,host.databaseId,'Computed record')
+  await reopen(page,host)
+
+  await page.getByText('+ Property').click()
+  await expect(page.getByRole('dialog',{name:'New database property'})).toBeVisible()
+  await page.getByLabel('Property name').fill('Links')
+  await page.getByLabel('Property type').selectOption('relation')
+  await page.getByLabel('Relation target database').selectOption(target.id)
+  await page.getByRole('button',{name:'Create property'}).click()
+  await expect(page.getByRole('dialog',{name:'New database property'})).toBeHidden()
+  const sourceDb=await (await page.request.get(API+'/databases?id='+host.databaseId)).json() as {properties:{id:string;type:string;name:string}[]}
+  const links=sourceDb.properties.find(x=>x.name==='Links')!
+  expect(links.type).toBe('relation')
+  const sourceRow=page.locator('[data-testid="database-record-row"][data-record-id="'+source.id+'"]')
+  await sourceRow.getByRole('button',{name:'Edit Links'}).click()
+  await sourceRow.getByRole('group',{name:'Relation Links'}).getByText('Target item').click()
+  await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===source.id)?.values[links.id],{timeout:15000}).toEqual([targetRecord.id])
+
+  await page.getByText('+ Property').click()
+  await page.getByLabel('Property name').fill('Sum')
+  await page.getByLabel('Property type').selectOption('formula')
+  await page.getByLabel('Formula operation').selectOption('sum')
+  await page.getByLabel('Formula first property').selectOption(a.id)
+  await page.getByLabel('Formula second property').selectOption(b.id)
+  await page.getByRole('button',{name:'Create property'}).click()
+  const formulaSchema=await (await page.request.get(API+'/databases?id='+host.databaseId)).json() as {properties:{id:string;type:string;name:string}[]}
+  const sumProp=formulaSchema.properties.find(p=>p.name==='Sum')!
+  expect(sumProp.type).toBe('formula')
+  const before=(await rows(page,host.databaseId)).find(r=>r.id===source.id)!
+  const updated=await page.request.put(API+'/db/records',{data:{id:source.id,title:before.title,version:before.version,values:{[a.id]:7,[b.id]:9}}})
+  expect(updated.status()).toBe(200)
+  await reopen(page,host)
+  const computed=(await rows(page,host.databaseId)).find(r=>r.id===source.id)!
+  expect(computed.values[sumProp.id]).toBe(16)
+  await expect(page.locator('[data-record-id="'+source.id+'"]').getByLabel('Sum')).toContainText('16')
+})
