@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { matchesFilters, newFilterGroup, type FilterGroup } from './databaseFilters'
 import DatabaseFilterBuilder from './DatabaseFilterBuilder'
 import DatabasePropertyDialog from './DatabasePropertyDialog'
+import DatabaseTrash from './DatabaseTrash'
 
 
 
@@ -27,6 +28,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [viewId, setViewId] = useState<string>(initialViewId || '')
   const [newViewType, setNewViewType] = useState<ViewType>('table')
   const [propertyDialogOpen, setPropertyDialogOpen] = useState(false)
+  const [trashOpen, setTrashOpen] = useState(false)
   const [filterText, setFilterText] = useState('')
   const [filterTree, setFilterTree] = useState<FilterGroup>(() => newFilterGroup())
   const [sortProp, setSortProp] = useState('')
@@ -122,6 +124,15 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     setRecords(rs => [...rs, rec])
   }
 
+  const deleteRecord = async (id:string) => {
+    if(failedEdit){setError('Resolve the unsaved edit before deleting a record');return}
+    if(!confirm('Move this record to Trash? Its data can be restored.'))return
+    try {
+      await api('/api/db/records?id='+encodeURIComponent(id),{method:'DELETE'})
+      setRecords(rows=>rows.filter(r=>r.id!==id))
+      setError('')
+    }catch(e){setError('Could not delete record: '+(e as Error).message)}
+  }
   const deleteProperty = async (pid: string) => {
     await api(`/api/db/properties?id=${pid}`, { method: 'DELETE' })
     await load()
@@ -140,6 +151,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
 
   return (
     <div style={{ padding: 16 }}>
+      {trashOpen && <DatabaseTrash databaseId={databaseId} onClose={()=>setTrashOpen(false)} onRestored={()=>{void load()}} />}
       {propertyDialogOpen && <DatabasePropertyDialog databaseId={databaseId} properties={props} onClose={() => setPropertyDialogOpen(false)} onCreated={() => {setPropertyDialogOpen(false);void load()}} />}
       {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} {failedEdit && <button onClick={() => void retryFailedEdit()}>Retry my changes</button>} <button onClick={() => { void load() }}>Reload latest</button></div>}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -148,6 +160,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         <button className="btn" onClick={renameDb}>Rename</button>
         <button className="btn" onClick={() => {if(failedEdit) {setError("Resolve unsaved edit before changing schema");return};setPropertyDialogOpen(true)}}>+ Property</button>
         <button className="btn primary" onClick={addRecord}>+ New</button>
+        <button className="btn" aria-label="Open database trash" onClick={()=>setTrashOpen(true)}>Trash</button>
         <div style={{ flex: 1 }} />
         <select aria-label="Active database view" value={viewId} onChange={e => setViewId(e.target.value)}>
           {db.views.map(v => <option key={v.id} value={v.id}>{v.name} ({v.type})</option>)}
@@ -204,7 +217,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         <button onClick={() => void saveViewSettings()}>Save view settings</button>
       </div>
       <details style={{ marginBottom: 10 }}><summary>Advanced filters (AND / OR)</summary><DatabaseFilterBuilder group={filterTree} properties={props} onChange={setFilterTree} /></details>
-      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} onOpenRecord={guardedOpen} />}
+      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} deleteRecord={deleteRecord} onOpenRecord={guardedOpen} />}
       {view?.type === 'board' && <BoardView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={guardedOpen} />}
       {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={guardedOpen} />}
       {view?.type === 'list' && <ListView records={visibleRecords} onOpenRecord={guardedOpen} />}
@@ -217,8 +230,8 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
 
 type RecordUpdate = (rec: DBRecord, patch: { title?: string; values?: Record<string, any> }) => Promise<void>
 type OpenRecord = (pageId: string) => void
-function TableView({ records, props, updateRecord, deleteProperty, onOpenRecord }: {
-  records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; deleteProperty: (id: string) => Promise<void>; onOpenRecord?: OpenRecord
+function TableView({ records, props, updateRecord, deleteProperty, deleteRecord, onOpenRecord }: {
+  records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; deleteProperty: (id: string) => Promise<void>; deleteRecord: (id:string)=>Promise<void>; onOpenRecord?: OpenRecord
 }) {
   const visibleProps = props.filter(p => p.visible)
   return (
@@ -228,7 +241,7 @@ function TableView({ records, props, updateRecord, deleteProperty, onOpenRecord 
           {p.type !== 'title' && <button aria-label={'Delete ' + p.name} onClick={() => { if (confirm('Delete property ' + p.name + ' and its values?')) void deleteProperty(p.id) }}>×</button>}
         </th>)}</tr></thead>
         <tbody>{records.map(rec => <tr key={rec.id} data-testid="database-record-row" data-record-id={rec.id}>
-          <td><button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>Open page</button></td>
+          <td><button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>Open page</button><button aria-label={'Delete record '+rec.title} onClick={()=>{void deleteRecord(rec.id)}}>Delete</button></td>
           {visibleProps.map(p => <td key={p.id} style={{ border: '1px solid var(--border)', padding: 4 }}>
             <Cell prop={p} value={p.type === 'title' ? rec.title : rec.values?.[p.id]} onChange={value => {
               void updateRecord(rec, p.type === 'title' ? { title: String(value) } : { values: { [p.id]: value } })
