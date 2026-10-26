@@ -77,3 +77,37 @@ func TestDatabaseListWithRecordsTerminates(t *testing.T) {
         t.Fatal("database list blocked (possible nested SQLite connection deadlock)")
     }
 }
+
+
+func TestDatabaseRejectsUnsupportedProperties(t *testing.T) {
+    ctx := setupTestContext(t)
+    defer ctx.DB.Close()
+    db, _ := dbRegressionCreate(t, ctx)
+    cases := []string{
+        `{"databaseId":"` + db.ID + `","name":"Danger","type":"unsupported"}`,
+        `{"databaseId":"` + db.ID + `","name":"Bad","type":"select","config":"{not-json}"}`,
+    }
+    for _, body := range cases {
+        res := dbRegressionCall(t, ctx, "POST", "/api/db/properties", body, ctx.handleDBProperties)
+        if res.Code != 400 { t.Fatalf("invalid property accepted: %d %s", res.Code, res.Body.String()) }
+    }
+    current, err := ctx.getDatabase(db.ID)
+    if err != nil { t.Fatal(err) }
+    if len(current.Properties) != 1 || current.Properties[0].Type != "title" { t.Fatalf("invalid properties affected schema: %+v", current.Properties) }
+}
+
+func TestDatabaseTitlePropertyCannotBeDeletedOrConverted(t *testing.T) {
+    ctx := setupTestContext(t)
+    defer ctx.DB.Close()
+    db, _ := dbRegressionCreate(t, ctx)
+    titleProp := db.Properties[0]
+    del := dbRegressionCall(t, ctx, "DELETE", "/api/db/properties?id="+titleProp.ID, "", ctx.handleDBProperties)
+    if del.Code != 400 { t.Fatalf("title deletion should be rejected: %d %s", del.Code, del.Body.String()) }
+    changed, err := json.Marshal(DBProperty{ID: titleProp.ID, DatabaseID:db.ID, Name:"Name", Type:"number", Version:titleProp.Version, Visible:true})
+    if err != nil { t.Fatal(err) }
+    put := dbRegressionCall(t, ctx, "PUT", "/api/db/properties", string(changed), ctx.handleDBProperties)
+    if put.Code != 400 { t.Fatalf("title type change should be rejected: %d %s", put.Code, put.Body.String()) }
+    current, err := ctx.getDatabase(db.ID)
+    if err != nil { t.Fatal(err) }
+    if len(current.Properties)!=1 || current.Properties[0].Type!="title" || current.Properties[0].Version!=titleProp.Version { t.Fatalf("title property corrupted: %+v",current.Properties) }
+}
