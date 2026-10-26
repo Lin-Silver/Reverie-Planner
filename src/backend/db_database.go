@@ -251,6 +251,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 	case http.MethodPost:
 		var p DBProperty
 		if _, err := decodeJSONRequest(r, &p); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
+		p.Name = strings.TrimSpace(p.Name)
 		if p.DatabaseID == "" || p.Name == "" {
             writeJSON(w,400,map[string]string{"error":"databaseId and name required"});return
         }
@@ -261,6 +262,12 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
         if active!=1 {writeJSON(w,404,map[string]string{"error":"database not found"});return}
 		if p.Type == "" {
 			p.Type = "text"
+		}
+		// A database always starts with its sole required title property.
+		// Additional title fields would violate its schema invariant.
+		if p.Type == "title" {
+			writeJSON(w, 400, map[string]string{"error": "database already has a title property"})
+			return
 		}
 		if p.ID == "" {
 			p.ID = newID("prop")
