@@ -52,7 +52,7 @@ func TestModuleMutationsRejectInvalidWritesAndPreservePartialUpdates(t *testing.
 			description.String != "Keep description" || status != "active" || lead.String != expectedLead ||
 			start.String != "2026-10-01" || end.String != "2026-10-31" {
 			t.Fatalf("module changed: id=%q project=%q name=%q description=%q status=%q lead=%q dates=%q/%q err=%v",
-				id, project, name, description, status, lead, start, end, err)
+				id, project, name, description.String, status, lead.String, start.String, end.String, err)
 		}
 		var count int
 		if err := app.DB.QueryRow(`SELECT COUNT(*) FROM modules`).Scan(&count); err != nil || count != 1 {
