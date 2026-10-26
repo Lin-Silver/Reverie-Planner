@@ -46,9 +46,10 @@ func (a *AppContext) handleDBFiles(w http.ResponseWriter,r *http.Request){
         bytes,err:=io.ReadAll(io.LimitReader(uploaded,maxDatabaseFileBytes+1))
         if err!=nil{writeJSON(w,500,map[string]string{"error":"unable to read file"});return}
         if int64(len(bytes))>maxDatabaseFileBytes{writeJSON(w,413,map[string]string{"error":"file must be at most 8 MiB"});return}
-        name:=filepath.Base(strings.ReplaceAll(header.Filename,"\","/"))
-        name=strings.ReplaceAll(strings.ReplaceAll(name,"",""),"
-","")
+        // Normalize both Windows and POSIX separators without trusting client paths.
+        safeName:=strings.Map(func(r rune)rune{if r==92{return '/'};return r},header.Filename)
+        name:=filepath.Base(safeName)
+        name=strings.Map(func(r rune)rune{if r==10||r==13{return -1};return r},name)
         if name==""||name=="."||name==".." {name="attachment"}
         if len(name)>200{name=name[:200]}
         id:=newID("dbfile")
