@@ -7,18 +7,20 @@ This document separates **verified results** from **features not yet verified or
 - Merged main baseline: `f46242329822170af2f811a685ed7b8f39756ec0` (PR #1).
 - PR #2: https://github.com/Lin-Silver/Reverie-Planner/pull/2 — keep open until independently approved.
 - Feature branch: `feature/notion-database-system`.
-- Completed Windows CI for interactive database workflows: https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40255425287 — **success**, HEAD `ab8941c8e3b396aea71334a10a7f094b5b008c9c`.
-- That run includes Go backend tests, frontend production build, TypeScript checks, lint (15 warnings, zero errors), Playwright **17/17**, launcher checks, graceful shutdown and Windows portable package upload.
-- Property schema hardening and its new Go regressions were committed after the above run; use the latest SHA-matched PR workflow as their acceptance evidence. Do **not** infer latest CI success from an older green run.
+- Completed Windows CI for interactive database workflows: https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40256688012 — **success**, HEAD `e816da7e1145c7c7f6140ef81ebf73c187bd5efd`.
+- That run includes Go backend tests, frontend production build, TypeScript checks, lint (15 warnings, zero errors), Playwright **19/19**, launcher checks, graceful shutdown and Windows portable package upload.
+- Property schema hardening and Go regressions were also verified at https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40255913807. Later changes to app-level sidebar conflict guards require a separate SHA-matched CI result. Do **not** infer latest CI success from an older green run.
 
 ## Verified database browser cases
 
-New `src/frontend/e2e/database-workflows.spec.ts` executes four separate tests with real backend HTTP persistence assertions:
+New `src/frontend/e2e/database-workflows.spec.ts` executes six separate tests with real backend HTTP persistence assertions:
 
 1. Drag a record from Board group `Todo` to `Done`; assert persisted select value and increasing version; reopen database and verify group.
 2. Modify a Calendar record date; assert persisted date; reload and verify day cell plus persisted view date-field selection.
 3. Open a List record's actual backing page in BlockNote, type content and poll the backend page content.
 4. Create Board, Calendar, List, Gallery through the visible view selector and assert the five stored view types, including default Table.
+5. Create a linked database page, reload it, assert its persisted source/view association and edit the shared source record.
+6. Reproduce two-client version conflicts; verify stale edits remain recoverable and changes apply only after explicit Retry, or discard via Reload latest.
 
 Existing 13 Playwright scenarios remain enabled, including page conflict/retry and persistence regressions.
 
