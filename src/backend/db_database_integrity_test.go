@@ -214,3 +214,36 @@ func TestDatabaseCorruptStoredPropertyReturnsErrorInsteadOfPanicking(t *testing.
     output:=dbRegressionCall(t,ctx,"GET","/api/db/records?databaseId="+db.ID,"",ctx.handleDBRecords)
     if output.Code!=500{t.Fatalf("expected server error for corrupt value, got %d: %s",output.Code,output.Body.String())}
 }
+
+
+func TestDatabaseMalformedRequestsDoNotMutateState(t *testing.T) {
+    ctx:=setupTestContext(t)
+    defer ctx.DB.Close()
+    database,record:=dbRegressionCreate(t,ctx)
+    cases:=[]struct {
+        method,path,body string
+        handler http.HandlerFunc
+    }{
+        {"POST","/api/databases",`{"title":`,ctx.handleDatabases},
+        {"POST","/api/db/properties",`{"databaseId":`,ctx.handleDBProperties},
+        {"POST","/api/db/records",`{"databaseId":`,ctx.handleDBRecords},
+        {"POST","/api/db/views",`{"databaseId":`,ctx.handleDBViews},
+        {"PUT","/api/db/records",`{"id":`,ctx.handleDBRecords},
+        {"POST","/api/db/linked-view",`{"databaseId":`,ctx.handleDBLinkedView},
+    }
+    for _,c:=range cases{
+        res:=dbRegressionCall(t,ctx,c.method,c.path,c.body,c.handler)
+        if res.Code!=400{t.Fatalf("malformed %s %s accepted: %d %s",c.method,c.path,res.Code,res.Body.String())}
+    }
+    var databases,records,views,properties int
+    if err:=ctx.DB.QueryRow("SELECT COUNT(*) FROM databases").Scan(&databases);err!=nil{t.Fatal(err)}
+    if err:=ctx.DB.QueryRow("SELECT COUNT(*) FROM db_records").Scan(&records);err!=nil{t.Fatal(err)}
+    if err:=ctx.DB.QueryRow("SELECT COUNT(*) FROM db_views").Scan(&views);err!=nil{t.Fatal(err)}
+    if err:=ctx.DB.QueryRow("SELECT COUNT(*) FROM db_properties").Scan(&properties);err!=nil{t.Fatal(err)}
+    if databases!=1 || records!=1 || views!=1 || properties!=1 {
+        t.Fatalf("invalid request modified database: db=%d rec=%d views=%d props=%d",databases,records,views,properties)
+    }
+    saved,err:=ctx.getDBRecord(record.ID)
+    if err!=nil || saved.Title!=record.Title {t.Fatalf("record changed after malformed request: %+v err=%v",saved,err)}
+    if saved.DatabaseID!=database.ID {t.Fatal("record moved")}
+}
