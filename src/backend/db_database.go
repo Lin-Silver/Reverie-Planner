@@ -370,7 +370,8 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			rec.PageID = r.pageID.String
 			rec.CreatedAt = r.created
 			rec.UpdatedAt = r.updated
-			rec.Values = a.recordValues(rec.ID)
+			rec.Values, err = a.recordValues(rec.ID)
+            if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 			appendDBSystemValues(rec.Values, fields, rec)
 			if err:=a.appendComputedValues(fields,&rec);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 			out = append(out, rec)
@@ -449,6 +450,9 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Keep the backing page version stable during property-only edits.
+        var previousTitle string
+        if err:=tx.QueryRow("SELECT title FROM db_records WHERE id=?",body.ID).Scan(&previousTitle);err!=nil {tx.Rollback();writeJSON(w,404,map[string]string{"error":"record not found"});return}
 		// version check on record
 		res, err := tx.Exec(`UPDATE db_records SET title=COALESCE(NULLIF(?,''),title), version=version+1, updated_at=? WHERE id=? AND version=?`, body.Title, now, body.ID, body.Version)
 		if err != nil {
@@ -512,16 +516,23 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		pageRes, err := tx.Exec(`UPDATE pages SET title=(SELECT title FROM db_records WHERE id=?), updated_at=?, version=version+1 WHERE id=(SELECT page_id FROM db_records WHERE id=?)`, body.ID, now, body.ID)
-        if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
-        changed, err := pageRes.RowsAffected()
-        if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
-        if changed != 1 { tx.Rollback(); writeJSON(w, 409, map[string]string{"error": "linked record page missing"}); return }
+		if body.Title!="" && body.Title!=previousTitle {
+            pageRes,err:=tx.Exec("UPDATE pages SET title=?,updated_at=?,version=version+1 WHERE id=(SELECT page_id FROM db_records WHERE id=?)",body.Title,now,body.ID)
+            if err!=nil {tx.Rollback();writeJSON(w,500,map[string]string{"error":err.Error()});return}
+            count,err:=pageRes.RowsAffected()
+            if err!=nil {tx.Rollback();writeJSON(w,500,map[string]string{"error":err.Error()});return}
+            if count!=1 {tx.Rollback();writeJSON(w,409,map[string]string{"error":"linked record page missing"});return}
+        } else {
+            var exists int
+            if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=(SELECT page_id FROM db_records WHERE id=?)",body.ID).Scan(&exists);err!=nil {tx.Rollback();writeJSON(w,500,map[string]string{"error":err.Error()});return}
+            if exists!=1 {tx.Rollback();writeJSON(w,409,map[string]string{"error":"linked record page missing"});return}
+        }
 		if err := tx.Commit(); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		rec, _ := a.getDBRecord(body.ID)
+		rec, err := a.getDBRecord(body.ID)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 		writeJSON(w, 200, rec)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
@@ -561,7 +572,8 @@ func (a *AppContext) getDBRecord(id string) (DBRecord, error) {
 	rec.PageID = pageID.String
 	rec.CreatedAt = created
 	rec.UpdatedAt = updated
-	rec.Values = a.recordValues(rec.ID)
+	rec.Values,err = a.recordValues(rec.ID)
+    if err!=nil {return rec,err}
 	fields,err:=a.listProperties(rec.DatabaseID)
 	if err!=nil {return rec,err}
 	appendDBSystemValues(rec.Values,fields,rec)
@@ -569,18 +581,20 @@ func (a *AppContext) getDBRecord(id string) (DBRecord, error) {
 	return rec, nil
 }
 
-func (a *AppContext) recordValues(recordID string) map[string]any {
-	out := map[string]any{}
-	rows, _ := a.DB.Query(`SELECT property_id, value FROM db_values WHERE record_id=?`, recordID)
-	defer rows.Close()
-	for rows.Next() {
-		var pid, val string
-		_ = rows.Scan(&pid, &val)
-		var v any
-		_ = json.Unmarshal([]byte(val), &v)
-		out[pid] = v
-	}
-	return out
+func (a *AppContext) recordValues(recordID string) (map[string]any,error) {
+    out:=map[string]any{}
+    rows,err:=a.DB.Query("SELECT property_id,value FROM db_values WHERE record_id=?",recordID)
+    if err!=nil{return nil,err}
+    defer rows.Close()
+    for rows.Next(){
+        var propertyID,raw string
+        if err:=rows.Scan(&propertyID,&raw);err!=nil{return nil,err}
+        var value any
+        if err:=json.Unmarshal([]byte(raw),&value);err!=nil{return nil,fmt.Errorf("invalid stored JSON for property %s: %w",propertyID,err)}
+        out[propertyID]=value
+    }
+    if err:=rows.Err();err!=nil{return nil,err}
+    return out,nil
 }
 
 func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
