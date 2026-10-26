@@ -328,53 +328,140 @@ func (a *AppContext) handleModules(w http.ResponseWriter, r *http.Request) {
 			args = append(args, projectID)
 		}
 		q += ` ORDER BY created_at DESC`
-		rows, _ := a.DB.Query(q, args...)
+		rows, err := a.DB.Query(q, args...)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "modules could not be loaded")
+			return
+		}
 		defer rows.Close()
 		out := []Module{}
 		for rows.Next() {
 			var m Module
 			var created string
 			var desc, lead, start, end sqlNullString
-			_ = rows.Scan(&m.ID, &m.ProjectID, &m.Name, &desc, &m.Status, &lead, &start, &end, &created)
-			m.Description = desc.String
-			m.Lead = lead.String
-			m.StartDate = start.String
-			m.EndDate = end.String
+			if err := rows.Scan(&m.ID, &m.ProjectID, &m.Name, &desc, &m.Status, &lead, &start, &end, &created); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "modules could not be read")
+				return
+			}
+			m.Description, m.Lead, m.StartDate, m.EndDate = desc.String, lead.String, start.String, end.String
 			m.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			out = append(out, m)
 		}
-		writeJSON(w, 200, out)
+		if err := rows.Err(); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "modules could not be read")
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
 		var m Module
-		_ = json.NewDecoder(r.Body).Decode(&m)
+		if _, err := decodeJSONRequest(r, &m); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid module payload")
+			return
+		}
+		if strings.TrimSpace(m.Name) == "" || strings.TrimSpace(m.ProjectID) == "" {
+			writeJSONError(w, http.StatusBadRequest, "name and projectId required")
+			return
+		}
+		if (m.StartDate != "" && !validISODate(m.StartDate)) || (m.EndDate != "" && !validISODate(m.EndDate)) {
+			writeJSONError(w, http.StatusBadRequest, "invalid module date")
+			return
+		}
 		if m.ID == "" {
 			m.ID = newID("module")
-		}
-		if m.Name == "" {
-			writeJSON(w, 400, map[string]string{"error": "name required"})
-			return
 		}
 		if m.Status == "" {
 			m.Status = "backlog"
 		}
 		m.CreatedAt = time.Now().UTC().Truncate(time.Second)
-		_, _ = a.DB.Exec(`INSERT INTO modules (id, project_id, name, description, status, lead, start_date, end_date, created_at) VALUES (?,?,?,?,?,?,?,?,?)`, m.ID, m.ProjectID, m.Name, nullStr(m.Description), m.Status, nullStr(m.Lead), nullStr(m.StartDate), nullStr(m.EndDate), m.CreatedAt.Format(time.RFC3339))
-		writeJSON(w, 201, m)
-	case http.MethodPut:
-		var m Module
-		_ = json.NewDecoder(r.Body).Decode(&m)
-		if m.ID == "" {
-			writeJSON(w, 400, map[string]string{"error": "id required"})
+		if _, err := a.DB.Exec(`INSERT INTO modules (id, project_id, name, description, status, lead, start_date, end_date, created_at) VALUES (?,?,?,?,?,?,?,?,?)`, m.ID, m.ProjectID, m.Name, nullStr(m.Description), m.Status, nullStr(m.Lead), nullStr(m.StartDate), nullStr(m.EndDate), m.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "module could not be saved")
 			return
 		}
-		_, _ = a.DB.Exec(`UPDATE modules SET name=?, description=?, status=?, lead=?, start_date=?, end_date=? WHERE id=?`, m.Name, nullStr(m.Description), m.Status, nullStr(m.Lead), nullStr(m.StartDate), nullStr(m.EndDate), m.ID)
-		writeJSON(w, 200, m)
+		writeJSON(w, http.StatusCreated, m)
+	case http.MethodPut:
+		var m Module
+		fields, err := decodeJSONRequest(r, &m)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid module payload")
+			return
+		}
+		if strings.TrimSpace(m.ID) == "" {
+			writeJSONError(w, http.StatusBadRequest, "id required")
+			return
+		}
+		var existing Module
+		var description, lead, startDate, endDate sqlNullString
+		var created string
+		err = a.DB.QueryRow(`SELECT project_id, name, description, status, lead, start_date, end_date, created_at FROM modules WHERE id=?`, m.ID).
+			Scan(&existing.ProjectID, &existing.Name, &description, &existing.Status, &lead, &startDate, &endDate, &created)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "module not found")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "module could not be loaded")
+			return
+		}
+		existing.Description, existing.Lead, existing.StartDate, existing.EndDate = description.String, lead.String, startDate.String, endDate.String
+		if _, ok := fields["projectId"]; ok && m.ProjectID != existing.ProjectID {
+			writeJSONError(w, http.StatusBadRequest, "projectId cannot be changed")
+			return
+		}
+		if _, ok := fields["name"]; !ok { m.Name = existing.Name }
+		if _, ok := fields["description"]; !ok { m.Description = existing.Description }
+		if _, ok := fields["status"]; !ok { m.Status = existing.Status }
+		if _, ok := fields["lead"]; !ok { m.Lead = existing.Lead }
+		if _, ok := fields["startDate"]; !ok { m.StartDate = existing.StartDate }
+		if _, ok := fields["endDate"]; !ok { m.EndDate = existing.EndDate }
+		if strings.TrimSpace(m.Name) == "" {
+			writeJSONError(w, http.StatusBadRequest, "name required")
+			return
+		}
+		if (m.StartDate != "" && !validISODate(m.StartDate)) || (m.EndDate != "" && !validISODate(m.EndDate)) {
+			writeJSONError(w, http.StatusBadRequest, "invalid module date")
+			return
+		}
+		result, err := a.DB.Exec(`UPDATE modules SET name=?, description=?, status=?, lead=?, start_date=?, end_date=? WHERE id=?`,
+			m.Name, nullStr(m.Description), m.Status, nullStr(m.Lead), nullStr(m.StartDate), nullStr(m.EndDate), m.ID)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "module could not be updated")
+			return
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "module update could not be verified")
+			return
+		}
+		if changed == 0 {
+			writeJSONError(w, http.StatusNotFound, "module not found")
+			return
+		}
+		m.ProjectID = existing.ProjectID
+		m.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		writeJSON(w, http.StatusOK, m)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM modules WHERE id=?`, id)
-		w.WriteHeader(204)
+		if strings.TrimSpace(id) == "" {
+			writeJSONError(w, http.StatusBadRequest, "id required")
+			return
+		}
+		result, err := a.DB.Exec(`DELETE FROM modules WHERE id=?`, id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "module could not be deleted")
+			return
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "module deletion could not be verified")
+			return
+		}
+		if changed == 0 {
+			writeJSONError(w, http.StatusNotFound, "module not found")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
-		w.WriteHeader(405)
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
