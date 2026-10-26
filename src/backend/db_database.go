@@ -369,6 +369,10 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
 			return
 		}
+		if rec.PageID != "" {
+			writeJSON(w, 400, map[string]string{"error": "new records must create their own backing page"})
+			return
+		}
 		if rec.ID == "" {
 			rec.ID = newID("rec")
 		}
@@ -424,7 +428,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		}
 		// get db id for version check
 		var dbID string
-		_ = a.DB.QueryRow(`SELECT database_id FROM db_records WHERE id=?`, body.ID).Scan(&dbID)
+		if err := a.DB.QueryRow(`SELECT database_id FROM db_records WHERE id=?`, body.ID).Scan(&dbID); err != nil { writeJSON(w, 404, map[string]string{"error": "record not found"}); return }
 		now := time.Now().UTC().Format(time.RFC3339)
 		tx, err := a.DB.Begin()
 		if err != nil {
@@ -492,7 +496,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		pageRes, err := tx.Exec(`UPDATE pages SET title=(SELECT title FROM db_records WHERE id=?), updated_at=? WHERE id=(SELECT page_id FROM db_records WHERE id=?)`, body.ID, now, body.ID)
+		pageRes, err := tx.Exec(`UPDATE pages SET title=(SELECT title FROM db_records WHERE id=?), updated_at=?, version=version+1 WHERE id=(SELECT page_id FROM db_records WHERE id=?)`, body.ID, now, body.ID)
         if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
         changed, err := pageRes.RowsAffected()
         if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
