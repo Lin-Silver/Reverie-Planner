@@ -284,3 +284,27 @@ test('database property dialog creates relation and formula with persisted compu
   expect(computed.values[sumProp.id]).toBe(16)
   await expect(page.locator('[data-record-id="'+source.id+'"]').getByLabel('Sum')).toContainText('16')
 })
+
+
+test('database view rename duplicate and deletion preserve data and forbid removing final view', async ({page}) => {
+  const host=await makeDatabase(page)
+  const item=await record(page,host.databaseId,'Must remain')
+  await reopen(page,host)
+  page.on('dialog',async d=>{
+    if(d.type()==='prompt')await d.accept('Custom table')
+    else await d.accept()
+  })
+  await page.getByRole('button',{name:'Rename database view'}).click()
+  await expect(page.getByLabel('Active database view').locator('option:checked')).toContainText('Custom table')
+  await page.getByRole('button',{name:'Duplicate database view'}).click()
+  await expect(page.getByLabel('Active database view').locator('option:checked')).toContainText('copy')
+  await page.getByRole('button',{name:'Delete database view'}).click()
+  await expect(page.getByLabel('Active database view').locator('option:checked')).toContainText('Custom table')
+  await expect(page.getByRole('button',{name:'Delete database view'})).toBeDisabled()
+  await reopen(page,host)
+  const res=await page.request.get(API+'/databases?id='+host.databaseId)
+  const db=await res.json() as {views:{name:string}[]}
+  expect(db.views).toHaveLength(1)
+  expect(db.views[0].name).toBe('Custom table')
+  expect((await rows(page,host.databaseId)).some(r=>r.id===item.id)).toBe(true)
+})
