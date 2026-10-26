@@ -153,30 +153,33 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 201, d)
 	case http.MethodPut:
 		var d Database
-		if err := json.NewDecoder(r.Body).Decode(&d); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
-		if d.ID == "" {
-			writeJSON(w, 400, map[string]string{"error": "id required"})
-			return
-		}
-		if d.Version <= 0 {
-			writeJSON(w, 400, map[string]string{"error": "version required"})
-			return
-		}
-		now := time.Now().UTC().Format(time.RFC3339)
-		res, err := a.DB.Exec(`UPDATE databases SET title=?, icon=?, version=version+1, updated_at=? WHERE id=? AND version=?`, d.Title, nullStr(d.Icon), now, d.ID, d.Version)
-		if err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			writeJSON(w, 409, map[string]string{"error": "version conflict"})
-			return
-		}
-		// sync page title
-		_, _ = a.DB.Exec(`UPDATE pages SET title=?, updated_at=? WHERE id=(SELECT page_id FROM databases WHERE id=?)`, d.Title, now, d.ID)
-		out, _ := a.getDatabase(d.ID)
-		writeJSON(w, 200, out)
+		if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
+            writeJSON(w,400,map[string]string{"error":"invalid request JSON"});return
+        }
+		if d.ID=="" || d.Version<=0 || d.Title=="" {
+            writeJSON(w,400,map[string]string{"error":"id, version and title are required"});return
+        }
+		now:=time.Now().UTC().Format(time.RFC3339)
+        tx,err:=a.DB.Begin()
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        defer tx.Rollback()
+        result,err:=tx.Exec(`UPDATE databases SET title=?,icon=?,version=version+1,updated_at=?
+            WHERE id=? AND version=? AND deleted_at IS NULL`,d.Title,nullStr(d.Icon),now,d.ID,d.Version)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        changed,err:=result.RowsAffected()
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        if changed!=1 {writeJSON(w,409,map[string]string{"error":"version conflict"});return}
+        // The database title and its backing page title are one logical edit.
+        pageResult,err:=tx.Exec(`UPDATE pages SET title=?,updated_at=?,version=version+1
+            WHERE id=(SELECT page_id FROM databases WHERE id=?)`,d.Title,now,d.ID)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        pageChanged,err:=pageResult.RowsAffected()
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        if pageChanged!=1 {writeJSON(w,409,map[string]string{"error":"database backing page missing"});return}
+        if err:=tx.Commit();err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        out,err:=a.getDatabase(d.ID)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+        writeJSON(w,200,out)
 	case http.MethodDelete:
         id:=r.URL.Query().Get("id")
         result,err:=a.DB.Exec("UPDATE databases SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
