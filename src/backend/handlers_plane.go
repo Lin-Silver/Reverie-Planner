@@ -307,7 +307,10 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var p Page
-		_ = json.NewDecoder(r.Body).Decode(&p)
+		if _, err := decodeJSONRequest(r, &p); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid page payload"})
+			return
+		}
 		if p.ID == "" {
 			p.ID = newID("page")
 		}
@@ -334,7 +337,10 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 201, p)
 	case http.MethodPut:
 		var p Page
-		_ = json.NewDecoder(r.Body).Decode(&p)
+		if _, err := decodeJSONRequest(r, &p); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid page payload"})
+			return
+		}
 		if p.ID == "" {
 			writeJSON(w, 400, map[string]string{"error": "id required"})
 			return
