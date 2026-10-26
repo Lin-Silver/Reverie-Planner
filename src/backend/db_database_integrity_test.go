@@ -247,3 +247,31 @@ func TestDatabaseMalformedRequestsDoNotMutateState(t *testing.T) {
     if err!=nil || saved.Title!=record.Title {t.Fatalf("record changed after malformed request: %+v err=%v",saved,err)}
     if saved.DatabaseID!=database.ID {t.Fatal("record moved")}
 }
+
+
+func TestDatabaseRenameRollsBackIfBackingPageUpdateFails(t *testing.T) {
+    ctx:=setupTestContext(t)
+    defer ctx.DB.Close()
+    database,_:=dbRegressionCreate(t,ctx)
+    var originalVersion int
+    if err:=ctx.DB.QueryRow("SELECT version FROM pages WHERE id=?",database.PageID).Scan(&originalVersion);err!=nil {t.Fatal(err)}
+    if _,err:=ctx.DB.Exec(`CREATE TRIGGER reject_database_page_title BEFORE UPDATE OF title ON pages
+      WHEN OLD.id='`+database.PageID+`'
+      BEGIN SELECT RAISE(ABORT, 'simulated page failure'); END`);err!=nil {t.Fatal(err)}
+    update:=map[string]any{"id":database.ID,"version":database.Version,"title":"Should roll back","icon":"📒"}
+    encoded,err:=json.Marshal(update)
+    if err!=nil {t.Fatal(err)}
+    failed:=dbRegressionCall(t,ctx,"PUT","/api/databases",string(encoded),ctx.handleDatabases)
+    if failed.Code!=500 {t.Fatalf("page failure should reject rename: %d %s",failed.Code,failed.Body.String())}
+    if _,err:=ctx.DB.Exec("DROP TRIGGER reject_database_page_title");err!=nil {t.Fatal(err)}
+    current,err:=ctx.getDatabase(database.ID)
+    if err!=nil {t.Fatal(err)}
+    if current.Title!=database.Title || current.Version!=database.Version {t.Fatalf("rename persisted despite transaction failure: %+v",current)}
+    var pageTitle string
+    var pageVersion int
+    if err:=ctx.DB.QueryRow("SELECT title,version FROM pages WHERE id=?",database.PageID).Scan(&pageTitle,&pageVersion);err!=nil {t.Fatal(err)}
+    if pageTitle!=database.Title || pageVersion!=originalVersion {t.Fatalf("page changed despite rollback: %s version %d",pageTitle,pageVersion)}
+    done:=dbRegressionCall(t,ctx,"PUT","/api/databases",string(encoded),ctx.handleDatabases)
+    if done.Code!=200 {t.Fatalf("rename retry failed: %d %s",done.Code,done.Body.String())}
+    if stale:=dbRegressionCall(t,ctx,"PUT","/api/databases",string(encoded),ctx.handleDatabases);stale.Code!=409 {t.Fatalf("stale rename accepted: %d %s",stale.Code,stale.Body.String())}
+}
