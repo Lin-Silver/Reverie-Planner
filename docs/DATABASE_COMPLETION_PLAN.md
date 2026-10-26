@@ -13,7 +13,7 @@ Ship a trustworthy, locally stored, long-lived Notion-style database subsystem w
 - [x] Verify PR #2 Open, clean mergeability and last green Windows CI (19/19 Playwright at `966e478`).
 - [x] Review migration 7 / legacy linked-column handling, DB record/page coupling, five UI views and existing E2E coverage.
 - [ ] Capture before/after compatibility tests for v6 and v7 user databases; preserve user content, attachments, providers and project/task tables.
-- [ ] Move lazy `ALTER TABLE pages` column setup to transactional numbered migration with safe version detection and rollback.
+- [x] Move lazy `ALTER TABLE pages` column setup to transactional numbered migration with safe version detection and rollback.
 - [ ] Normalize API JSON decode/validation, SQLite error propagation, WAL/foreign key checks, stable IDs and index/query plans.
 - [ ] Ensure backup and restore test uses a real SQLite copy and does not delete the original.
 
@@ -23,17 +23,17 @@ Ship a trustworthy, locally stored, long-lived Notion-style database subsystem w
 - [ ] Atomic schema edits: rename/reorder/hide/option edit/type migration or deliberate refusal, delete/restore safely, nonempty title invariant and optimistic versions.
 - [ ] Typed validation: option membership, time zones/invalid dates, valid URL/email, file reference ownership, relational record existence and cycle-safe formula dependencies.
 - [ ] Indexed relation storage using stable record IDs and explicit deletion semantics; reciprocal links and rollback on error.
-- [ ] Deterministic safe formula language (no eval/JS/SQL injection; null/error handling, dependency cycle detection) plus typed rollup aggregations.
+- [x] Deterministic safe formula language (no eval/JS/SQL injection; null/error handling, dependency cycle detection) plus typed rollup aggregations.
 - [ ] Persist/reconcile file attachments through the application's existing upload policy; no unsafe filesystem paths.
 
 ## Phase 2 — Views and interaction
 
 - [x] Table/Board/Calendar/List/Gallery rendering and basic shared-record updates, date editing and navigation; E2E assertions for all five.
 - [x] Persist one view's filter text, sort, Board group and Calendar field; verify reload.
-- [ ] Replace plain text filter with a typed nested AND/OR filter AST; validation + deterministic predicates, null/date/number/select semantics; view-local immutable config.
+- [x] Replace plain text filter with a typed nested AND/OR filter AST; validation + deterministic predicates, null/date/number/select semantics; view-local immutable config.
 - [ ] Implement multi-key sorts, hide/show/reorder/resize columns and keyboard interactions (Tab, Enter, Escape, arrows, clipboard) with real persistence for column layout.
 - [ ] Improve Board empty and unexpected group behavior, keyboard alternatives, drag failure rollback, option management and conflict UX.
-- [ ] Calendar date drag/move/date picker, month navigation/timezone correctness, unspecified-date tray and reliable changes.
+- [x] Calendar date drag/move/date picker, month navigation/timezone correctness, unspecified-date tray and reliable changes.
 - [ ] Gallery cover and property selection, List record actions, quick-open and responsive/screen reader controls.
 - [ ] Manage views via UI (rename, duplicate, delete with safe defaults, reorder, inline/linked views); preserve linked-view-specific settings.
 
@@ -67,3 +67,6 @@ Prefer correctness and irreversible-data safety before additional UI features. I
 ## Evidence log
 
 - Baseline: `966e478b53298d65dd6f01227c10e7aff375b696`, [Windows CI 40257255601](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40257255601), Go tests, Windows package, 19/19 Playwright.
+
+- Verified newer baseline: `5023e339b5a69711c57a2cc349ea3585f34e7dde`, [Windows CI 40263677658](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40263677658), success: backend Go regressions, TypeScript/build, Windows launcher/package, **25/25 Playwright** including calendar day drag/drop, typed AND/OR filters, UI relation+formula editor, attachment upload and soft-delete restore.
+- In-progress after this green baseline: atomic database/page rename, preventing record access when parent database is trashed, rejecting tombstoned relation targets, and their Go regressions. These are **not yet** covered by the green CI above; verify against the latest PR head before marking further checkboxes.
