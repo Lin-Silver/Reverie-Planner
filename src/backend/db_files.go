@@ -50,6 +50,8 @@ func (a *AppContext) handleDBFiles(w http.ResponseWriter,r *http.Request){
         safeName:=strings.Map(func(r rune)rune{if r==92{return '/'};return r},header.Filename)
         name:=filepath.Base(safeName)
         name=strings.Map(func(r rune)rune{if r==10||r==13{return -1};return r},name)
+        // Hide potentially path-derived leading dots in display names.
+        name=strings.TrimLeft(name,".")
         if name==""||name=="."||name==".." {name="attachment"}
         if len(name)>200{name=name[:200]}
         id:=newID("dbfile")
