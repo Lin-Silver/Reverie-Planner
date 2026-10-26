@@ -72,9 +72,11 @@ func TestDuplicateJSONMutationsPreserveDataAndProviderConfig(t *testing.T) {
 	}
 	counts := make(map[string]int)
 	for _, table := range []string{"databases", "db_records", "pages", "projects"} {
-		if err := app.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&counts[table]); err != nil {
+		var count int
+		if err := app.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
+		counts[table] = count
 	}
 
 	cases := []struct {
