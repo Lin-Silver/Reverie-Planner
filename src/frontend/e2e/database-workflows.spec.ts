@@ -182,6 +182,9 @@ test('database concurrent edits preserve stale draft until explicit Retry or Rel
     expect((await rows(pageB,host.databaseId)).find(r=>r.id===item.id)!.title).toBe('Remote version A')
     await pageB.getByText('← Back').click()
     await expect(pageB.getByRole('alert')).toContainText('Unsaved database edit')
+    await pageB.locator('.nav-item').filter({hasText:'Home'}).first().click()
+    await expect(pageB.getByLabel('Active database view')).toBeVisible()
+    expect((await rows(pageB,host.databaseId)).find(r=>r.id===item.id)!.title).toBe('Remote version A')
     await pageB.getByText('Retry my changes').click()
     await expect.poll(async()=> (await rows(pageB,host.databaseId)).find(r=>r.id===item.id)!.title,{timeout:15000}).toBe('Local version B')
     const afterRetry=(await rows(pageB,host.databaseId)).find(r=>r.id===item.id)!
