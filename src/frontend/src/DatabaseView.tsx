@@ -205,7 +205,7 @@ function TableView({ records, props, updateRecord, deleteProperty, onOpenRecord 
         <thead><tr><th>Page</th>{visibleProps.map(p => <th key={p.id} style={{ border: '1px solid var(--border)', padding: 6, minWidth: 130 }}>{p.name}
           {p.type !== 'title' && <button aria-label={'Delete ' + p.name} onClick={() => { if (confirm('Delete property ' + p.name + ' and its values?')) void deleteProperty(p.id) }}>×</button>}
         </th>)}</tr></thead>
-        <tbody>{records.map(rec => <tr key={rec.id} data-testid="database-record-row">
+        <tbody>{records.map(rec => <tr key={rec.id} data-testid="database-record-row" data-record-id={rec.id}>
           <td><button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>Open page</button></td>
           {visibleProps.map(p => <td key={p.id} style={{ border: '1px solid var(--border)', padding: 4 }}>
             <Cell prop={p} value={p.type === 'title' ? rec.title : rec.values?.[p.id]} onChange={value => {
