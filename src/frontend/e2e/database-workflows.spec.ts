@@ -383,3 +383,45 @@ test('database calendar drag and unscheduled tray update actual dates',async({pa
   await page.getByLabel('Schedule Unscheduled calendar').fill(date3)
   await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===undated.id)?.values[due.id],{timeout:15000}).toBe(date3)
 })
+
+
+test('database multi-key numeric and text sorting persists per view and keeps nulls last', async ({page}) => {
+  const host = await makeDatabase(page)
+  const score = await property(page, host.databaseId, 'Score', 'number')
+  // Deliberately insert in a different order from both sort keys.
+  const beta = await record(page, host.databaseId, 'Beta')
+  const unset = await record(page, host.databaseId, 'No score')
+  const alpha = await record(page, host.databaseId, 'Alpha')
+  const lower = await record(page, host.databaseId, 'Low score')
+  for (const [item,value] of [[beta,8],[alpha,8],[lower,3]] as const) {
+    const saved = await page.request.put(API+'/db/records', {data:{
+      id:item.id, title:item.title, version:item.version, values:{[score.id]:value}
+    }})
+    expect(saved.status()).toBe(200)
+  }
+  await reopen(page,host)
+  const rowIds = () => page.getByTestId('database-record-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-record-id')))
+  await page.getByLabel('Database sort',{exact:true}).selectOption(score.id)
+  await page.getByLabel('Sort direction').selectOption('desc')
+  await page.getByLabel('Secondary database sort').selectOption('title')
+  await page.getByLabel('Secondary sort direction').selectOption('asc')
+  await expect.poll(rowIds).toEqual([alpha.id,beta.id,lower.id,unset.id])
+  await page.getByRole('button',{name:'Save view settings',exact:true}).click()
+  await reopen(page,host)
+  await expect(page.getByLabel('Database sort',{exact:true})).toHaveValue(score.id)
+  await expect(page.getByLabel('Sort direction')).toHaveValue('desc')
+  await expect(page.getByLabel('Secondary database sort')).toHaveValue('title')
+  await expect.poll(rowIds).toEqual([alpha.id,beta.id,lower.id,unset.id])
+  const schema = await (await page.request.get(API+'/databases?id='+host.databaseId)).json() as {views:{config:string}[]}
+  expect(JSON.parse(schema.views[0].config).sortRules).toEqual([
+    {propertyId:score.id,direction:'desc'}, {propertyId:'title',direction:'asc'}
+  ])
+  await page.getByLabel('Sort direction').selectOption('asc')
+  await expect.poll(rowIds).toEqual([lower.id,alpha.id,beta.id,unset.id])
+  // A new view has independent persisted configuration.
+  const second=await makeView(page,host.databaseId,'table')
+  await reopen(page,host)
+  await page.getByLabel('Active database view').selectOption(second)
+  await expect(page.getByLabel('Database sort',{exact:true})).toHaveValue('')
+  await expect.poll(rowIds).toEqual([beta.id,unset.id,alpha.id,lower.id])
+})
