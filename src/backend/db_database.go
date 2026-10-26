@@ -102,7 +102,7 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var d Database
-		_ = json.NewDecoder(r.Body).Decode(&d)
+		if err := json.NewDecoder(r.Body).Decode(&d); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 		if d.Title == "" {
 			d.Title = "Untitled database"
 		}
@@ -153,7 +153,7 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 201, d)
 	case http.MethodPut:
 		var d Database
-		_ = json.NewDecoder(r.Body).Decode(&d)
+		if err := json.NewDecoder(r.Body).Decode(&d); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 		if d.ID == "" {
 			writeJSON(w, 400, map[string]string{"error": "id required"})
 			return
@@ -246,7 +246,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 	switch r.Method {
 	case http.MethodPost:
 		var p DBProperty
-		_ = json.NewDecoder(r.Body).Decode(&p)
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 		if p.DatabaseID == "" || p.Name == "" {
 			writeJSON(w, 400, map[string]string{"error": "databaseId and name required"})
 			return
@@ -282,7 +282,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 201, p)
 	case http.MethodPut:
 		var p DBProperty
-		_ = json.NewDecoder(r.Body).Decode(&p)
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 		if p.ID == "" || p.Version <= 0 {
 			writeJSON(w, 400, map[string]string{"error": "id and version required"})
 			return
@@ -376,7 +376,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var rec DBRecord
-		_ = json.NewDecoder(r.Body).Decode(&rec)
+		if err := json.NewDecoder(r.Body).Decode(&rec); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 		if rec.DatabaseID == "" {
 			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
 			return
@@ -438,7 +438,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			Values   map[string]any `json:"values"`
 			Version  int            `json:"version"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 		if body.ID == "" || body.Version <= 0 {
 			writeJSON(w, 400, map[string]string{"error": "id and version required"})
 			return
@@ -615,7 +615,7 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var v DBView
-		_ = json.NewDecoder(r.Body).Decode(&v)
+		if err := json.NewDecoder(r.Body).Decode(&v); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 		if v.DatabaseID == "" {
 			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
 			return
@@ -643,7 +643,7 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 201, v)
 	case http.MethodPut:
 		var v DBView
-		_ = json.NewDecoder(r.Body).Decode(&v)
+		if err := json.NewDecoder(r.Body).Decode(&v); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 		if v.ID == "" || v.Version <= 0 {
 			writeJSON(w, 400, map[string]string{"error": "id and version required"})
 			return
@@ -706,7 +706,7 @@ func (a *AppContext) handleDBLinkedView(w http.ResponseWriter, r *http.Request) 
 		PageID     string `json:"pageId"`
 		Name       string `json:"name"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
 	if body.DatabaseID == "" || body.PageID == "" {
 		writeJSON(w, 400, map[string]string{"error": "databaseId and pageId required"})
 		return
