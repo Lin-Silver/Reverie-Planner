@@ -221,7 +221,9 @@ test('database typed AND/OR filters persist and apply consistently after reopeni
   await expect(page.getByTestId('database-record-row')).toHaveCount(1)
   await expect(page.locator('[data-record-id="'+alpha.id+'"]')).toBeVisible()
   await page.getByRole('button', {name:'Add filter condition'}).click()
-  await page.getByLabel('Filter property').nth(1).selectOption('title')
+  const schema = await (await page.request.get(API + '/databases?id=' + host.databaseId)).json() as {properties:{id:string;type:string}[]}
+  const titleProperty = schema.properties.find(p=>p.type==='title')!
+  await page.getByLabel('Filter property').nth(1).selectOption(titleProperty.id)
   await page.getByLabel('Filter operator').nth(1).selectOption('contains')
   await page.getByLabel('Filter value').nth(1).fill('beta')
   await expect(page.getByTestId('database-record-row')).toHaveCount(0)
