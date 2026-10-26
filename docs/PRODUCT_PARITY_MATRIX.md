@@ -14,9 +14,9 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: merg
 | Drag & reorder blocks | Implemented | Verified | BlockNote built-in |
 | Page icon & cover | Partial | Implemented | icon editable; cover field exists, UI pending |
 | Auto-save | Implemented | Verified | 1s debounce + status indicator |
-| Databases/multi-view | Partial | E2E verified | SQLite records/properties/views, Table/Board/Calendar/List/Gallery creation, saved per-view filter/sort/group/date selection |
-| Table/Board/Calendar/List/Gallery | Partial | E2E verified | Table edits, Board drag to persist select group, Calendar date edit, record page links and List/Gallery layouts; timeline not implemented |
-| Properties/filter/sort/relations | Partial | Partially verified | Text/number/checkbox/select/multi-select/date/URL/email schema supported; text filter, sort and view settings persisted; relation/rollup/formula and typed AND/OR filters not completed |
+| Databases/multi-view | Partial | E2E verified | Persistent SQLite records/properties/views, five working layouts, typed filters, two-key sorts, independent view configuration, linked pages and Trash/Restore |
+| Table/Board/Calendar/List/Gallery | Partial | E2E verified | Board and Calendar drag/drop persist data; table column sizing/reordering/hiding, keyboard cell editing; List/Gallery record links. No timeline view or Gallery cover editor |
+| Properties/filter/sort/relations | Partial | Partially verified | Typed field schema, nested AND/OR filters, configurable select/date/number, formulas and relation rollups, scoped file attachment and version validation; more complex relation/formula behaviors and spreadsheet editing remain |
 | Search | Partial | Implemented | Global search across projects/tasks/pages |
 | Shortcuts & templates | Partial | Verified | Ctrl+K command palette works; templates remain unavailable |
 
@@ -37,12 +37,14 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: merg
 | Analytics | Partial | Implemented | Counts by status |
 
 ## Known gaps
-- Database formula, rollup, relation, file, people, and advanced typed filters are not complete.
-- Views need column sizing/reordering, richer property management and gallery covers; no timeline view.
-- Multi-client conflict resolution for database cells is not yet as mature as BlockNote page conflict handling.
+- Basic formula, rollup, relation, file, people and AND/OR filter implementations exist, but advanced lifecycle, bidirectional links, dependency handling and large-scale performance are not fully proven.
+- Table column sizing/reordering/hiding now works; still missing multi-cell clipboard/range editing, richer property management, gallery covers and a timeline view.
+- Database record conflicts have Retry/Reload tests, but full multi-client schema and linked-view conflict UX needs further validation.
 - The database feature is not yet at full Notion parity; keep PR #2 open until separate acceptance review.
 - No real-time collaboration
 - No templates, favorites, recent pages
 - Page cover image upload pending
 - Mobile responsive polish pending
 `
+
+Verified database interaction baseline: [Windows CI 40266607916](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266607916), commit `b0d34c68c4bc27cafa2389234d189819fc062814`, **27/27 Chromium E2E**. Newer commits require their own SHA-matched verification.
