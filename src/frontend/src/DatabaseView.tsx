@@ -161,6 +161,32 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
             setError('')
           } catch (e) { setError((e as Error).message) }
         }}>+ View</button>
+        <button className="btn" aria-label="Rename database view" disabled={!view} onClick={async () => {
+          if (!view) return
+          const name=prompt('New view name',view.name)
+          if (!name?.trim() || name.trim()===view.name) return
+          try {
+            const updated=await api('/api/db/views',{method:'PUT',body:JSON.stringify({...view,name:name.trim()})}) as DBView
+            setDb(current=>current&&({...current,views:current.views.map(v=>v.id===updated.id?updated:v)}))
+          } catch(e){setError((e as Error).message)}
+        }}>Rename view</button>
+        <button className="btn" aria-label="Duplicate database view" disabled={!view} onClick={async () => {
+          if (!view) return
+          try {
+            const copy=await api('/api/db/views',{method:'POST',body:JSON.stringify({databaseId,name:view.name+' copy',type:view.type,config:view.config})}) as DBView
+            setDb(current=>current&&({...current,views:[...current.views,copy]}))
+            setViewId(copy.id)
+          } catch(e){setError((e as Error).message)}
+        }}>Duplicate</button>
+        <button className="btn" aria-label="Delete database view" disabled={!view || db.views.length<=1} onClick={async () => {
+          if (!view || !confirm('Delete this view? Records will be kept.')) return
+          try {
+            await api('/api/db/views?id='+encodeURIComponent(view.id),{method:'DELETE'})
+            const remaining=db.views.filter(v=>v.id!==view.id)
+            setDb(current=>current&&({...current,views:remaining}))
+            setViewId(remaining[0]?.id||'')
+          } catch(e){setError((e as Error).message)}
+        }}>Delete view</button>
         <button className="btn" onClick={async () => {
           try {
             const pg = await api('/api/pages', { method: 'POST', body: JSON.stringify({ title: `${db.title} (linked)`, workspace: true, createdBy: 'You' }) }) as any
