@@ -397,3 +397,71 @@ test('conflict lock survives parent rerender and keeps draft', async ({ browser 
     if (!contextB.isClosed()) await contextB.close()
   }
 })
+
+test('autosave never acknowledges an older write while a newer BlockNote draft is pending', async ({ page }) => {
+  const title = `PendingAutosave-${Date.now()}`
+  const pageId = await createPageWithTitle(page, title)
+  const status = page.getByTestId('page-save-status')
+  await expect(status).toContainText('saved')
+
+  let firstSeen = false
+  let secondSeen = false
+  let releaseFirst: (() => void) | undefined
+  let releaseSecond: (() => void) | undefined
+
+  // Hold each PUT separately to reproduce a response for the older document
+  // arriving after the user has already typed a newer draft.
+  await page.route('**/api/pages', async (route) => {
+    if (route.request().method() !== 'PUT') {
+      await route.continue()
+      return
+    }
+    const body = route.request().postDataJSON() as { content?: string }
+    if (body.content?.includes('First save') && !body.content.includes('Second change') && !firstSeen) {
+      firstSeen = true
+      await new Promise<void>((resolve) => { releaseFirst = resolve })
+    } else if (body.content?.includes('Second change') && !secondSeen) {
+      secondSeen = true
+      await new Promise<void>((resolve) => { releaseSecond = resolve })
+    }
+    await route.continue()
+  })
+
+  await page.evaluate(() => {
+    const element = document.querySelector('[data-testid="page-save-status"]')
+    if (!element) throw new Error('save status is missing')
+    const history: string[] = []
+    ;(window as Window & { __pageSaveHistory?: string[] }).__pageSaveHistory = history
+    new MutationObserver(() => history.push(element.textContent || '')).observe(element, {
+      childList: true, characterData: true, subtree: true,
+    })
+  })
+
+  try {
+    await page.locator('.bn-editor').click()
+    await page.keyboard.type('First save')
+    await expect.poll(() => firstSeen, { timeout: 15000 }).toBe(true)
+
+    await page.keyboard.type(' Second change')
+    await expect(status).toContainText('unsaved')
+    releaseFirst?.()
+
+    // The second PUT is blocked, so the UI must not claim that all edits
+    // have been saved after only the first PUT completed.
+    await expect.poll(() => secondSeen, { timeout: 15000 }).toBe(true)
+    const history = await page.evaluate(() =>
+      (window as Window & { __pageSaveHistory?: string[] }).__pageSaveHistory || []
+    )
+    expect(history).not.toContain('Status: saved')
+    await expect(status).toContainText('saving')
+
+    releaseSecond?.()
+    await expect.poll(async () => (await fetchPage(page, pageId)).content, { timeout: 20000 })
+      .toContain('Second change')
+    await expect(status).toContainText('saved')
+  } finally {
+    releaseFirst?.()
+    releaseSecond?.()
+    await page.unroute('**/api/pages')
+  }
+})
