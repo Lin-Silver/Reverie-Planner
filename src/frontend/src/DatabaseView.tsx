@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { matchesFilters, newFilterGroup, type FilterGroup } from './databaseFilters'
 import DatabaseFilterBuilder from './DatabaseFilterBuilder'
+import DatabasePropertyDialog from './DatabasePropertyDialog'
 
 
 
@@ -25,6 +26,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [records, setRecords] = useState<DBRecord[]>([])
   const [viewId, setViewId] = useState<string>(initialViewId || '')
   const [newViewType, setNewViewType] = useState<ViewType>('table')
+  const [propertyDialogOpen, setPropertyDialogOpen] = useState(false)
   const [filterText, setFilterText] = useState('')
   const [filterTree, setFilterTree] = useState<FilterGroup>(() => newFilterGroup())
   const [sortProp, setSortProp] = useState('')
@@ -120,19 +122,6 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     setRecords(rs => [...rs, rec])
   }
 
-  const addProperty = async () => {
-    const name = prompt('Property name?') || 'Property'
-    const type = prompt('Type (text/number/checkbox/select/date/url/email)?') || 'text'
-    let config = '{}'
-    if (type === 'select' || type === 'multi_select') {
-      const raw = prompt('Options, comma-separated (for example: Todo,Done)', 'Todo,Done')
-      if (raw === null) return
-      config = JSON.stringify({ options: [...new Set(raw.split(',').map(x => x.trim()).filter(Boolean))] })
-    }
-    await api('/api/db/properties', { method: 'POST', body: JSON.stringify({ databaseId, name, type, config }) })
-    await load()
-  }
-
   const deleteProperty = async (pid: string) => {
     await api(`/api/db/properties?id=${pid}`, { method: 'DELETE' })
     await load()
@@ -151,12 +140,13 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
 
   return (
     <div style={{ padding: 16 }}>
+      {propertyDialogOpen && <DatabasePropertyDialog databaseId={databaseId} properties={props} onClose={() => setPropertyDialogOpen(false)} onCreated={() => {setPropertyDialogOpen(false);void load()}} />}
       {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} {failedEdit && <button onClick={() => void retryFailedEdit()}>Retry my changes</button>} <button onClick={() => { void load() }}>Reload latest</button></div>}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <button className="btn" onClick={guardedBack}>← Back</button>
         <h2 style={{ margin: 0 }}>{db.icon} {db.title}</h2>
         <button className="btn" onClick={renameDb}>Rename</button>
-        <button className="btn" onClick={addProperty}>+ Property</button>
+        <button className="btn" onClick={() => {if(failedEdit) {setError("Resolve unsaved edit before changing schema");return};setPropertyDialogOpen(true)}}>+ Property</button>
         <button className="btn primary" onClick={addRecord}>+ New</button>
         <div style={{ flex: 1 }} />
         <select aria-label="Active database view" value={viewId} onChange={e => setViewId(e.target.value)}>
@@ -224,6 +214,9 @@ function TableView({ records, props, updateRecord, deleteProperty, onOpenRecord 
   )
 }
 function Cell({ prop, value, onChange }: { prop: DBProperty; value: any; onChange: (value: any) => void }) {
+  if (['formula','rollup','created_time','last_edited_time'].includes(prop.type)) return <span aria-label={prop.name}>{value == null ? '—' : String(value)}</span>
+  if (prop.type === 'relation') return <RelationCell prop={prop} value={value} onChange={onChange} />
+  if (prop.type === 'person') return <PersonCell prop={prop} value={value} onChange={onChange} />
   if (prop.type === 'checkbox') return <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />
   if (prop.type === 'number') return <input aria-label={prop.name} type="number" key={String(value)} defaultValue={value ?? ''} onBlur={e => onChange(e.target.value === '' ? null : Number(e.target.value))} />
   if (prop.type === 'date') return <input aria-label={prop.name} type="date" value={String(value ?? '').slice(0, 10)} onChange={e => onChange(e.target.value || null)} />
@@ -236,6 +229,45 @@ function Cell({ prop, value, onChange }: { prop: DBProperty; value: any; onChang
   }
   if (prop.type === 'multi_select') return <input aria-label={prop.name} key={JSON.stringify(value)} defaultValue={Array.isArray(value) ? value.join(',') : ''} onBlur={e => onChange(e.target.value.split(',').map(x => x.trim()).filter(Boolean))} />
   return <input aria-label={prop.name} key={String(value)} defaultValue={value ?? ''} onBlur={e => { if (String(value ?? '') !== e.target.value) onChange(e.target.value) }} style={{ width: '100%', border: 'none', background: 'transparent' }} />
+}
+
+function RelationCell({ prop, value, onChange }: {prop:DBProperty;value:unknown;onChange:(v:unknown)=>void}) {
+  const [records, setRecords] = useState<{id:string;title:string}[]>([])
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState('')
+  let target=''
+  try {target = JSON.parse(prop.config).targetDatabaseId || ''} catch { /* bad legacy config */ }
+  useEffect(() => {
+    let live=true
+    if (!target) return
+    fetch('/api/db/records?databaseId='+encodeURIComponent(target)).then(res=>{
+      if (!res.ok) throw new Error(String(res.status))
+      return res.json()
+    }).then((result:{id:string;title:string}[])=>{if(live)setRecords(result)})
+      .catch(e=>{if(live)setError(String(e))})
+    return ()=>{live=false}
+  },[target])
+  const selection=Array.isArray(value)?value as string[]:[]
+  return <div>
+    <button type="button" aria-label={'Edit '+prop.name} onClick={()=>setOpen(v=>!v)}>{selection.length ? selection.map(id=>records.find(r=>r.id===id)?.title || id).join(', ') : 'Add relations'}</button>
+    {open&&<div role="group" aria-label={'Relation '+prop.name} style={{maxHeight:160,overflowY:'auto',background:'var(--card)',border:'1px solid var(--border)',padding:8}}>
+      {records.map(rec=><label key={rec.id} style={{display:'block'}}><input type="checkbox" checked={selection.includes(rec.id)} onChange={e=>onChange(e.target.checked ? [...selection,rec.id] : selection.filter(id=>id!==rec.id))} />{rec.title}</label>)}
+      {!records.length&&<span>No records available</span>}
+      {error&&<span role="alert">{error}</span>}
+    </div>}
+  </div>
+}
+function PersonCell({prop,value,onChange}:{prop:DBProperty;value:unknown;onChange:(v:unknown)=>void}) {
+  const [members,setMembers]=useState<{id:string;name:string}[]>([])
+  useEffect(()=>{let live=true
+    fetch('/api/members').then(r=>{if(!r.ok)throw new Error(String(r.status));return r.json()})
+      .then((result:unknown)=>{if(live && Array.isArray(result))setMembers(result)})
+      .catch(()=>{})
+    return ()=>{live=false}
+  },[])
+  return <select aria-label={prop.name} value={String(value??'')} onChange={e=>onChange(e.target.value||null)}>
+    <option value="">Unassigned</option>{members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+  </select>
 }
 function BoardView({ records, props, updateRecord, groupBy, onOpenRecord }: {
   records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; groupBy: string; onOpenRecord?: OpenRecord
