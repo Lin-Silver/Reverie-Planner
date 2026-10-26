@@ -489,7 +489,10 @@ func (a *AppContext) handleNotifications(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var n Notification
-		_ = json.NewDecoder(r.Body).Decode(&n)
+		if _, err := decodeJSONRequest(r, &n); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid notification payload")
+			return
+		}
 		if n.ID == "" {
 			n.ID = newID("notif")
 		}
@@ -501,24 +504,50 @@ func (a *AppContext) handleNotifications(w http.ResponseWriter, r *http.Request)
 		if n.Read {
 			ri = 1
 		}
-		_, _ = a.DB.Exec(`INSERT INTO notifications (id, title, body, type, read, created_at) VALUES (?,?,?,?,?,?)`, n.ID, n.Title, nullStr(n.Body), n.Type, ri, n.CreatedAt.Format(time.RFC3339))
-		writeJSON(w, 201, n)
+		if _, err := a.DB.Exec(`INSERT INTO notifications (id, title, body, type, read, created_at) VALUES (?,?,?,?,?,?)`, n.ID, n.Title, nullStr(n.Body), n.Type, ri, n.CreatedAt.Format(time.RFC3339)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "notification could not be saved")
+			return
+		}
+		writeJSON(w, http.StatusCreated, n)
 	case http.MethodPut:
-		var payload map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&payload)
-		if id, ok := payload["id"].(string); ok {
-			if read, ok := payload["read"].(bool); ok {
-				ri := 0
-				if read {
-					ri = 1
-				}
-				_, _ = a.DB.Exec(`UPDATE notifications SET read=? WHERE id=?`, ri, id)
+		var payload struct {
+			ID          string `json:"id"`
+			Read        *bool  `json:"read"`
+			MarkAllRead *bool  `json:"markAllRead"`
+		}
+		if _, err := decodeJSONRequest(r, &payload); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid notification payload")
+			return
+		}
+		if payload.MarkAllRead != nil && *payload.MarkAllRead && payload.ID == "" && payload.Read == nil {
+			if _, err := a.DB.Exec(`UPDATE notifications SET read=1`); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "notifications could not be updated")
+				return
 			}
+		} else if payload.ID != "" && payload.Read != nil && payload.MarkAllRead == nil {
+			ri := 0
+			if *payload.Read {
+				ri = 1
+			}
+			result, err := a.DB.Exec(`UPDATE notifications SET read=? WHERE id=?`, ri, payload.ID)
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "notification could not be updated")
+				return
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "notification update could not be verified")
+				return
+			}
+			if rows == 0 {
+				writeJSONError(w, http.StatusNotFound, "notification not found")
+				return
+			}
+		} else {
+			writeJSONError(w, http.StatusBadRequest, "provide id and read, or markAllRead=true")
+			return
 		}
-		if all, ok := payload["markAllRead"].(bool); ok && all {
-			_, _ = a.DB.Exec(`UPDATE notifications SET read=1`)
-		}
-		writeJSON(w, 200, map[string]bool{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	default:
 		w.WriteHeader(405)
 	}
