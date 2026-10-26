@@ -11,10 +11,12 @@ This file records concrete, SHA-specific evidence. A successful CI run proves th
 
 ## Most recent independently verified green baseline
 
-- Commit: `b0d34c68c4bc27cafa2389234d189819fc062814`.
-- Windows GitHub Actions: [run 40266607916](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266607916), **success**.
-- Real Windows steps: Go backend tests, frontend build/type-check, lint (**17 warnings, 0 errors**), Chromium Playwright **27/27**, service start/stop, launcher ownership check and portable package.
-- Visual evidence after this baseline: commit `01ebf1609477365588d0e71d92c7e2bfd264b9a6`, [Windows CI 40266939979](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266939979), **success**, Go tests, Windows build/package and **28/28 Playwright**. This run uploaded `Reverie-Database-UI-Evidence` (artifact ID `12627116333`, five screenshots of populated Table/Board/Calendar/List/Gallery) and `Reverie-Planner-Windows` (artifact ID `12627190910`).
+- Commit: `41b64ff589c770e32b879cf4d6756182365cdb9e`.
+- Windows GitHub Actions: [run 40275367885](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40275367885), **success**.
+- Windows steps: Go backend tests, frontend build/type-check, lint, Chromium Playwright **28/28**, service start/stop, launcher ownership check and portable package.
+- New SQLite recovery tests: `backup_snapshot_test.go` checks a real integrity-checked `VACUUM INTO` snapshot and isolation from subsequent live writes; `backup_restore_test.go` copies the snapshot to an independent temporary root, verifies restored data, reopens it through application initialization and confirms the source database and provider configuration were not changed.
+- Earlier visual evidence: commit `01ebf1609477365588d0e71d92c7e2bfd264b9a6`, [Windows CI 40266939979](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266939979), success, **28/28 Playwright**, five populated UI screenshots in artifact `Reverie-Database-UI-Evidence` (ID `12627116333`).
+- **Scope limit:** isolated SQLite restoration is test coverage, not an exposed production restore feature. SQLite backup does not include separate attachment files or AI provider configuration; whole-workspace backup/recovery and historic migration stress testing remain incomplete.
 
 ## Representative regression evidence
 
