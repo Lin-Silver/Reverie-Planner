@@ -67,7 +67,7 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, db)
 			return
 		}
-		rows, err := a.DB.Query(`SELECT id, page_id, title, icon, version, created_at, updated_at FROM databases ORDER BY created_at ASC`)
+		rows, err := a.DB.Query(`SELECT id, page_id, title, icon, version, created_at, updated_at FROM databases WHERE deleted_at IS NULL ORDER BY created_at ASC`)
 		if err != nil { writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
 		type rawDB struct {
 			d       Database
@@ -190,7 +190,7 @@ func (a *AppContext) getDatabase(id string) (Database, error) {
 	var d Database
 	var icon sql.NullString
 	var created, updated string
-	err := a.DB.QueryRow(`SELECT id, page_id, title, icon, version, created_at, updated_at FROM databases WHERE id=?`, id).Scan(&d.ID, &d.PageID, &d.Title, &icon, &d.Version, &created, &updated)
+	err := a.DB.QueryRow(`SELECT id, page_id, title, icon, version, created_at, updated_at FROM databases WHERE id=? AND deleted_at IS NULL`, id).Scan(&d.ID, &d.PageID, &d.Title, &icon, &d.Version, &created, &updated)
 	if err != nil {
 		return d, err
 	}
@@ -205,7 +205,7 @@ func (a *AppContext) getDatabase(id string) (Database, error) {
 }
 
 func (a *AppContext) listProperties(dbID string) ([]DBProperty, error) {
-	rows, err := a.DB.Query(`SELECT id, database_id, name, type, config, position, visible, version FROM db_properties WHERE database_id=? ORDER BY position ASC`, dbID)
+	rows, err := a.DB.Query(`SELECT id, database_id, name, type, config, position, visible, version FROM db_properties WHERE database_id=? AND deleted_at IS NULL ORDER BY position ASC`, dbID)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +223,7 @@ func (a *AppContext) listProperties(dbID string) ([]DBProperty, error) {
 }
 
 func (a *AppContext) listViews(dbID string) ([]DBView, error) {
-	rows, err := a.DB.Query(`SELECT id, database_id, name, type, config, position, version FROM db_views WHERE database_id=? ORDER BY position ASC`, dbID)
+	rows, err := a.DB.Query(`SELECT id, database_id, name, type, config, position, version FROM db_views WHERE database_id=? AND deleted_at IS NULL ORDER BY position ASC`, dbID)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +284,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		var currentType string
-		if err := a.DB.QueryRow(`SELECT type FROM db_properties WHERE id=?`, p.ID).Scan(&currentType); err != nil { writeJSON(w, 404, map[string]string{"error": "property not found"}); return }
+		if err := a.DB.QueryRow(`SELECT type FROM db_properties WHERE id=? AND deleted_at IS NULL`, p.ID).Scan(&currentType); err != nil { writeJSON(w, 404, map[string]string{"error": "property not found"}); return }
 		if currentType != p.Type { writeJSON(w, 400, map[string]string{"error": "changing a property type requires a data migration"}); return }
 		if currentType == "title" && !p.Visible { writeJSON(w, 400, map[string]string{"error": "title property must remain visible"}); return }
 		if currentType != "title" { if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return } }
@@ -312,7 +312,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
 		var kind string
-		if err := a.DB.QueryRow(`SELECT type FROM db_properties WHERE id=?`, id).Scan(&kind); err != nil { writeJSON(w, 404, map[string]string{"error": "property not found"}); return }
+		if err := a.DB.QueryRow(`SELECT type FROM db_properties WHERE id=? AND deleted_at IS NULL`, id).Scan(&kind); err != nil { writeJSON(w, 404, map[string]string{"error": "property not found"}); return }
 		if kind == "title" { writeJSON(w, 400, map[string]string{"error": "title property cannot be deleted"}); return }
 		tx, err := a.DB.Begin()
 		if err != nil {
@@ -347,7 +347,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
 			return
 		}
-		rows,err := a.DB.Query(`SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE database_id=? ORDER BY created_at ASC`, dbID)
+		rows,err := a.DB.Query(`SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE database_id=? AND deleted_at IS NULL ORDER BY created_at ASC`, dbID)
 		if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 		type rawRec struct {
 			rec    DBRecord
@@ -443,7 +443,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		}
 		// get db id for version check
 		var dbID string
-		if err := a.DB.QueryRow(`SELECT database_id FROM db_records WHERE id=?`, body.ID).Scan(&dbID); err != nil { writeJSON(w, 404, map[string]string{"error": "record not found"}); return }
+		if err := a.DB.QueryRow(`SELECT database_id FROM db_records WHERE id=? AND deleted_at IS NULL`, body.ID).Scan(&dbID); err != nil { writeJSON(w, 404, map[string]string{"error": "record not found"}); return }
 		now := time.Now().UTC().Format(time.RFC3339)
 		tx, err := a.DB.Begin()
 		if err != nil {
@@ -454,7 +454,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
         var previousTitle string
         if err:=tx.QueryRow("SELECT title FROM db_records WHERE id=?",body.ID).Scan(&previousTitle);err!=nil {tx.Rollback();writeJSON(w,404,map[string]string{"error":"record not found"});return}
 		// version check on record
-		res, err := tx.Exec(`UPDATE db_records SET title=COALESCE(NULLIF(?,''),title), version=version+1, updated_at=? WHERE id=? AND version=?`, body.Title, now, body.ID, body.Version)
+		res, err := tx.Exec(`UPDATE db_records SET title=COALESCE(NULLIF(?,''),title), version=version+1, updated_at=? WHERE id=? AND version=? AND deleted_at IS NULL`, body.Title, now, body.ID, body.Version)
 		if err != nil {
 			tx.Rollback()
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -469,7 +469,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		// validate property ownership and values
 		type propDefinition struct { kind, config string }
         definitions := map[string]propDefinition{}
-        propRows, err := tx.Query(`SELECT id, type, config FROM db_properties WHERE database_id=?`, dbID)
+        propRows, err := tx.Query(`SELECT id, type, config FROM db_properties WHERE database_id=? AND deleted_at IS NULL`, dbID)
         if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
         for propRows.Next() {
             var pid, ptype, cfg string
@@ -565,7 +565,7 @@ func (a *AppContext) getDBRecord(id string) (DBRecord, error) {
 	var rec DBRecord
 	var pageID sql.NullString
 	var created, updated string
-	err := a.DB.QueryRow(`SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE id=?`, id).Scan(&rec.ID, &rec.DatabaseID, &rec.Title, &pageID, &rec.Version, &created, &updated)
+	err := a.DB.QueryRow(`SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE id=? AND deleted_at IS NULL`, id).Scan(&rec.ID, &rec.DatabaseID, &rec.Title, &pageID, &rec.Version, &created, &updated)
 	if err != nil {
 		return rec, err
 	}
