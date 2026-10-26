@@ -65,3 +65,25 @@ func TestDatabaseRestoreRequestRejectsUnknownKind(t *testing.T) {
     res:=dbRegressionCall(t,ctx,"POST","/api/db/trash",string(body),ctx.handleDBTrash)
     if res.Code!=400{t.Fatalf("invalid restore kind accepted: %d",res.Code)}
 }
+
+
+func TestTrashedDatabaseDoesNotExposeOrAcceptChildRecords(t *testing.T) {
+    ctx:=setupTestContext(t);defer ctx.DB.Close()
+    db,record:=dbRegressionCreate(t,ctx)
+    removed:=dbRegressionCall(t,ctx,"DELETE","/api/databases?id="+db.ID,"",ctx.handleDatabases)
+    if removed.Code!=204{t.Fatalf("delete database: %d %s",removed.Code,removed.Body.String())}
+    list:=dbRegressionCall(t,ctx,"GET","/api/db/records?databaseId="+db.ID,"",ctx.handleDBRecords)
+    if list.Code!=404{t.Fatalf("trashed db still permits record listing: %d %s",list.Code,list.Body.String())}
+    if _,err:=ctx.getDBRecord(record.ID);err==nil{t.Fatal("trashed database record still readable by ID")}
+    put:=dbRegressionCall(t,ctx,"PUT","/api/db/records",`{"id":"`+record.ID+`","title":"Changed","version":1,"values":{}}`,ctx.handleDBRecords)
+    if put.Code!=404{t.Fatalf("trashed database accepted record update: %d %s",put.Code,put.Body.String())}
+    post:=dbRegressionCall(t,ctx,"POST","/api/db/records",`{"databaseId":"`+db.ID+`","title":"Hidden creation"}`,ctx.handleDBRecords)
+    if post.Code!=404{t.Fatalf("trashed database accepted record creation: %d %s",post.Code,post.Body.String())}
+    var count int
+    if err:=ctx.DB.QueryRow("SELECT COUNT(*) FROM db_records WHERE database_id=?",db.ID).Scan(&count);err!=nil{t.Fatal(err)}
+    if count!=1{t.Fatalf("rejected creation modified database: %d",count)}
+    recovered:=dbRegressionCall(t,ctx,"POST","/api/db/trash",`{"kind":"database","id":"`+db.ID+`"}`,ctx.handleDBTrash)
+    if recovered.Code!=200{t.Fatalf("restore database: %d %s",recovered.Code,recovered.Body.String())}
+    restored,err:=ctx.getDBRecord(record.ID)
+    if err!=nil || restored.ID!=record.ID || restored.Title!=record.Title{t.Fatalf("restored record missing: %+v err=%v",restored,err)}
+}
