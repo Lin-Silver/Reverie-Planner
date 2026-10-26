@@ -44,12 +44,13 @@ func TestModuleMutationsRejectInvalidWritesAndPreservePartialUpdates(t *testing.
 	}
 	checkUnchanged := func(t *testing.T, expectedName, expectedLead string) {
 		t.Helper()
-		var id, project, name, description, status, lead, start, end string
+		var id, project, name, status string
+		var description, lead, start, end sqlNullString
 		err := app.DB.QueryRow(`SELECT id,project_id,name,description,status,lead,start_date,end_date FROM modules WHERE id=?`, module.ID).
 			Scan(&id, &project, &name, &description, &status, &lead, &start, &end)
 		if err != nil || id != module.ID || project != projectID || name != expectedName ||
-			description != "Keep description" || status != "active" || lead != expectedLead ||
-			start != "2026-10-01" || end != "2026-10-31" {
+			description.String != "Keep description" || status != "active" || lead.String != expectedLead ||
+			start.String != "2026-10-01" || end.String != "2026-10-31" {
 			t.Fatalf("module changed: id=%q project=%q name=%q description=%q status=%q lead=%q dates=%q/%q err=%v",
 				id, project, name, description, status, lead, start, end, err)
 		}
