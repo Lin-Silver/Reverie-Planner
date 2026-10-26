@@ -403,6 +403,25 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	// WAL allows readers to observe committed snapshots while the writer is
+	// active. Verify the actual journal mode: SQLite may refuse a transition
+	// (for example, when another process holds an incompatible lock).
+	var journalMode string
+	if err := db.QueryRow(`PRAGMA journal_mode = WAL`).Scan(&journalMode); err != nil || !strings.EqualFold(journalMode, "wal") {
+		_ = db.Close()
+		return nil, fmt.Errorf("SQLite WAL journal mode unavailable (mode=%q): %v", journalMode, err)
+	}
+	// FULL synchronizes WAL commits for durability across power loss. Like
+	// foreign_keys, this setting is per connection, not a schema migration.
+	if _, err := db.Exec(`PRAGMA synchronous = FULL`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure SQLite synchronous mode: %w", err)
+	}
+	var synchronous int
+	if err := db.QueryRow(`PRAGMA synchronous`).Scan(&synchronous); err != nil || synchronous != 2 {
+		_ = db.Close()
+		return nil, fmt.Errorf("SQLite FULL synchronous mode unavailable (value=%d): %v", synchronous, err)
+	}
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		_ = db.Close()
 		return nil, err
