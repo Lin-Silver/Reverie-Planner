@@ -138,3 +138,44 @@ func TestDatabaseRecordTitleChangeVersionsBackingPage(t *testing.T) {
     if err := ctx.DB.QueryRow(`SELECT title, version FROM pages WHERE id=?`,rec.PageID).Scan(&title,&nextVersion); err != nil { t.Fatal(err) }
     if title != "Revised" || nextVersion != previousVersion+1 { t.Fatalf("page version/title mismatch: %q, %d -> %d",title,previousVersion,nextVersion) }
 }
+
+
+func TestDatabaseRelationReferencesAndSystemTimestamps(t *testing.T) {
+    ctx:=setupTestContext(t)
+    defer ctx.DB.Close()
+    source, from:=dbRegressionCreate(t,ctx)
+    target, to:=dbRegressionCreate(t,ctx)
+    config,err:=json.Marshal(map[string]any{"targetDatabaseId":target.ID})
+    if err!=nil {t.Fatal(err)}
+    payload,err:=json.Marshal(map[string]any{"databaseId":source.ID,"name":"Related","type":"relation","config":string(config)})
+    if err!=nil {t.Fatal(err)}
+    response:=dbRegressionCall(t,ctx,"POST","/api/db/properties",string(payload),ctx.handleDBProperties)
+    if response.Code!=201 {t.Fatalf("create relation property: %d %s",response.Code,response.Body.String())}
+    var prop DBProperty
+    if err:=json.Unmarshal(response.Body.Bytes(),&prop);err!=nil {t.Fatal(err)}
+    good:=map[string]any{"id":from.ID,"title":from.Title,"version":from.Version,"values":map[string]any{prop.ID:[]string{to.ID}}}
+    goodBody,_:=json.Marshal(good)
+    response=dbRegressionCall(t,ctx,"PUT","/api/db/records",string(goodBody),ctx.handleDBRecords)
+    if response.Code!=200 {t.Fatalf("valid relation write: %d %s",response.Code,response.Body.String())}
+    saved,err:=ctx.getDBRecord(from.ID)
+    if err!=nil {t.Fatal(err)}
+    if saved.Version!=from.Version+1 {t.Fatalf("version not incremented: %+v",saved)}
+    invalid:=map[string]any{"id":from.ID,"title":"Bad relation write","version":saved.Version,"values":map[string]any{prop.ID:[]string{from.ID}}}
+    invalidBody,_:=json.Marshal(invalid)
+    response=dbRegressionCall(t,ctx,"PUT","/api/db/records",string(invalidBody),ctx.handleDBRecords)
+    if response.Code!=400 {t.Fatalf("cross database target accepted: %d %s",response.Code,response.Body.String())}
+    after,err:=ctx.getDBRecord(from.ID)
+    if err!=nil {t.Fatal(err)}
+    if after.Version!=saved.Version || after.Title!=saved.Title {t.Fatalf("invalid relation modified record: %+v",after)}
+    stamps:=dbRegressionCall(t,ctx,"POST","/api/db/properties",`{"databaseId":"`+source.ID+`","name":"Created","type":"created_time"}`,ctx.handleDBProperties)
+    if stamps.Code!=201 {t.Fatalf("create system property: %d %s",stamps.Code,stamps.Body.String())}
+    var created DBProperty
+    if err:=json.Unmarshal(stamps.Body.Bytes(),&created);err!=nil {t.Fatal(err)}
+    after,err=ctx.getDBRecord(from.ID)
+    if err!=nil {t.Fatal(err)}
+    if after.Values[created.ID]!=from.CreatedAt {t.Fatalf("system created time missing: %+v",after.Values)}
+    bogus:=map[string]any{"id":from.ID,"version":after.Version,"title":after.Title,"values":map[string]any{created.ID:"2020-01-01"}}
+    bogusBody,_:=json.Marshal(bogus)
+    response=dbRegressionCall(t,ctx,"PUT","/api/db/records",string(bogusBody),ctx.handleDBRecords)
+    if response.Code!=400 {t.Fatalf("read-only timestamp update accepted: %d %s",response.Code,response.Body.String())}
+}
