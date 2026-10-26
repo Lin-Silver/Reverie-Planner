@@ -888,5 +888,21 @@ func validateDBViewConfig(kind,config string) error {
     var body map[string]json.RawMessage
     if err:=json.Unmarshal([]byte(config),&body);err!=nil{return fmt.Errorf("view config must be a JSON object: %w",err)}
     if body==nil{return fmt.Errorf("view config must be an object")}
+    if raw,ok:=body["sortRules"];ok{
+        var rules []struct {
+            PropertyID string `json:"propertyId"`
+            Direction string `json:"direction"`
+        }
+        if err:=json.Unmarshal(raw,&rules);err!=nil || rules==nil{return fmt.Errorf("sortRules must be a non-null array")}
+        if len(rules)>5{return fmt.Errorf("sortRules exceeds five fields")}
+        seen:=map[string]bool{}
+        for _,rule:=range rules{
+            if rule.PropertyID=="" || len(rule.PropertyID)>128 || seen[rule.PropertyID] {
+                return fmt.Errorf("sortRules propertyIds must be nonempty and unique")
+            }
+            if rule.Direction!="asc" && rule.Direction!="desc" {return fmt.Errorf("sortRules direction must be asc or desc")}
+            seen[rule.PropertyID]=true
+        }
+    }
     return nil
 }
