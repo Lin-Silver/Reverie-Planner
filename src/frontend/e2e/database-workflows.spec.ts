@@ -136,8 +136,9 @@ test('linked database page reopens and shares its source records', async ({page}
   const db = await dbResponse.json() as {title:string}
   // Scope dialog handling to the creation alert. A persistent handler also catches
   // beforeunload during page.reload(), where accepting can race frame teardown.
+  const createDialogPromise = page.waitForEvent('dialog')
   const createClick = page.getByText('+ Linked view page').click()
-  const createDialog = await page.waitForEvent('dialog')
+  const createDialog = await createDialogPromise
   expect(createDialog.type()).toBe('alert')
   expect(createDialog.message()).toContain('Linked view page created')
   await createDialog.accept()
