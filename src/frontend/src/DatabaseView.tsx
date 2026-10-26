@@ -18,7 +18,7 @@ async function api(path: string, opts?: RequestInit) {
   return res.json()
 }
 
-export default function DatabaseView({ databaseId, viewId: initialViewId, onBack, onOpenRecord, onLinkedPageCreated }: { databaseId: string; viewId?: string; onBack: () => void; onOpenRecord?: (pageId: string) => void; onLinkedPageCreated?: () => void }) {
+export default function DatabaseView({ databaseId, viewId: initialViewId, onBack, onOpenRecord, onLinkedPageCreated, onPendingEditChange }: { databaseId: string; viewId?: string; onBack: () => void; onOpenRecord?: (pageId: string) => void; onLinkedPageCreated?: () => void; onPendingEditChange?: (pending: boolean) => void }) {
   const [db, setDb] = useState<Database | null>(null)
   const [records, setRecords] = useState<DBRecord[]>([])
   const [viewId, setViewId] = useState<string>(initialViewId || '')
@@ -30,6 +30,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [failedEdit, setFailedEdit] = useState<{recordId: string; patch: {title?: string; values?: Record<string, any>}} | null>(null)
+  useEffect(() => { onPendingEditChange?.(!!failedEdit) }, [failedEdit, onPendingEditChange])
 
   const load = useCallback(async () => {
     setLoading(true)
