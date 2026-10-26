@@ -578,6 +578,7 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 	// Database migration 8 is conditional because older releases added linked columns
 	// outside schema_migrations. It must preserve both legacy and fresh databases.
 	if err := migrateDatabaseLinkedColumns(db); err != nil { _ = db.Close(); return nil, err }
+	if err := migrateDatabaseTrash(db); err != nil { _ = db.Close(); return nil, err }
 	// Ensure extended task columns exist (idempotent).
 	for _, stmt := range []string{
 		`ALTER TABLE tasks ADD COLUMN state_id TEXT`,
@@ -628,6 +629,46 @@ func migrateDatabaseLinkedColumns(db *sql.DB) error {
     }
     for _, stmt := range indexes { if _, err := tx.Exec(stmt); err != nil { return err } }
     if _, err := tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES (8,?)", time.Now().UTC().Format(time.RFC3339Nano)); err != nil { return err }
+    return tx.Commit()
+}
+
+
+func migrateDatabaseTrash(db *sql.DB) error {
+    var exists int
+    if err:=db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=9").Scan(&exists);err!=nil{return err}
+    if exists!=0{return nil}
+    tables:=[]string{"databases","db_records","db_properties","db_views"}
+    // Inspect each table before opening a write transaction: the application
+    // has a one-connection SQLite pool and must not nest live row iterators.
+    missing:=[]string{}
+    for _,table:=range tables{
+        rows,err:=db.Query("PRAGMA table_info("+table+")")
+        if err!=nil{return err}
+        found:=false
+        for rows.Next(){
+            var cid,notnull,pk int
+            var name,kind string
+            var value sql.NullString
+            if err:=rows.Scan(&cid,&name,&kind,&notnull,&value,&pk);err!=nil{rows.Close();return err}
+            if name=="deleted_at"{found=true}
+        }
+        if err:=rows.Err();err!=nil{rows.Close();return err}
+        if err:=rows.Close();err!=nil{return err}
+        if !found{missing=append(missing,table)}
+    }
+    tx,err:=db.Begin()
+    if err!=nil{return err}
+    defer tx.Rollback()
+    for _,table:=range missing{
+        // Identifiers come only from the fixed constant list above.
+        if _,err:=tx.Exec("ALTER TABLE "+table+" ADD COLUMN deleted_at TEXT");err!=nil{return err}
+    }
+    for _,sqlText:=range []string{
+        "CREATE INDEX IF NOT EXISTS idx_db_records_live ON db_records(database_id, deleted_at, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_db_properties_live ON db_properties(database_id, deleted_at, position)",
+        "CREATE INDEX IF NOT EXISTS idx_db_views_live ON db_views(database_id, deleted_at, position)",
+    }{if _,err:=tx.Exec(sqlText);err!=nil{return err}}
+    if _,err:=tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES (9,?)",time.Now().UTC().Format(time.RFC3339Nano));err!=nil{return err}
     return tx.Commit()
 }
 
