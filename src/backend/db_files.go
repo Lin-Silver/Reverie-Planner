@@ -49,11 +49,22 @@ func (a *AppContext) handleDBFiles(w http.ResponseWriter,r *http.Request){
         // Normalize both Windows and POSIX separators without trusting client paths.
         safeName:=strings.Map(func(r rune)rune{if r==92{return '/'};return r},header.Filename)
         name:=filepath.Base(safeName)
-        name=strings.Map(func(r rune)rune{if r==10||r==13{return -1};return r},name)
-        // Hide potentially path-derived leading dots in display names.
-        name=strings.TrimLeft(name,".")
+        name=strings.Map(func(r rune)rune{
+            if r<32 || r==127{return -1}
+            return r
+        },name)
+        // Multipart filenames may contain literal wrapping quotes. Strip
+        // those first, then dot/space prefixes, without changing the stored
+        // opaque ID used for file access.
+        name=strings.Trim(name,"\"' \t")
+        name=strings.TrimLeft(name,". \t")
+        name=strings.TrimRight(name,"\"' \t")
         if name==""||name=="."||name==".." {name="attachment"}
-        if len(name)>200{name=name[:200]}
+        // Truncate at a UTF-8 boundary; a display name must remain valid JSON.
+        if len(name)>200{
+            for len(name)>200{name=name[:len(name)-1]}
+            name=strings.ToValidUTF8(name,"")
+        }
         id:=newID("dbfile")
         folder:=filepath.Join(a.RootPath,"data","attachments")
         if err:=os.MkdirAll(folder,0700);err!=nil{writeJSON(w,500,map[string]string{"error":"unable to create attachment folder"});return}
