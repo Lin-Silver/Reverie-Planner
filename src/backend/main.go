@@ -870,7 +870,7 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
 		var project Project
-		if err := json.NewDecoder(r.Body).Decode(&project); err != nil {
+		if _, err := decodeJSONRequest(r, &project); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid project payload")
 			return
 		}
@@ -957,7 +957,7 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
 			var payload map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			if _, err := decodeJSONRequest(r, &payload); err != nil {
 				writeJSONError(w, http.StatusBadRequest, "project id is required")
 				return
 			}
@@ -1034,7 +1034,7 @@ func (a *AppContext) handleTasks(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
 		var task Task
-		if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+		if _, err := decodeJSONRequest(r, &task); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid task payload")
 			return
 		}
@@ -1131,7 +1131,7 @@ func (a *AppContext) handleTasks(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
 			var payload map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			if _, err := decodeJSONRequest(r, &payload); err != nil {
 				writeJSONError(w, http.StatusBadRequest, "task id is required")
 				return
 			}
