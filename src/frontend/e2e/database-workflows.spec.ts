@@ -200,3 +200,39 @@ test('database concurrent edits preserve stale draft until explicit Retry or Rel
     expect((await rows(pageB,host.databaseId)).find(r=>r.id===item.id)!.title).toBe('Later remote version')
   } finally {await a.close(); await b.close()}
 })
+
+
+test('database typed AND/OR filters persist and apply consistently after reopening', async ({page}) => {
+  const host = await makeDatabase(page)
+  const score = await property(page, host.databaseId, 'Score', 'number')
+  const alpha = await record(page, host.databaseId, 'Alpha')
+  const beta = await record(page, host.databaseId, 'Beta')
+  for (const [item, value] of [[alpha, 15], [beta, 7]] as const) {
+    const result = await page.request.put(API + '/db/records', {data: {id:item.id, title:item.title, version:item.version, values:{[score.id]:value}}})
+    expect(result.status()).toBe(200)
+  }
+  await reopen(page, host)
+  const details = page.getByText('Advanced filters (AND / OR)')
+  await details.click()
+  await page.getByRole('button', {name:'Add filter condition'}).click()
+  await page.getByLabel('Filter property').selectOption(score.id)
+  await page.getByLabel('Filter operator').selectOption('gt')
+  await page.getByLabel('Filter value').fill('10')
+  await expect(page.getByTestId('database-record-row')).toHaveCount(1)
+  await expect(page.locator('[data-record-id="'+alpha.id+'"]')).toBeVisible()
+  await page.getByRole('button', {name:'Add filter condition'}).click()
+  await page.getByLabel('Filter property').nth(1).selectOption('title')
+  await page.getByLabel('Filter operator').nth(1).selectOption('contains')
+  await page.getByLabel('Filter value').nth(1).fill('beta')
+  await expect(page.getByTestId('database-record-row')).toHaveCount(0)
+  await page.getByLabel('Filter join').selectOption('or')
+  await expect(page.getByTestId('database-record-row')).toHaveCount(2)
+  await page.getByText('Save view settings').click()
+  await reopen(page, host)
+  await expect(page.getByTestId('database-record-row')).toHaveCount(2)
+  const response = await page.request.get(API + '/databases?id=' + host.databaseId)
+  const database = await response.json() as {views: {config:string}[]}
+  const filterTree = JSON.parse(database.views[0].config).filterTree
+  expect(filterTree.join).toBe('or')
+  expect(filterTree.children).toHaveLength(2)
+})
