@@ -4,6 +4,7 @@ import (
     "crypto/sha256"
     "database/sql"
     "encoding/hex"
+    "fmt"
     "io"
     "net/http"
     "os"
@@ -69,10 +70,10 @@ func (a *AppContext) handleDBFiles(w http.ResponseWriter,r *http.Request){
     case http.MethodGet:
         id:=r.URL.Query().Get("id")
         if id!=""{
-            var name,contentType string
-            if err:=a.DB.QueryRow(`SELECT f.original_name,f.content_type FROM db_files f
+            var name string
+            if err:=a.DB.QueryRow(`SELECT f.original_name FROM db_files f
                  JOIN db_records rec ON rec.id=f.record_id JOIN databases d ON d.id=f.database_id
-                 WHERE f.id=? AND f.deleted_at IS NULL AND rec.deleted_at IS NULL AND d.deleted_at IS NULL`,id).Scan(&name,&contentType);err!=nil{
+                 WHERE f.id=? AND f.deleted_at IS NULL AND rec.deleted_at IS NULL AND d.deleted_at IS NULL`,id).Scan(&name);err!=nil{
                 writeJSON(w,404,map[string]string{"error":"file not found"});return
             }
             // A stored filename is never taken from the request or original name.
