@@ -33,7 +33,11 @@ func TestDatabaseRejectsInvalidConfiguredSelectAtomically(t *testing.T) {
     ctx := setupTestContext(t)
     defer ctx.DB.Close()
     db, rec := dbRegressionCreate(t, ctx)
-    prop := dbRegressionCall(t, ctx, "POST", "/api/db/properties", `{"databaseId":"` + db.ID + `","name":"Status","type":"select","config":"{\\"options\\":[\\"Todo\\",\\"Done\\"]}"}`, ctx.handleDBProperties)
+    cfg, err := json.Marshal(map[string]any{"options": []string{"Todo", "Done"}})
+    if err != nil { t.Fatal(err) }
+    payload, err := json.Marshal(map[string]any{"databaseId": db.ID, "name": "Status", "type": "select", "config": string(cfg)})
+    if err != nil { t.Fatal(err) }
+    prop := dbRegressionCall(t, ctx, "POST", "/api/db/properties", string(payload), ctx.handleDBProperties)
     if prop.Code != 201 { t.Fatalf("property: %d %s", prop.Code, prop.Body.String()) }
     var p DBProperty
     if err := json.Unmarshal(prop.Body.Bytes(), &p); err != nil { t.Fatal(err) }
