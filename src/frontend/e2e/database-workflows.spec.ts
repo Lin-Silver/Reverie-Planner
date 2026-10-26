@@ -195,7 +195,7 @@ test('database concurrent edits preserve stale draft until explicit Retry or Rel
     await next.locator('input').first().fill('Unwanted local revision')
     await next.locator('input').first().blur()
     await expect(pageB.getByText('Retry my changes')).toBeVisible()
-    await pageB.getByText('Reload latest').click()
+    await pageB.getByRole('button', {name:'Reload latest', exact:true}).click()
     await expect(pageB.locator('[data-testid="database-record-row"][data-record-id="'+item.id+'"] input').first()).toHaveValue('Later remote version')
     expect((await rows(pageB,host.databaseId)).find(r=>r.id===item.id)!.title).toBe('Later remote version')
   } finally {await a.close(); await b.close()}
