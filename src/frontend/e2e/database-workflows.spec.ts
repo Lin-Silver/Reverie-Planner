@@ -361,3 +361,25 @@ test('database table column layout persists hidden fields order width and record
   expect(cfg.columnOrder[0]).toBe(score.id)
   expect((await rows(page,host.databaseId)).map(r=>r.id)).toEqual([one.id,two.id])
 })
+
+
+test('database calendar drag and unscheduled tray update actual dates',async({page})=>{
+  const host=await makeDatabase(page)
+  const due=await property(page,host.databaseId,'Due','date')
+  const firstRec=await record(page,host.databaseId,'Drag calendar')
+  const undated=await record(page,host.databaseId,'Unscheduled calendar')
+  const current=await page.evaluate(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')})
+  const date1=current+'-15',date2=current+'-16',date3=current+'-17'
+  const setDate=await page.request.put(API+'/db/records',{data:{id:firstRec.id,title:firstRec.title,version:firstRec.version,values:{[due.id]:date1}}})
+  expect(setDate.status()).toBe(200)
+  const calendar=await makeView(page,host.databaseId,'calendar')
+  await reopen(page,host)
+  await page.getByLabel('Active database view').selectOption(calendar)
+  const origin=page.locator('[data-testid="calendar-cell"][data-date="'+date1+'"] [data-testid="calendar-record"]')
+  const dest=page.locator('[data-testid="calendar-cell"][data-date="'+date2+'"]')
+  await expect(origin).toBeVisible()
+  await origin.dragTo(dest)
+  await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===firstRec.id)?.values[due.id],{timeout:15000}).toBe(date2)
+  await page.getByLabel('Schedule Unscheduled calendar').fill(date3)
+  await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===undated.id)?.values[due.id],{timeout:15000}).toBe(date3)
+})
