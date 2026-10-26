@@ -562,7 +562,7 @@ func (a *AppContext) getDBRecord(id string) (DBRecord, error) {
 
 func (a *AppContext) recordValues(recordID string) (map[string]any,error) {
     out:=map[string]any{}
-    rows,err:=a.DB.Query("SELECT property_id,value FROM db_values WHERE record_id=?",recordID)
+    rows,err:=a.DB.Query("SELECT v.property_id,v.value FROM db_values v JOIN db_properties p ON p.id=v.property_id AND p.deleted_at IS NULL WHERE v.record_id=?",recordID)
     if err!=nil{return nil,err}
     defer rows.Close()
     for rows.Next(){
