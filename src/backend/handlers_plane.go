@@ -477,7 +477,11 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 			var ws int
 			var version int
 			if err := row.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &content, &createdBy, &created, &updated, &version, &linkedDB, &linkedView); err != nil {
-				writeJSON(w, 404, map[string]string{"error": "not found"})
+				if errors.Is(err, sql.ErrNoRows) {
+					writeJSONError(w, http.StatusNotFound, "page not found")
+				} else {
+					writeJSONError(w, http.StatusInternalServerError, "page could not be loaded")
+				}
 				return
 			}
 			p.ProjectID = pid.String
@@ -505,7 +509,11 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 			q += ` WHERE workspace=1 OR project_id IS NULL`
 		}
 		q += ` ORDER BY updated_at DESC`
-		rows, _ := a.DB.Query(q, args...)
+		rows, err := a.DB.Query(q, args...)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "pages could not be listed")
+			return
+		}
 		defer rows.Close()
 		out := []Page{}
 		for rows.Next() {
@@ -514,7 +522,10 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 			var pid, parent, icon, cover, createdBy sqlNullString
 			var ws int
 			var version int
-			_ = rows.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &createdBy, &created, &updated, &version)
+			if err := rows.Scan(&p.ID, &pid, &ws, &parent, &p.Title, &icon, &cover, &createdBy, &created, &updated, &version); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "pages could not be read")
+				return
+			}
 			p.Version = version
 			p.ProjectID = pid.String
 			p.Workspace = ws == 1
@@ -525,6 +536,10 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 			p.CreatedAt, _ = time.Parse(time.RFC3339, created)
 			p.UpdatedAt, _ = time.Parse(time.RFC3339, updated)
 			out = append(out, p)
+		}
+		if err := rows.Err(); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "pages could not be read")
+			return
 		}
 		writeJSON(w, 200, out)
 	case http.MethodPost:
@@ -553,8 +568,11 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 		if p.Workspace {
 			ws = 1
 		}
-		_, _ = a.DB.Exec(`INSERT INTO pages (id, project_id, workspace, parent_id, title, icon, cover, content, created_by, created_at, updated_at, version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-			p.ID, nullStr(p.ProjectID), ws, nullStr(p.ParentID), p.Title, nullStr(p.Icon), nullStr(p.Cover), p.Content, p.CreatedBy, p.CreatedAt.Format(time.RFC3339), p.UpdatedAt.Format(time.RFC3339), 1)
+		if _, err := a.DB.Exec(`INSERT INTO pages (id, project_id, workspace, parent_id, title, icon, cover, content, created_by, created_at, updated_at, version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+			p.ID, nullStr(p.ProjectID), ws, nullStr(p.ParentID), p.Title, nullStr(p.Icon), nullStr(p.Cover), p.Content, p.CreatedBy, p.CreatedAt.Format(time.RFC3339), p.UpdatedAt.Format(time.RFC3339), 1); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "page could not be created")
+			return
+		}
 		p.Version = 1
 		writeJSON(w, 201, p)
 	case http.MethodPut:
@@ -596,7 +614,11 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": "db error"})
 			return
 		}
-		affected, _ := res.RowsAffected()
+		affected, err := res.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "page update could not be verified")
+			return
+		}
 		if affected == 0 {
 			writeJSON(w, 409, map[string]string{"error": "version conflict"})
 			return
@@ -604,9 +626,26 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 		p.Version = newVersion
 		writeJSON(w, 200, p)
 	case http.MethodDelete:
-		id := r.URL.Query().Get("id")
-		_, _ = a.DB.Exec(`DELETE FROM pages WHERE id=?`, id)
-		w.WriteHeader(204)
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			writeJSONError(w, http.StatusBadRequest, "id required")
+			return
+		}
+		result, err := a.DB.Exec(`DELETE FROM pages WHERE id=?`, id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "page could not be deleted")
+			return
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "page deletion could not be verified")
+			return
+		}
+		if affected == 0 {
+			writeJSONError(w, http.StatusNotFound, "page not found")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(405)
 	}
