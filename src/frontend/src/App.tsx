@@ -471,7 +471,7 @@ export default function App() {
 
   if (view === 'page') {
     if (pageDatabaseId) {
-      return <DatabaseView databaseId={pageDatabaseId} viewId={pageDatabaseViewId || undefined} onBack={() => { setPageDatabaseId(''); setPageDatabaseViewId(''); setView('home') }} />
+      return <DatabaseView databaseId={pageDatabaseId} viewId={pageDatabaseViewId || undefined} onBack={() => { setPageDatabaseId(''); setPageDatabaseViewId(''); setView('home') }} onLinkedPageCreated={() => { void refresh() }} onOpenRecord={pageId => { void (async () => { try { const full = await apiFetch<Page>(`/api/pages?id=${encodeURIComponent(pageId)}`); setSelectedPage(pageId); await openPageEditor(full) } catch (e) { setError((e as Error).message) } })() }} />
     }
     return (
       <div className="page-wrap">
