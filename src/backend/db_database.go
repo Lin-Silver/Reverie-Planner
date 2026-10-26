@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/mail"
+	"net/url"
 	"time"
 )
 
@@ -65,7 +67,8 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, db)
 			return
 		}
-		rows, _ := a.DB.Query(`SELECT id, page_id, title, icon, version, created_at, updated_at FROM databases ORDER BY created_at ASC`)
+		rows, err := a.DB.Query(`SELECT id, page_id, title, icon, version, created_at, updated_at FROM databases ORDER BY created_at ASC`)
+		if err != nil { writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
 		type rawDB struct {
 			d       Database
 			icon    sql.NullString
@@ -75,7 +78,7 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 		var raws []rawDB
 		for rows.Next() {
 			var r rawDB
-			_ = rows.Scan(&r.d.ID, &r.d.PageID, &r.d.Title, &r.icon, &r.d.Version, &r.created, &r.updated)
+			if err := rows.Scan(&r.d.ID, &r.d.PageID, &r.d.Title, &r.icon, &r.d.Version, &r.created, &r.updated); err != nil { rows.Close(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
 			raws = append(raws, r)
 		}
 		if err := rows.Err(); err != nil {
@@ -90,8 +93,10 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 			d.Icon = r.icon.String
 			d.CreatedAt = r.created
 			d.UpdatedAt = r.updated
-			d.Properties, _ = a.listProperties(d.ID)
-			d.Views, _ = a.listViews(d.ID)
+			d.Properties, err = a.listProperties(d.ID)
+			if err != nil { writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+			d.Views, err = a.listViews(d.ID)
+			if err != nil { writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
 			out = append(out, d)
 		}
 		writeJSON(w, 200, out)
@@ -427,27 +432,32 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// validate property ownership and values
-		propType := map[string]string{}
-		propRows, _ := tx.Query(`SELECT id, type FROM db_properties WHERE database_id=?`, dbID)
-		for propRows.Next() {
-			var pid, ptype string
-			_ = propRows.Scan(&pid, &ptype)
-			propType[pid] = ptype
-		}
-		propRows.Close()
-		for propID, val := range body.Values {
-			pt, ok := propType[propID]
+		type propDefinition struct { kind, config string }
+        definitions := map[string]propDefinition{}
+        propRows, err := tx.Query(`SELECT id, type, config FROM db_properties WHERE database_id=?`, dbID)
+        if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+        for propRows.Next() {
+            var pid, ptype, cfg string
+            if err := propRows.Scan(&pid, &ptype, &cfg); err != nil { propRows.Close(); tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+            definitions[pid] = propDefinition{kind: ptype, config: cfg}
+        }
+        if err := propRows.Err(); err != nil { propRows.Close(); tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+        propRows.Close()
+        for propID, val := range body.Values {
+            def, ok := definitions[propID]
 			if !ok {
 				tx.Rollback()
 				writeJSON(w, 400, map[string]string{"error": "unknown property"})
 				return
 			}
-			if err := validatePropertyValue(pt, val); err != nil {
+			if err := validatePropertyValue(def.kind, val); err != nil {
 				tx.Rollback()
 				writeJSON(w, 400, map[string]string{"error": err.Error()})
 				return
 			}
-			vb, _ := json.Marshal(val)
+			if err := validateConfiguredPropertyValue(def.kind, def.config, val); err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
+			vb, err := json.Marshal(val)
+			if err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": "invalid property value"}); return }
 			// upsert
 			var exists int
 			if err := tx.QueryRow(`SELECT COUNT(*) FROM db_values WHERE record_id=? AND property_id=?`, body.ID, propID).Scan(&exists); err != nil {
@@ -469,11 +479,11 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if _, err := tx.Exec(`UPDATE pages SET title=(SELECT title FROM db_records WHERE id=?), updated_at=? WHERE id=(SELECT page_id FROM db_records WHERE id=?)`, body.ID, now, body.ID); err != nil {
-			tx.Rollback()
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
+		pageRes, err := tx.Exec(`UPDATE pages SET title=(SELECT title FROM db_records WHERE id=?), updated_at=? WHERE id=(SELECT page_id FROM db_records WHERE id=?)`, body.ID, now, body.ID)
+        if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+        changed, err := pageRes.RowsAffected()
+        if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+        if changed != 1 { tx.Rollback(); writeJSON(w, 409, map[string]string{"error": "linked record page missing"}); return }
 		if err := tx.Commit(); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -652,11 +662,11 @@ func (a *AppContext) handleDBLinkedView(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	if _, err := tx.Exec(`UPDATE pages SET linked_database_id=?, linked_view_id=?, updated_at=? WHERE id=?`, body.DatabaseID, v.ID, time.Now().UTC().Format(time.RFC3339), body.PageID); err != nil {
-		tx.Rollback()
-		writeJSON(w, 500, map[string]string{"error": err.Error()})
-		return
-	}
+	pageRes, err := tx.Exec(`UPDATE pages SET linked_database_id=?, linked_view_id=?, updated_at=? WHERE id=?`, body.DatabaseID, v.ID, time.Now().UTC().Format(time.RFC3339), body.PageID)
+    if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+    changed, err := pageRes.RowsAffected()
+    if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+    if changed != 1 { tx.Rollback(); writeJSON(w, 404, map[string]string{"error": "linked view page missing"}); return }
 	if err := tx.Commit(); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
@@ -706,9 +716,33 @@ func validatePropertyValue(propType string, val any) error {
 			}
 		}
 	case "url", "email", "text", "title":
-		if _, ok := val.(string); !ok {
-			return fmt.Errorf("invalid %s value", propType)
-		}
-	}
-	return nil
+        if _, ok := val.(string); !ok { return fmt.Errorf("invalid %s value", propType) }
+    default:
+        return fmt.Errorf("unsupported property type: %s", propType)
+    }
+    return nil
+}
+
+func validateConfiguredPropertyValue(kind, config string, val any) error {
+    if val == nil { return nil }
+    if kind == "email" && val != "" {
+        input := val.(string)
+        addr, err := mail.ParseAddress(input)
+        if err != nil || addr.Address != input { return fmt.Errorf("invalid email address") }
+    }
+    if kind == "url" && val != "" {
+        u, err := url.Parse(val.(string))
+        if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" { return fmt.Errorf("invalid URL") }
+    }
+    if kind == "select" || kind == "multi_select" {
+        var def struct { Options []string `json:"options"` }
+        if err := json.Unmarshal([]byte(config), &def); err != nil { return fmt.Errorf("invalid select property config") }
+        if len(def.Options) == 0 { return nil }
+        allowed := map[string]bool{}
+        for _, option := range def.Options { allowed[option] = true }
+        check := func(v string) error { if v == "" || allowed[v] { return nil }; return fmt.Errorf("option %q is not configured", v) }
+        if kind == "select" { return check(val.(string)) }
+        for _, x := range val.([]any) { if err := check(x.(string)); err != nil { return err } }
+    }
+    return nil
 }
