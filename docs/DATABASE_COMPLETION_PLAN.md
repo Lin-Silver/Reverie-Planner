@@ -31,7 +31,8 @@ Ship a trustworthy, locally stored, long-lived Notion-style database subsystem w
 - [x] Table/Board/Calendar/List/Gallery rendering and basic shared-record updates, date editing and navigation; E2E assertions for all five.
 - [x] Persist one view's filter text, sort, Board group and Calendar field; verify reload.
 - [x] Replace plain text filter with a typed nested AND/OR filter AST; validation + deterministic predicates, null/date/number/select semantics; view-local immutable config.
-- [ ] Implement multi-key sorts, hide/show/reorder/resize columns and keyboard interactions (Tab, Enter, Escape, arrows, clipboard) with real persistence for column layout.
+- [x] Implement multi-key typed sorting, hide/show/reorder/resize columns, Tab/Enter/Escape and Alt+Arrow cell navigation, and persisted per-view layouts.
+- [ ] Add spreadsheet-style multi-cell clipboard copy/paste, range selection and bulk-edit confirmation with safe rollback.
 - [ ] Improve Board empty and unexpected group behavior, keyboard alternatives, drag failure rollback, option management and conflict UX.
 - [x] Calendar date drag/move/date picker, month navigation/timezone correctness, unspecified-date tray and reliable changes.
 - [ ] Gallery cover and property selection, List record actions, quick-open and responsive/screen reader controls.
@@ -70,3 +71,5 @@ Prefer correctness and irreversible-data safety before additional UI features. I
 
 - Verified newer baseline: `5023e339b5a69711c57a2cc349ea3585f34e7dde`, [Windows CI 40263677658](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40263677658), success: backend Go regressions, TypeScript/build, Windows launcher/package, **25/25 Playwright** including calendar day drag/drop, typed AND/OR filters, UI relation+formula editor, attachment upload and soft-delete restore.
 - In-progress after this green baseline: atomic database/page rename, preventing record access when parent database is trashed, rejecting tombstoned relation targets, and their Go regressions. These are **not yet** covered by the green CI above; verify against the latest PR head before marking further checkboxes.
+- Verified table interaction milestone: `b0d34c68c4bc27cafa2389234d189819fc062814`, [Windows CI 40266607916](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266607916), success: **27/27 Playwright**, including type-aware primary/secondary sort with null stability, per-view saved settings, column layout, Enter/Escape/Tab/Alt+Arrow navigation, and no redundant record-version updates.
+- Visual five-view screenshots and an independently downloadable CI artifact were added afterward; verify its own SHA-matched run before reporting screenshots as delivered.
