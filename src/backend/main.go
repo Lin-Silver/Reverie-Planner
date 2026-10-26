@@ -1779,6 +1779,9 @@ func decodeJSONRequest(r *http.Request, target any) (map[string]json.RawMessage,
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
 		return nil, errors.New("request payload must be an object")
 	}
+	if err := rejectDuplicateJSONKeys(body); err != nil {
+		return nil, err
+	}
 	if err := json.Unmarshal(body, target); err != nil {
 		return nil, err
 	}
