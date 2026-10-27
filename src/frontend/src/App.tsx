@@ -83,6 +83,8 @@ export default function App() {
   const draggedTaskId = useRef('')
   const pageEditorRef = useRef<Page | null>(null)
   const pageTitleRef = useRef('')
+  // A local title draft must survive a stale-version response until the user resolves it.
+  const pageTitleDirtyRef = useRef(false)
   useEffect(() => { pageEditorRef.current = pageEditor; pageTitleRef.current = pageDraft.title }, [pageEditor, pageDraft.title])
   const pageVersions = useRef<Map<string, number>>(new Map())
   const pageSnapshots = useRef<Map<string, Page>>(new Map())
@@ -114,6 +116,7 @@ export default function App() {
           pageVersions.current.set(pageId, res.version)
           pageSnapshots.current.set(pageId, res)
           if (pageEditorRef.current?.id === pageId) {
+            if (pageTitleRef.current === res.title) pageTitleDirtyRef.current = false
             pageEditorRef.current.version = res.version
             pageEditorRef.current.title = res.title
             pageEditorRef.current.icon = res.icon
@@ -135,7 +138,10 @@ export default function App() {
               pageEditorRef.current.cover = latest.cover
               pageEditorRef.current.parentId = latest.parentId
               pageEditorRef.current.content = latest.content
-              pageTitleRef.current = latest.title
+              if (!pageTitleDirtyRef.current) {
+                pageTitleRef.current = latest.title
+                setPageDraft(d => ({ ...d, title: latest.title }))
+              }
             }
             // keep local content; throw conflict for UI
           } catch {}
@@ -265,6 +271,7 @@ export default function App() {
         }
         pageVersions.current.set(full.id, full.version || 1)
         pageSnapshots.current.set(full.id, full)
+        pageTitleDirtyRef.current = false
         setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
         openedId = full.id
         openedFull = full
@@ -272,6 +279,7 @@ export default function App() {
       else {
         try {
           const created = await apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title: 'Untitled', workspace: true, createdBy: 'You' }) })
+          pageTitleDirtyRef.current = false
           setPageEditor(created); setPageDraft({ title: created.title, icon: created.icon ?? '', content: created.content })
           openedId = created.id
           await refresh()
@@ -498,7 +506,7 @@ export default function App() {
           </div>
         </div>
         <div className="page-icon" onClick={() => { if (!pageEditor) return; setIconDraft(pageEditor.icon || ''); setIconTarget(pageEditor) }}>{pageDraft.icon || '📄'}</div>
-        <input className="page-title" value={pageDraft.title} onChange={(e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor) savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch(() => {}) }} placeholder="Untitled" />
+        <input className="page-title" value={pageDraft.title} onChange={(e) => { pageTitleDirtyRef.current = true; setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor && pageTitleDirtyRef.current) void savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch((e) => { if ((e as Error).message.includes('version conflict')) setPageLeaveError(true); else setError(`Title save failed: ${(e as Error).message}`) }) }} placeholder="Untitled" />
   {pageEditor && (
     <PageEditor
       key={`${pageEditor.id}-${reloadToken}`}
@@ -517,6 +525,7 @@ export default function App() {
           const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
           pageVersions.current.set(pageEditor.id, latest.version || 1)
           pageSnapshots.current.set(pageEditor.id, latest)
+          pageTitleDirtyRef.current = false
           pageEditorRef.current = latest
           pageTitleRef.current = latest.title
           setPageEditor(latest)
@@ -528,18 +537,24 @@ export default function App() {
         try {
           const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
           pageSnapshots.current.set(pageEditor.id, latest)
-          await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...latest, content, version: latest.version }) })
-          const newVersion = (latest.version || 0) + 1
-          pageVersions.current.set(pageEditor.id, newVersion)
-          pageSnapshots.current.set(pageEditor.id, { ...latest, content, version: newVersion })
+          // Retry the local title only if it was edited here; a body-only retry
+          // must retain a newer title written by another browser.
+          const retryTitle = pageTitleDirtyRef.current ? pageTitleRef.current : latest.title
+          const updated = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...latest, title: retryTitle, content, version: latest.version }) })
+          pageVersions.current.set(pageEditor.id, updated.version)
+          pageSnapshots.current.set(pageEditor.id, updated)
           if (pageEditorRef.current?.id === pageEditor.id) {
-            pageEditorRef.current.version = newVersion
-            pageEditorRef.current.title = latest.title
-            pageEditorRef.current.icon = latest.icon
-            pageEditorRef.current.cover = latest.cover
-            pageEditorRef.current.parentId = latest.parentId
-            pageEditorRef.current.content = content
-            pageTitleRef.current = latest.title
+            pageEditorRef.current.version = updated.version
+            pageEditorRef.current.title = updated.title
+            pageEditorRef.current.icon = updated.icon
+            pageEditorRef.current.cover = updated.cover
+            pageEditorRef.current.parentId = updated.parentId
+            pageEditorRef.current.content = updated.content
+            if (pageTitleRef.current === retryTitle) {
+              pageTitleRef.current = updated.title
+              pageTitleDirtyRef.current = false
+              setPageDraft(d => ({ ...d, title: updated.title }))
+            }
           }
         } catch (e) { setError((e as Error).message); throw e }
       }}
