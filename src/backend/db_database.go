@@ -710,7 +710,7 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		if v.Config == "" {v.Config="{}"}
         if err:=validateDBViewConfig(v.Type,v.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
 		var maxPos sql.NullInt64
-		if err := a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_views WHERE database_id=? AND deleted_at IS NULL`, v.DatabaseID).Scan(&maxPos); err != nil {
+		if err := a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_views WHERE database_id=?`, v.DatabaseID).Scan(&maxPos); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not determine view position"})
 			return
 		}
