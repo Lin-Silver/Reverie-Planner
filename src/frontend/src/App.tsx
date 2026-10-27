@@ -74,6 +74,12 @@ export default function App() {
   const databasePendingEditRef = useRef(false)
   const [pageDraft, setPageDraft] = useState({ title: 'Untitled', icon: '', content: '' })
   const [pageLeaveError, setPageLeaveError] = useState(false)
+  // Keep the callback stable: PageEditor must not re-lock an in-flight Retry
+  // merely because the parent rerenders with the conflict banner visible.
+  const handlePageSaveStatus = useCallback((status: string) => {
+    if (status === 'saved') setPageLeaveError(false)
+    else if (status === 'conflict') setPageLeaveError(true)
+  }, [])
   const [selectedProvider, setSelectedProvider] = useState('')
   const [sessionId, setSessionId] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -565,7 +571,7 @@ export default function App() {
           }
         } catch (e) { setError((e as Error).message); throw e }
       }}
-      onStatus={(s) => { if (s === 'saved') setPageLeaveError(false); else if (s === 'conflict') setPageLeaveError(true) }}
+      onStatus={handlePageSaveStatus}
     />
   )}
       </div>
