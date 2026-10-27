@@ -533,14 +533,15 @@ export default function App() {
           setReloadToken((t) => t + 1)
         } catch (e) { pageDiscardRef.current = false; setError((e as Error).message) }
       }}
-      onRetry={async (content) => {
+      onRetry={async (content, retryBody) => {
         try {
           const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
           pageSnapshots.current.set(pageEditor.id, latest)
           // Retry the local title only if it was edited here; a body-only retry
           // must retain a newer title written by another browser.
           const retryTitle = pageTitleDirtyRef.current ? pageTitleRef.current : latest.title
-          const updated = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...latest, title: retryTitle, content, version: latest.version }) })
+          const retryContent = retryBody ? content : latest.content
+          const updated = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...latest, title: retryTitle, content: retryContent, version: latest.version }) })
           pageVersions.current.set(pageEditor.id, updated.version)
           pageSnapshots.current.set(pageEditor.id, updated)
           if (pageEditorRef.current?.id === pageEditor.id) {
