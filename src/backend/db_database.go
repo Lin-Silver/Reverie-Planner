@@ -117,11 +117,13 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// An existing page may host a new database, but it must not already
-		// back another database or record. Include soft-deleted owners so a
+		// back another database, record or linked view. Include soft-deleted owners so a
 		// future restore cannot silently create two owners of the same page.
 		if d.PageID != "" {
 			var available int
 			err := tx.QueryRow(`SELECT COUNT(*) FROM pages p WHERE p.id=?
+				AND COALESCE(p.linked_database_id,'')=''
+				AND COALESCE(p.linked_view_id,'')=''
 				AND NOT EXISTS (SELECT 1 FROM databases d WHERE d.page_id=p.id)
 				AND NOT EXISTS (SELECT 1 FROM db_records r WHERE r.page_id=p.id)`, d.PageID).Scan(&available)
 			if err != nil {
