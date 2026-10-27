@@ -631,3 +631,82 @@ test('concurrency: Reload latest discards a conflicting title draft', async ({ b
     await contextB.close()
   }
 })
+
+
+test('concurrency: body typed during title-only Retry requires explicit resolution', async ({ browser }) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  let releaseTitleRetry: (() => void) | undefined
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+    const original = `TitleRetryDraft-${Date.now()}`
+    const localTitle = `Local title ${Date.now()}`
+    const remoteBody = 'Remote body must survive title-only retry'
+    const localBody = 'New body typed during title retry'
+    const pageId = await createPageWithTitle(pageA, original)
+
+    await pageB.goto('/')
+    await expect(pageB.getByText('Welcome back')).toBeVisible()
+    await openPageByTitle(pageB, original)
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
+
+    // B holds an old version while A changes the body.
+    await pageA.locator('.bn-editor').click()
+    await pageA.keyboard.type(remoteBody)
+    await expect.poll(async () => (await fetchPage(pageA, pageId)).content, { timeout: 20000 })
+      .toContain(remoteBody)
+
+    await pageB.locator('.page-title').fill(localTitle)
+    await pageB.locator('.bn-editor').click()
+    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
+
+    let titleRetrySeen = false
+    await pageB.route('**/api/pages', async route => {
+      if (route.request().method() !== 'PUT') {
+        await route.continue()
+        return
+      }
+      const body = route.request().postDataJSON() as { title?: string; content?: string }
+      if (body.title === localTitle && body.content?.includes(remoteBody) && !titleRetrySeen) {
+        titleRetrySeen = true
+        await new Promise<void>(resolve => { releaseTitleRetry = resolve })
+      }
+      await route.continue()
+    })
+
+    await pageB.getByRole('button', { name: 'Retry my changes' }).click()
+    await expect.poll(() => titleRetrySeen, { timeout: 15000 }).toBe(true)
+    await expect(pageB.getByRole('button', { name: 'Retrying…' })).toBeDisabled()
+
+    // The first Retry captured only the title. A new body draft must not be
+    // silently submitted with the stale editor content after it completes.
+    await pageB.locator('.bn-editor').click()
+    await pageB.keyboard.type(localBody)
+    await expect(pageB.locator('.bn-editor')).toContainText(localBody)
+    releaseTitleRetry?.()
+
+    await expect.poll(async () => (await fetchPage(pageB, pageId)).title, { timeout: 20000 })
+      .toBe(localTitle)
+    await expect(pageB.getByRole('button', { name: 'Retry my changes' })).toBeEnabled({ timeout: 20000 })
+    await expect(pageB.getByTestId('page-save-status')).toContainText('Version conflict')
+    await pageB.waitForTimeout(1800)
+    const afterTitleRetry = await fetchPage(pageB, pageId)
+    expect(afterTitleRetry.content).toContain(remoteBody)
+    expect(afterTitleRetry.content).not.toContain(localBody)
+    await expect(pageB.locator('.bn-editor')).toContainText(localBody)
+
+    // A second deliberate Retry now includes the local body draft.
+    await pageB.getByRole('button', { name: 'Retry my changes' }).click()
+    await expect.poll(async () => (await fetchPage(pageB, pageId)).content, { timeout: 20000 })
+      .toContain(localBody)
+    const resolved = await fetchPage(pageB, pageId)
+    expect(resolved.title).toBe(localTitle)
+    expect(resolved.content).not.toContain(remoteBody)
+    await expect(pageB.getByTestId('page-save-status')).toContainText('saved', { timeout: 20000 })
+  } finally {
+    releaseTitleRetry?.()
+    await contextA.close()
+    await contextB.close()
+  }
+})
