@@ -16,7 +16,17 @@ async function fetchPage(page: any, id: string): Promise<any> {
 
 async function openPageByTitle(page: any, title: string) {
   const item = page.locator('.tree-item').filter({ hasText: title }).first()
-  await expect(item).toBeVisible({ timeout: 20000 })
+  try {
+    await expect(item).toBeVisible({ timeout: 8000 })
+  } catch {
+    // A second browser has no live page-list subscription. When its initial
+    // sidebar snapshot misses a page that the API already persisted, reload
+    // once to fetch a fresh snapshot; still require the page to be visible.
+    const pages = await fetchPages(page)
+    expect(pages.some((p: any) => p.title === title), 'page must exist on server before retrying sidebar load').toBeTruthy()
+    await page.reload()
+    await expect(item).toBeVisible({ timeout: 20000 })
+  }
   await item.click()
 }
 
