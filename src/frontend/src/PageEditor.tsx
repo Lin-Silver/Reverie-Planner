@@ -41,6 +41,7 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
   const onSaveRef = useRef(onSave)
   const doSaveRef = useRef<(c: string) => Promise<void>>(async () => {})
   const [status, setStatus] = useState<SaveStatus>(initialStatus || 'saved')
+  const [retrying, setRetrying] = useState(false)
   const isDiscarded = useRef(false)
   const conflictLocked = useRef(false)
 
@@ -110,10 +111,16 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
   }, [updateStatus, pageId])
 
   const scheduleSave = useCallback((content: string) => {
-    if (isDiscarded.current || conflictLocked.current) return
+    if (isDiscarded.current) return
     editRevision.current += 1
     pendingContent.current = content
     onContentChange?.(content)
+    // Keep edits made during a conflict or an in-flight explicit Retry.
+    // They must be saved only after the conflict is resolved.
+    if (conflictLocked.current) {
+      updateStatus('conflict')
+      return
+    }
     updateStatus('unsaved')
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
@@ -160,6 +167,34 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
     return () => window.removeEventListener('beforeunload', handler)
   }, [pageId])
 
+  const retryChanges = async () => {
+    if (retrying) return
+    const content = JSON.stringify(editor.document)
+    const revision = editRevision.current
+    setRetrying(true)
+    try {
+      await onRetry(content)
+      if (isDiscarded.current) return
+      conflictLocked.current = false
+      if (editRevision.current === revision) {
+        pendingContent.current = null
+        updateStatus('saved')
+      } else {
+        // A newer draft was typed while Retry was in flight. The successful
+        // Retry only persisted the older snapshot, so debounce the latest one.
+        scheduleSaveRef.current(JSON.stringify(editor.document))
+      }
+    } catch {
+      // Preserve the editor and explicit resolution controls on failed Retry.
+      if (!isDiscarded.current) {
+        conflictLocked.current = true
+        updateStatus('conflict')
+      }
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   return (
     <div>
       <div data-testid="page-save-status" style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
@@ -168,7 +203,7 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
       {status === 'conflict' && (
         <div className="row" style={{ marginBottom: 8, gap: 8 }}>
           <button className="btn" onClick={async () => { await onReload(); }}>Reload latest</button>
-          <button className="btn primary" onClick={() => { const c = JSON.stringify(editor.document); onRetry(c).then(() => { conflictLocked.current = false; updateStatus('saved'); pendingContent.current = null }).catch(() => updateStatus('error')) }}>Retry my changes</button>
+          <button className="btn primary" disabled={retrying} onClick={() => { void retryChanges() }}>{retrying ? 'Retrying…' : 'Retry my changes'}</button>
         </div>
       )}
       <BlockNoteView editor={editor} theme={theme} />
