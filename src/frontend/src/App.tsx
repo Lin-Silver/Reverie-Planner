@@ -530,6 +530,7 @@ export default function App() {
           pageTitleRef.current = latest.title
           setPageEditor(latest)
           setPageDraft({ title: latest.title, icon: latest.icon ?? '', content: latest.content })
+          setPageLeaveError(false)
           setReloadToken((t) => t + 1)
         } catch (e) { pageDiscardRef.current = false; setError((e as Error).message) }
       }}
