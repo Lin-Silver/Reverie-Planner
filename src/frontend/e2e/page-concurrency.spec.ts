@@ -553,7 +553,12 @@ test('concurrency: stale title save exposes 409 and Retry preserves the local ti
     await openPageByTitle(pageB, original)
     await expect(pageB.locator('.page-title')).toHaveValue(original)
 
-    // Advance the server version while B still has the original snapshot.
+    // Advance both the server body and title while B has the old snapshot.
+    // A title-only Retry must preserve A's newer body, not replay B's stale body.
+    await pageA.locator('.bn-editor').click()
+    await pageA.keyboard.type('Remote body survives title retry')
+    await expect.poll(async () => (await fetchPage(pageA, pageId)).content, { timeout: 20000 })
+      .toContain('Remote body survives title retry')
     await pageA.locator('.page-title').fill(remoteTitle)
     await pageA.locator('.bn-editor').click()
     await expect.poll(async () => (await fetchPage(pageA, pageId)).title, { timeout: 20000 })
@@ -572,7 +577,10 @@ test('concurrency: stale title save exposes 409 and Retry preserves the local ti
       .toBe(localTitle)
     await expect(pageB.locator('.page-title')).toHaveValue(localTitle)
     await expect(pageB.getByTestId('page-save-status')).toContainText('saved')
-    expect((await fetchPage(pageB, pageId)).version).toBeGreaterThanOrEqual(3)
+    const persisted = await fetchPage(pageB, pageId)
+    expect(persisted.content).toContain('Remote body survives title retry')
+    await expect(pageB.locator('.bn-editor')).toContainText('Remote body survives title retry')
+    expect(persisted.version).toBeGreaterThanOrEqual(4)
   } finally {
     await contextA.close()
     await contextB.close()
