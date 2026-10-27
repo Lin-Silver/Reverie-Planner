@@ -67,6 +67,8 @@ Prefer correctness and irreversible-data safety before additional UI features. I
 
 ## Evidence log
 
+- Database view listing owner/error semantics (2026-10-27): implementation `9f35796ec74e51e642b0dcbf013389cdf7215493`, regression test `a7b74500f4db205344b86e22abc6435d7775eae1`, [Windows CI 40514154157](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40514154157) **success on exact test HEAD** (`go test ./...`, Windows build, lint 17 warnings/0 errors, **33/33 Playwright**, launcher/start-stop and portable packaging). `GET /api/db/views` now returns 404 for missing/soft-deleted database owners rather than a misleading empty 200, and 500 for SQLite owner/listing faults; DELETE without a view ID returns 400. Regression checks preserve view tombstones/versions, record data and AI Provider bytes. **Phase 0 API/SQLite normalization remains unchecked**; historical compatibility, complete lifecycle and large-data acceptance remain incomplete. Windows CI is not manual local Windows verification.
+
 - Baseline: `966e478b53298d65dd6f01227c10e7aff375b696`, [Windows CI 40257255601](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40257255601), Go tests, Windows package, 19/19 Playwright.
 
 - Verified newer baseline: `5023e339b5a69711c57a2cc349ea3585f34e7dde`, [Windows CI 40263677658](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40263677658), success: backend Go regressions, TypeScript/build, Windows launcher/package, **25/25 Playwright** including calendar day drag/drop, typed AND/OR filters, UI relation+formula editor, attachment upload and soft-delete restore.
