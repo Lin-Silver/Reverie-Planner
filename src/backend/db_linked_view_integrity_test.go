@@ -63,6 +63,14 @@ func TestLinkedViewBindingRejectsSecondLinkWithoutOverwritingPage(t *testing.T) 
 		t.Fatalf("first binding corrupted page: db=%q view=%q title=%q content=%q version=%d",
 			linkedDB, linkedView, title, content, version)
 	}
+	// A page editor holding the pre-binding version must not silently
+	// acknowledge an old draft after the linked-view metadata changed.
+	stalePayload, err := json.Marshal(page)
+	if err != nil { t.Fatal(err) }
+	staleSave := dbRegressionCall(t, app, http.MethodPut, "/api/pages", string(stalePayload), app.handlePages)
+	if staleSave.Code != http.StatusConflict {
+		t.Fatalf("stale page save should conflict after binding: %d %s", staleSave.Code, staleSave.Body.String())
+	}
 	sourceCount := linkedViewTestCount(t, app, source.ID)
 	otherCount := linkedViewTestCount(t, app, other.ID)
 	second := dbRegressionCall(t, app, http.MethodPost, "/api/db/linked-view",
