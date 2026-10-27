@@ -545,6 +545,9 @@ export default function App() {
           const retryTitle = pageTitleDirtyRef.current ? pageTitleRef.current : latest.title
           const retryContent = retryBody ? content : latest.content
           const updated = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...latest, title: retryTitle, content: retryContent, version: latest.version }) })
+          if (typeof updated.version !== 'number' || updated.version <= (latest.version || 0)) {
+            throw new Error('Page retry returned an invalid version')
+          }
           pageVersions.current.set(pageEditor.id, updated.version)
           pageSnapshots.current.set(pageEditor.id, updated)
           if (pageEditorRef.current?.id === pageEditor.id) {
