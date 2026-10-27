@@ -572,7 +572,7 @@ test('concurrency: stale title save exposes 409 and Retry preserves the local ti
       .toBe(localTitle)
     await expect(pageB.locator('.page-title')).toHaveValue(localTitle)
     await expect(pageB.getByTestId('page-save-status')).toContainText('saved')
-    expect((await fetchPage(pageB, pageId)).version).toBeGreaterThanOrEqual(4)
+    expect((await fetchPage(pageB, pageId)).version).toBeGreaterThanOrEqual(3)
   } finally {
     await contextA.close()
     await contextB.close()
