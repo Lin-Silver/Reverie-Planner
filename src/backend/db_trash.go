@@ -79,6 +79,11 @@ func (a *AppContext) handleDBTrash(w http.ResponseWriter,r *http.Request) {
                     if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=?",pageID.String).Scan(&count);err!=nil{writeJSON(w,500,map[string]string{"error":"could not inspect backing record page"});return}
                     if count!=1{writeJSON(w,409,map[string]string{"error":"backing record page unavailable"});return}
                 }
+                // A deleted record retains its saved relation values. Check
+                // active relation properties before exposing those references.
+                valid,err:=validateRestoredRecordRelations(tx,request.ID,databaseID)
+                if err!=nil{writeJSON(w,500,map[string]string{"error":"could not inspect saved record relations"});return}
+                if !valid{writeJSON(w,409,map[string]string{"error":"restore referenced records or repair relation values first"});return}
             }
             // Restoring a relation property must not reactivate a reference to
             // a database that is still in trash. Preserve the property and
