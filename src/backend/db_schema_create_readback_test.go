@@ -35,9 +35,11 @@ func TestDBSchemaCreateReadbackFailureRollsBack(t *testing.T) {
 
 			counts := map[string]int{}
 			for _, table := range []string{"db_properties", "db_views", "db_records", "pages"} {
-				if err := app.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&counts[table]); err != nil {
+				var count int
+				if err := app.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
 					t.Fatal(err)
 				}
+				counts[table] = count
 			}
 			var originalPageTitle string
 			var originalPageVersion int
