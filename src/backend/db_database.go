@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/mail"
@@ -305,9 +306,16 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",cfg.TargetDatabaseID).Scan(&target);err!=nil || target!=1 {writeJSON(w,400,map[string]string{"error":"relation target database not found"});return}
 		}
 		// position: append
-		var maxPos sql.NullInt64
-		_ = a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_properties WHERE database_id=?`, p.DatabaseID).Scan(&maxPos)
-		p.Position = int(maxPos.Int64)
+		var nextPosition int64
+		if err := a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_properties WHERE database_id=?`, p.DatabaseID).Scan(&nextPosition); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not calculate property position"})
+			return
+		}
+		if nextPosition < 0 || int64(int(nextPosition)) != nextPosition {
+			writeJSON(w, 500, map[string]string{"error": "invalid property position"})
+			return
+		}
+		p.Position = int(nextPosition)
 		p.Visible = true
 		p.Version = 1
 		_, err := a.DB.Exec(`INSERT INTO db_properties (id, database_id, name, type, config, position, visible, version) VALUES (?,?,?,?,?,?,1,1)`, p.ID, p.DatabaseID, p.Name, p.Type, p.Config, p.Position)
@@ -389,8 +397,16 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 200, out)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
+		if id == "" { writeJSON(w, 400, map[string]string{"error": "property id required"}); return }
 		var kind string
-		if err := a.DB.QueryRow(`SELECT type FROM db_properties WHERE id=? AND deleted_at IS NULL`, id).Scan(&kind); err != nil { writeJSON(w, 404, map[string]string{"error": "property not found"}); return }
+		if err := a.DB.QueryRow(`SELECT type FROM db_properties WHERE id=? AND deleted_at IS NULL`, id).Scan(&kind); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, 404, map[string]string{"error": "property not found"})
+			} else {
+				writeJSON(w, 500, map[string]string{"error": "could not inspect property"})
+			}
+			return
+		}
 		if kind == "title" { writeJSON(w, 400, map[string]string{"error": "title property cannot be deleted"}); return }
         result,err:=a.DB.Exec("UPDATE db_properties SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
         if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
