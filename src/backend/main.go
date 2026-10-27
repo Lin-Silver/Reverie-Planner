@@ -608,18 +608,10 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 	if err := migrateDatabaseLinkedColumns(db); err != nil { _ = db.Close(); return nil, err }
 	if err := migrateDatabaseTrash(db); err != nil { _ = db.Close(); return nil, err }
 	if err := migrateDatabaseFiles(db); err != nil { _ = db.Close(); return nil, err }
-	// Ensure extended task columns exist (idempotent).
-	for _, stmt := range []string{
-		`ALTER TABLE tasks ADD COLUMN state_id TEXT`,
-		`ALTER TABLE tasks ADD COLUMN cycle_id TEXT`,
-		`ALTER TABLE tasks ADD COLUMN module_id TEXT`,
-		`ALTER TABLE tasks ADD COLUMN estimate TEXT`,
-		`ALTER TABLE tasks ADD COLUMN parent_id TEXT`,
-		`ALTER TABLE tasks ADD COLUMN sequence_no INTEGER DEFAULT 0`,
-		`ALTER TABLE tasks ADD COLUMN labels_json TEXT`,
-		`ALTER TABLE tasks ADD COLUMN deleted_at TEXT`,
-	} {
-		_, _ = db.Exec(stmt)
+	// Upgrade legacy task columns atomically; never ignore schema failures.
+	if err := ensureTaskColumns(db); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	// Detect pre-existing orphaned references instead of silently accepting a
 	// damaged workspace. This is read-only; do not attempt destructive repairs.
