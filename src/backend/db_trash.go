@@ -3,6 +3,7 @@ package main
 import (
     "database/sql"
     "encoding/json"
+    "errors"
     "net/http"
     "time"
 )
@@ -55,19 +56,28 @@ func (a *AppContext) handleDBTrash(w http.ResponseWriter,r *http.Request) {
         var databaseID string
         if request.Kind=="database"{
             var pageID string
-            if err:=tx.QueryRow("SELECT page_id FROM databases WHERE id=? AND deleted_at IS NOT NULL",request.ID).Scan(&pageID);err!=nil{writeJSON(w,404,map[string]string{"error":"deleted database not found"});return}
+            if err:=tx.QueryRow("SELECT page_id FROM databases WHERE id=? AND deleted_at IS NOT NULL",request.ID).Scan(&pageID);err!=nil{
+                if errors.Is(err,sql.ErrNoRows) {writeJSON(w,404,map[string]string{"error":"deleted database not found"})} else {writeJSON(w,500,map[string]string{"error":"could not inspect deleted database"})}
+                return
+            }
             var pageCount int
-            if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=?",pageID).Scan(&pageCount);err!=nil||pageCount!=1{writeJSON(w,409,map[string]string{"error":"backing database page unavailable"});return}
+            if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=?",pageID).Scan(&pageCount);err!=nil{writeJSON(w,500,map[string]string{"error":"could not inspect backing database page"});return}
+            if pageCount!=1{writeJSON(w,409,map[string]string{"error":"backing database page unavailable"});return}
         } else {
-            if err:=tx.QueryRow("SELECT database_id FROM "+source.table+" WHERE id=? AND deleted_at IS NOT NULL",request.ID).Scan(&databaseID);err!=nil{writeJSON(w,404,map[string]string{"error":"deleted item not found"});return}
+            if err:=tx.QueryRow("SELECT database_id FROM "+source.table+" WHERE id=? AND deleted_at IS NOT NULL",request.ID).Scan(&databaseID);err!=nil{
+                if errors.Is(err,sql.ErrNoRows) {writeJSON(w,404,map[string]string{"error":"deleted item not found"})} else {writeJSON(w,500,map[string]string{"error":"could not inspect deleted item"})}
+                return
+            }
             var count int
-            if err:=tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",databaseID).Scan(&count);err!=nil||count!=1{writeJSON(w,409,map[string]string{"error":"restore database first"});return}
+            if err:=tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",databaseID).Scan(&count);err!=nil{writeJSON(w,500,map[string]string{"error":"could not inspect parent database"});return}
+            if count!=1{writeJSON(w,409,map[string]string{"error":"restore database first"});return}
             if request.Kind=="record"{
                 var pageID sql.NullString
                 if err:=tx.QueryRow("SELECT page_id FROM db_records WHERE id=?",request.ID).Scan(&pageID);err!=nil{writeJSON(w,500,map[string]string{"error":err.Error()});return}
                 if pageID.Valid{
                     var count int
-                    if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=?",pageID.String).Scan(&count);err!=nil||count!=1{writeJSON(w,409,map[string]string{"error":"backing record page unavailable"});return}
+                    if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=?",pageID.String).Scan(&count);err!=nil{writeJSON(w,500,map[string]string{"error":"could not inspect backing record page"});return}
+                    if count!=1{writeJSON(w,409,map[string]string{"error":"backing record page unavailable"});return}
                 }
             }
             // Restoring a relation property must not reactivate a reference to
