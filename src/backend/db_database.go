@@ -743,11 +743,6 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		if v.DatabaseID == "" {
             writeJSON(w,400,map[string]string{"error":"databaseId required"});return
         }
-        var active int
-        if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",v.DatabaseID).Scan(&active);err!=nil {
-            writeJSON(w,500,map[string]string{"error":err.Error()});return
-        }
-        if active!=1 {writeJSON(w,404,map[string]string{"error":"database not found"});return}
 		if v.Name == "" {
 			v.Name = "View"
 		}
@@ -757,18 +752,45 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		if v.ID == "" {
 			v.ID = newID("view")
 		}
-		if v.Config == "" {v.Config="{}"}
-        if err:=validateDBViewConfig(v.Type,v.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
+		if v.Config == "" {
+			v.Config = "{}"
+		}
+		if err := validateDBViewConfig(v.Type, v.Config); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		// Reserve the next position and verify the owner in the same
+		// transaction as insertion. Concurrent view creators must not both
+		// observe the same MAX(position), or create a view after its database
+		// has been soft-deleted.
+		tx, err := a.DB.Begin()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		defer tx.Rollback()
+		var active int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL", v.DatabaseID).Scan(&active); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if active != 1 {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "database not found"})
+			return
+		}
 		var maxPos sql.NullInt64
-		if err := a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_views WHERE database_id=?`, v.DatabaseID).Scan(&maxPos); err != nil {
+		if err := tx.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_views WHERE database_id=?`, v.DatabaseID).Scan(&maxPos); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not determine view position"})
 			return
 		}
 		v.Position = int(maxPos.Int64)
 		v.Version = 1
-		_, err := a.DB.Exec(`INSERT INTO db_views (id, database_id, name, type, config, position, version) VALUES (?,?,?,?,?,?,1)`, v.ID, v.DatabaseID, v.Name, v.Type, v.Config, v.Position)
-		if err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
+		if _, err := tx.Exec(`INSERT INTO db_views (id, database_id, name, type, config, position, version) VALUES (?,?,?,?,?,?,1)`, v.ID, v.DatabaseID, v.Name, v.Type, v.Config, v.Position); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, 201, v)
