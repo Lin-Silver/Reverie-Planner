@@ -28,9 +28,11 @@ func TestDatabaseCreateReadbackFailureRollsBackAllRows(t *testing.T) {
             tables := []string{"databases", "db_properties", "db_views", "db_records", "pages"}
             before := make(map[string]int, len(tables))
             for _, table := range tables {
-                if err := app.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&before[table]); err != nil {
+                var count int
+                if err := app.DB.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
                     t.Fatal(err)
                 }
+                before[table] = count
             }
             var originalPageTitle string
             var originalPageVersion int
