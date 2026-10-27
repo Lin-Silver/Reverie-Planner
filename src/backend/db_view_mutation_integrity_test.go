@@ -79,7 +79,7 @@ func TestDBViewCreateRejectsUnscannablePositionWithoutWriting(t *testing.T) {
 	assertViewIntegrityProviders(t, providerPath, providerBefore)
 }
 
-func TestDBViewCreatePositionsAfterActiveViewsOnly(t *testing.T) {
+func TestDBViewCreateReservesTrashedPositionsForRestore(t *testing.T) {
 	app := setupTestContext(t)
 	defer app.DB.Close()
 	database, _ := dbRegressionCreate(t, app)
@@ -107,8 +107,8 @@ func TestDBViewCreatePositionsAfterActiveViewsOnly(t *testing.T) {
 	if err := json.Unmarshal(next.Body.Bytes(), &activeView); err != nil {
 		t.Fatal(err)
 	}
-	if activeView.Position != 1 || activeView.ID == deletedView.ID {
-		t.Fatalf("trashed view affected active ordering: %+v, deleted=%+v", activeView, deletedView)
+	if activeView.Position != 2 || activeView.ID == deletedView.ID {
+		t.Fatalf("trashed position was reused before restore: %+v, deleted=%+v", activeView, deletedView)
 	}
 	var active, trashed int
 	if err := app.DB.QueryRow("SELECT COUNT(*) FROM db_views WHERE database_id=? AND deleted_at IS NULL", database.ID).Scan(&active); err != nil {
@@ -119,6 +119,17 @@ func TestDBViewCreatePositionsAfterActiveViewsOnly(t *testing.T) {
 	}
 	if active != 2 || trashed != 1 {
 		t.Fatalf("view lifecycle changed unexpectedly: active=%d trashed=%d", active, trashed)
+	}
+	restored := dbRegressionCall(t, app, http.MethodPost, "/api/db/trash", fmt.Sprintf(`{"kind":"view","id":%q}`, deletedView.ID), app.handleDBTrash)
+	if restored.Code != http.StatusOK {
+		t.Fatalf("restore deleted view: %d %s", restored.Code, restored.Body.String())
+	}
+	var restoredPosition, restoredVersion int
+	if err := app.DB.QueryRow("SELECT position,version FROM db_views WHERE id=? AND deleted_at IS NULL", deletedView.ID).Scan(&restoredPosition, &restoredVersion); err != nil {
+		t.Fatal(err)
+	}
+	if restoredPosition != 1 || restoredVersion != deletedView.Version+2 || activeView.Position != 2 {
+		t.Fatalf("view restore did not preserve distinct ordering: restored position=%d version=%d new=%d", restoredPosition, restoredVersion, activeView.Position)
 	}
 }
 
