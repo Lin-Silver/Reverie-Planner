@@ -518,8 +518,13 @@ test('concurrency: edits typed during explicit Retry are not silently acknowledg
 
     // The first Retry must not mark the newer draft saved. The follow-up
     // autosave must persist the entire latest document, not the old snapshot.
-    await expect.poll(async () => (await fetchPage(pageB, pageId)).content, { timeout: 20000 })
-      .toContain('Retry draft after retry')
+    // BlockNote can represent consecutive typing as separate paragraph blocks.
+    // Assert the complete ordered text across blocks, not raw JSON adjacency.
+    await expect.poll(async () => {
+      const saved = await fetchPage(pageB, pageId)
+      const blocks = JSON.parse(saved.content) as Array<{ content?: Array<{ text?: string }> }>
+      return blocks.flatMap(block => block.content || []).map(span => span.text || '').join('')
+    }, { timeout: 20000 }).toBe('Retry draft after retry')
     await expect(pageB.getByTestId('page-save-status')).toContainText('saved', { timeout: 20000 })
     const persisted = await fetchPage(pageB, pageId)
     expect(persisted.content).not.toContain('Server change')
