@@ -100,6 +100,16 @@ func (a *AppContext) handleDBTrash(w http.ResponseWriter,r *http.Request) {
                     if targetCount!=1 {
                         writeJSON(w,409,map[string]string{"error":"restore relation target database first"});return
                     }
+                    // A trashed relation property retains values belonging to both
+                    // active and trashed source records. Do not expose references
+                    // to records that are still deleted or have changed owners.
+                    valid,err:=validateRestoredRelationValues(tx,request.ID,definition.TargetDatabaseID)
+                    if err!=nil {
+                        writeJSON(w,500,map[string]string{"error":"could not validate saved relation values"});return
+                    }
+                    if !valid {
+                        writeJSON(w,409,map[string]string{"error":"restore referenced records or repair relation values first"});return
+                    }
                 }
             }
         }
