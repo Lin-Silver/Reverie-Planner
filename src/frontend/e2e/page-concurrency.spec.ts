@@ -465,3 +465,68 @@ test('autosave never acknowledges an older write while a newer BlockNote draft i
     await page.unroute('**/api/pages')
   }
 })
+
+test('concurrency: edits typed during explicit Retry are not silently acknowledged or discarded', async ({ browser }) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  let releaseRetry: (() => void) | undefined
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+    const title = `RetryInFlight-${Date.now()}`
+    const pageId = await createPageWithTitle(pageA, title)
+
+    await pageB.goto('/')
+    await expect(pageB.getByText('Welcome back')).toBeVisible()
+    await openPageByTitle(pageB, title)
+    await expect(pageB.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
+
+    // Advance A's version after B has opened the page.
+    await pageA.locator('.bn-editor').click()
+    await pageA.keyboard.type('Server change')
+    await expect.poll(async () => (await fetchPage(pageA, pageId)).content, { timeout: 20000 })
+      .toContain('Server change')
+
+    await pageB.locator('.bn-editor').click()
+    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.type('Retry draft')
+    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
+
+    let retrySeen = false
+    await pageB.route('**/api/pages', async route => {
+      if (route.request().method() !== 'PUT') {
+        await route.continue()
+        return
+      }
+      const body = route.request().postDataJSON() as { content?: string }
+      if (body.content?.includes('Retry draft') && !body.content.includes('after retry') && !retrySeen) {
+        retrySeen = true
+        await new Promise<void>(resolve => { releaseRetry = resolve })
+      }
+      await route.continue()
+    })
+
+    await pageB.getByRole('button', { name: 'Retry my changes' }).click()
+    await expect.poll(() => retrySeen, { timeout: 15000 }).toBe(true)
+    await expect(pageB.getByRole('button', { name: 'Retrying…' })).toBeDisabled()
+
+    // This edit happens after the Retry snapshot was captured but before it commits.
+    await pageB.locator('.bn-editor').click()
+    await pageB.keyboard.type(' after retry')
+    await expect(pageB.locator('.bn-editor')).toContainText('Retry draft after retry')
+    releaseRetry?.()
+
+    // The first Retry must not mark the newer draft saved. The follow-up
+    // autosave must persist the entire latest document, not the old snapshot.
+    await expect.poll(async () => (await fetchPage(pageB, pageId)).content, { timeout: 20000 })
+      .toContain('Retry draft after retry')
+    await expect(pageB.getByTestId('page-save-status')).toContainText('saved', { timeout: 20000 })
+    const persisted = await fetchPage(pageB, pageId)
+    expect(persisted.content).not.toContain('Server change')
+    expect(persisted.version).toBeGreaterThanOrEqual(4)
+  } finally {
+    releaseRetry?.()
+    await contextA.close()
+    await contextB.close()
+  }
+})
