@@ -535,3 +535,82 @@ test('concurrency: edits typed during explicit Retry are not silently acknowledg
     await contextB.close()
   }
 })
+
+
+test('concurrency: stale title save exposes 409 and Retry preserves the local title', async ({ browser }) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+    const original = `TitleConflict-${Date.now()}`
+    const remoteTitle = `Remote title ${Date.now()}`
+    const localTitle = `Local title ${Date.now()}`
+    const pageId = await createPageWithTitle(pageA, original)
+
+    await pageB.goto('/')
+    await expect(pageB.getByText('Welcome back')).toBeVisible()
+    await openPageByTitle(pageB, original)
+    await expect(pageB.locator('.page-title')).toHaveValue(original)
+
+    // Advance the server version while B still has the original snapshot.
+    await pageA.locator('.page-title').fill(remoteTitle)
+    await pageA.locator('.bn-editor').click()
+    await expect.poll(async () => (await fetchPage(pageA, pageId)).title, { timeout: 20000 })
+      .toBe(remoteTitle)
+
+    // A title-only conflict must not be swallowed by the input's blur handler.
+    await pageB.locator('.page-title').fill(localTitle)
+    await pageB.locator('.bn-editor').click()
+    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
+    await expect(pageB.locator('.page-title')).toHaveValue(localTitle)
+    expect((await fetchPage(pageB, pageId)).title).toBe(remoteTitle)
+
+    // Explicit Retry applies B's title using the current server version.
+    await pageB.getByRole('button', { name: 'Retry my changes' }).click()
+    await expect.poll(async () => (await fetchPage(pageB, pageId)).title, { timeout: 20000 })
+      .toBe(localTitle)
+    await expect(pageB.locator('.page-title')).toHaveValue(localTitle)
+    await expect(pageB.getByTestId('page-save-status')).toContainText('saved')
+    expect((await fetchPage(pageB, pageId)).version).toBeGreaterThanOrEqual(4)
+  } finally {
+    await contextA.close()
+    await contextB.close()
+  }
+})
+
+test('concurrency: Reload latest discards a conflicting title draft', async ({ browser }) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+    const original = `TitleReload-${Date.now()}`
+    const remoteTitle = `Remote reload ${Date.now()}`
+    const localTitle = `Discarded draft ${Date.now()}`
+    const pageId = await createPageWithTitle(pageA, original)
+
+    await pageB.goto('/')
+    await expect(pageB.getByText('Welcome back')).toBeVisible()
+    await openPageByTitle(pageB, original)
+    await expect(pageB.locator('.page-title')).toHaveValue(original)
+
+    await pageA.locator('.page-title').fill(remoteTitle)
+    await pageA.locator('.bn-editor').click()
+    await expect.poll(async () => (await fetchPage(pageA, pageId)).title, { timeout: 20000 })
+      .toBe(remoteTitle)
+
+    await pageB.locator('.page-title').fill(localTitle)
+    await pageB.locator('.bn-editor').click()
+    await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
+    await expect(pageB.locator('.page-title')).toHaveValue(localTitle)
+
+    await pageB.getByRole('button', { name: 'Reload latest' }).click()
+    await expect(pageB.locator('.page-title')).toHaveValue(remoteTitle, { timeout: 20000 })
+    await expect(pageB.getByTestId('page-save-status')).toContainText('saved')
+    expect((await fetchPage(pageB, pageId)).title).toBe(remoteTitle)
+  } finally {
+    await contextA.close()
+    await contextB.close()
+  }
+})
