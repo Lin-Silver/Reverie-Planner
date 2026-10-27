@@ -389,6 +389,11 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			if err != nil { writeJSON(w, 500, map[string]string{"error": "could not inspect existing property values"}); return }
 			if !compatible { writeJSON(w, 409, map[string]string{"error": "property options conflict with existing record values"}); return }
 		}
+		if currentType == "relation" && p.Config != currentConfig {
+			compatible, err := validateRelationTargetChange(tx, p.ID, currentConfig, p.Config)
+			if err != nil { writeJSON(w, 500, map[string]string{"error": "could not inspect existing relation values"}); return }
+			if !compatible { writeJSON(w, 409, map[string]string{"error": "relation target conflicts with existing record values"}); return }
+		}
 		res, err := tx.Exec(`UPDATE db_properties SET name=?, type=?, config=?, visible=?, version=version+1
 			WHERE id=? AND database_id=? AND version=? AND deleted_at IS NULL AND database_id IN (SELECT id FROM databases WHERE deleted_at IS NULL)`,
 			p.Name, p.Type, p.Config, visible, p.ID, actualDatabaseID, p.Version)
