@@ -178,10 +178,17 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
     try {
       await onRetry(content, retryBody)
       if (isDiscarded.current) return
-      if (!retryBody && editRevision.current === revision) {
-        // The server may have newer body content. Refresh the editor after
-        // retrying only the title so the next edit starts from that content.
-        await onReload()
+      if (!retryBody) {
+        if (editRevision.current === revision) {
+          // No local body edits: refresh the remote body after the title-only Retry.
+          await onReload()
+          return
+        }
+        // The user began editing the stale body while the title-only Retry was
+        // in flight. Keep that draft locked for explicit resolution instead of
+        // automatically overwriting the newer remote body.
+        conflictLocked.current = true
+        updateStatus('conflict')
         return
       }
       conflictLocked.current = false
