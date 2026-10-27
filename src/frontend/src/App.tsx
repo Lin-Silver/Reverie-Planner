@@ -154,6 +154,7 @@ export default function App() {
   }
 
   const setView = useCallback((next: string) => {
+    if (view === 'page' && next !== 'page' && pageLeaveError) { setError('Resolve the page conflict with Retry or Reload latest before leaving.'); return }
     if (view === 'page' && next !== 'page' && databasePendingEditRef.current) { setError('Resolve the unsaved database edit with Retry or Reload latest before leaving.'); return }
     if (view === 'page' && next !== 'page' && pageEditor) {
       void (async () => {
@@ -171,7 +172,7 @@ export default function App() {
     }
     setPageLeaveError(false)
     _setView(next)
-  }, [view, pageEditor, pageDraft.content])
+  }, [view, pageEditor, pageDraft.content, pageLeaveError])
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme) }, [theme])
   useEffect(() => { localStorage.setItem('reverie.sidebar.collapsed', sidebarCollapsed ? '1' : '0') }, [sidebarCollapsed])
@@ -251,6 +252,7 @@ export default function App() {
   }
 
   const openPageEditor = async (page?: Page) => {
+      if (view === 'page' && pageLeaveError && pageEditor && (!page || page.id !== pageEditor.id)) { setError('Resolve the page conflict with Retry or Reload latest before opening another page.'); return }
       if (databasePendingEditRef.current && (!page || page.id !== pageEditor?.id)) { setError('Resolve the unsaved database edit before opening another page.'); return }
       if (view === 'page' && pageEditor && (!page || page.id !== pageEditor.id)) {
         try {
@@ -506,7 +508,7 @@ export default function App() {
           </div>
         </div>
         <div className="page-icon" onClick={() => { if (!pageEditor) return; setIconDraft(pageEditor.icon || ''); setIconTarget(pageEditor) }}>{pageDraft.icon || '📄'}</div>
-        <input className="page-title" value={pageDraft.title} onChange={(e) => { pageTitleDirtyRef.current = true; setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor && pageTitleDirtyRef.current) void savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch((e) => { if ((e as Error).message.includes('version conflict')) setPageLeaveError(true); else setError(`Title save failed: ${(e as Error).message}`) }) }} placeholder="Untitled" />
+        <input className="page-title" value={pageDraft.title} onChange={(e) => { pageTitleDirtyRef.current = true; setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor && pageTitleDirtyRef.current && !pageLeaveError) void savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch((e) => { if ((e as Error).message.includes('version conflict')) setPageLeaveError(true); else setError(`Title save failed: ${(e as Error).message}`) }) }} placeholder="Untitled" />
   {pageEditor && (
     <PageEditor
       key={`${pageEditor.id}-${reloadToken}`}
@@ -560,7 +562,7 @@ export default function App() {
           }
         } catch (e) { setError((e as Error).message); throw e }
       }}
-      onStatus={(s) => { if (s === 'saved') setPageLeaveError(false) }}
+      onStatus={(s) => { if (s === 'saved') setPageLeaveError(false); else if (s === 'conflict') setPageLeaveError(true) }}
     />
   )}
       </div>
