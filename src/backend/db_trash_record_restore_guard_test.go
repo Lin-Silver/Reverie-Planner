@@ -152,9 +152,13 @@ func TestTrashRecordRestoreDefersDeletedRelationPropertyValidation(t *testing.T)
     source, from := dbRegressionCreate(t, app)
     target, to := dbRegressionCreate(t, app)
     providerPath, providerBefore := viewIntegrityProviders(t, app)
+    createBody, err := json.Marshal(DBProperty{
+        DatabaseID: source.ID, Name: "Related", Type: "relation",
+        Config: `{"targetDatabaseId":"` + target.ID + `"}`,
+    })
+    if err != nil { t.Fatal(err) }
     created := dbRegressionCall(t, app, http.MethodPost, "/api/db/properties",
-        `{"databaseId":"`+source.ID+`","name":"Related","type":"relation","config":"{\\"targetDatabaseId\\":\\"`+target.ID+`\\"}"}`,
-        app.handleDBProperties)
+        string(createBody), app.handleDBProperties)
     if created.Code != http.StatusCreated {
         t.Fatalf("create relation: %d %s", created.Code, created.Body.String())
     }
