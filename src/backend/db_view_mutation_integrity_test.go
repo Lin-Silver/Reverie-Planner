@@ -186,3 +186,68 @@ func TestDBViewDeleteDistinguishesMissingViewFromSQLiteFailure(t *testing.T) {
 	}
 	assertViewIntegrityProviders(t, providerPath, providerBefore)
 }
+
+func TestDBViewUpdateReadbackFailureRollsBackWithoutChangingUserData(t *testing.T) {
+	app := setupTestContext(t)
+	defer app.DB.Close()
+	database, record := dbRegressionCreate(t, app)
+	providerPath, providerBefore := viewIntegrityProviders(t, app)
+	original := database.Views[0]
+
+	// SQLite allows a TEXT value in this INTEGER-affinity column. An AFTER
+	// UPDATE trigger corrupts the version after the UPDATE reports success,
+	// making the subsequent response readback fail to scan into an int.
+	// Previously that readback was outside a transaction: the client got
+	// HTTP 500 even though its view update and the corruption had committed.
+	if _, err := app.DB.Exec(`CREATE TRIGGER corrupt_view_readback AFTER UPDATE ON db_views
+		WHEN NEW.id = '` + original.ID + `'
+		BEGIN UPDATE db_views SET version='invalid-version' WHERE id=NEW.id; END`); err != nil {
+		t.Fatal(err)
+	}
+	payload := fmt.Sprintf(`{"id":%q,"version":%d,"name":"New view name","type":%q,"config":%q}`,
+		original.ID, original.Version, original.Type, original.Config)
+	failed := dbRegressionCall(t, app, http.MethodPut, "/api/db/views", payload, app.handleDBViews)
+	if failed.Code != http.StatusInternalServerError {
+		t.Fatalf("failed view readback should return 500, got %d: %s", failed.Code, failed.Body.String())
+	}
+
+	var name, kind, config string
+	var position, version int
+	if err := app.DB.QueryRow(`SELECT name,type,config,position,version FROM db_views WHERE id=?`, original.ID).
+		Scan(&name, &kind, &config, &position, &version); err != nil {
+		t.Fatalf("failed readback committed a corrupt view: %v", err)
+	}
+	if name != original.Name || kind != original.Type || config != original.Config ||
+		position != original.Position || version != original.Version {
+		t.Fatalf("failed readback changed persisted view: name=%q type=%q config=%q position=%d version=%d",
+			name, kind, config, position, version)
+	}
+	saved, err := app.getDBRecord(record.ID)
+	if err != nil || saved.Title != record.Title || saved.Version != record.Version {
+		t.Fatalf("failed view update changed record: %+v %v", saved, err)
+	}
+	assertViewIntegrityProviders(t, providerPath, providerBefore)
+
+	if _, err := app.DB.Exec("DROP TRIGGER corrupt_view_readback"); err != nil {
+		t.Fatal(err)
+	}
+	recovered := dbRegressionCall(t, app, http.MethodPut, "/api/db/views", payload, app.handleDBViews)
+	if recovered.Code != http.StatusOK {
+		t.Fatalf("view update after removing fault: %d %s", recovered.Code, recovered.Body.String())
+	}
+	var updated DBView
+	if err := json.Unmarshal(recovered.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID != original.ID || updated.Name != "New view name" ||
+		updated.Version != original.Version+1 || updated.Position != original.Position {
+		t.Fatalf("recovered view response incorrect: %+v", updated)
+	}
+	if err := app.DB.QueryRow(`SELECT name,version FROM db_views WHERE id=?`, original.ID).Scan(&name, &version); err != nil {
+		t.Fatal(err)
+	}
+	if name != updated.Name || version != updated.Version {
+		t.Fatalf("recovered view response differs from SQLite: name=%q version=%d", name, version)
+	}
+	assertViewIntegrityProviders(t, providerPath, providerBefore)
+}
