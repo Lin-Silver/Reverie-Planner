@@ -168,16 +168,20 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Build the complete response before committing. A failure to read the
+		// newly inserted schema must roll back the database and backing page;
+		// never return a partial 201 for a committed, unreadable database.
+		created, err := readDatabaseInTx(tx, d.ID)
+		if err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": "could not read created database"})
+			return
+		}
 		if err := tx.Commit(); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		d.Version = 1
-		d.CreatedAt = now
-		d.UpdatedAt = now
-		d.Properties, _ = a.listProperties(d.ID)
-		d.Views, _ = a.listViews(d.ID)
-		writeJSON(w, 201, d)
+		writeJSON(w, 201, created)
 	case http.MethodPut:
 		var d Database
 		if _, err := decodeJSONRequest(r, &d); err != nil {
