@@ -63,7 +63,11 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 		if id != "" {
 			db, err := a.getDatabase(id)
 			if err != nil {
-				writeJSON(w, 404, map[string]string{"error": "not found"})
+				if errors.Is(err, sql.ErrNoRows) {
+					writeJSON(w, 404, map[string]string{"error": "not found"})
+				} else {
+					writeJSON(w, 500, map[string]string{"error": "could not read database"})
+				}
 				return
 			}
 			writeJSON(w, 200, db)
@@ -340,7 +344,11 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		if err := a.DB.QueryRow(`SELECT p.type, p.database_id FROM db_properties p
 			JOIN databases d ON d.id=p.database_id AND d.deleted_at IS NULL
 			WHERE p.id=? AND p.deleted_at IS NULL`, p.ID).Scan(&currentType, &actualDatabaseID); err != nil {
-			writeJSON(w, 404, map[string]string{"error": "property not found"})
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, 404, map[string]string{"error": "property not found"})
+			} else {
+				writeJSON(w, 500, map[string]string{"error": "could not inspect property"})
+			}
 			return
 		}
 		// The supplied databaseId must not redirect computed-field validation
