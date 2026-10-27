@@ -710,7 +710,10 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		if v.Config == "" {v.Config="{}"}
         if err:=validateDBViewConfig(v.Type,v.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
 		var maxPos sql.NullInt64
-		_ = a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_views WHERE database_id=?`, v.DatabaseID).Scan(&maxPos)
+		if err := a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_views WHERE database_id=? AND deleted_at IS NULL`, v.DatabaseID).Scan(&maxPos); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not determine view position"})
+			return
+		}
 		v.Position = int(maxPos.Int64)
 		v.Version = 1
 		_, err := a.DB.Exec(`INSERT INTO db_views (id, database_id, name, type, config, position, version) VALUES (?,?,?,?,?,?,1)`, v.ID, v.DatabaseID, v.Name, v.Type, v.Config, v.Position)
@@ -747,7 +750,10 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
         if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         defer tx.Rollback()
         var dbID string
-        if err:=tx.QueryRow("SELECT database_id FROM db_views WHERE id=? AND deleted_at IS NULL",id).Scan(&dbID);err!=nil {writeJSON(w,404,map[string]string{"error":"view not found"});return}
+        if err:=tx.QueryRow("SELECT database_id FROM db_views WHERE id=? AND deleted_at IS NULL",id).Scan(&dbID);err!=nil {
+            if err==sql.ErrNoRows {writeJSON(w,404,map[string]string{"error":"view not found"})} else {writeJSON(w,500,map[string]string{"error":"could not inspect view"})}
+            return
+        }
         var refs int
         if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE linked_view_id=?",id).Scan(&refs);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         if refs!=0 {writeJSON(w,409,map[string]string{"error":"linked view is still used by pages"});return}
