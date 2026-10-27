@@ -419,11 +419,23 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
+		// Read the inserted row before commit. If SQLite accepted the INSERT
+		// but the schema cannot be read back, the creation must roll back.
+		var created DBProperty
+		var createdVisible int
+		if err := tx.QueryRow(`SELECT id, database_id, name, type, config, position, visible, version
+			FROM db_properties WHERE id=? AND database_id=? AND deleted_at IS NULL`, p.ID, p.DatabaseID).
+			Scan(&created.ID, &created.DatabaseID, &created.Name, &created.Type, &created.Config,
+				&created.Position, &createdVisible, &created.Version); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not read created property"})
+			return
+		}
+		created.Visible = createdVisible == 1
 		if err := tx.Commit(); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, 201, p)
+		writeJSON(w, 201, created)
 	case http.MethodPut:
 		var p DBProperty
 		if _, err := decodeJSONRequest(r, &p); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
@@ -885,11 +897,21 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		// Materialize the response inside the INSERT transaction so an
+		// unreadable view cannot be committed behind a failed HTTP response.
+		var created DBView
+		if err := tx.QueryRow(`SELECT id, database_id, name, type, config, position, version
+			FROM db_views WHERE id=? AND database_id=? AND deleted_at IS NULL`, v.ID, v.DatabaseID).
+			Scan(&created.ID, &created.DatabaseID, &created.Name, &created.Type, &created.Config,
+				&created.Position, &created.Version); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read created view"})
+			return
+		}
 		if err := tx.Commit(); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, 201, v)
+		writeJSON(w, 201, created)
 	case http.MethodPut:
 		var v DBView
 		if _, err := decodeJSONRequest(r, &v); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
