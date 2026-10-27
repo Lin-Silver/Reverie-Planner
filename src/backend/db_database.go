@@ -830,18 +830,37 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		}
 		if v.Config == "" {v.Config="{}"}
         if err:=validateDBViewConfig(v.Type,v.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
-		res, err := a.DB.Exec(`UPDATE db_views SET name=?, type=?, config=?, version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL AND database_id IN (SELECT id FROM databases WHERE deleted_at IS NULL)`, v.Name, v.Type, v.Config, v.ID, v.Version)
+		// Keep the versioned update and response readback in one transaction.
+		// A readback failure must not leave a committed change that the client
+		// only knows as an HTTP 500 (and may then retry with a stale version).
+		tx, err := a.DB.Begin()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not begin view update"})
+			return
+		}
+		defer tx.Rollback()
+		res, err := tx.Exec(`UPDATE db_views SET name=?, type=?, config=?, version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL AND database_id IN (SELECT id FROM databases WHERE deleted_at IS NULL)`, v.Name, v.Type, v.Config, v.ID, v.Version)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		n,err:=res.RowsAffected()
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-		if n == 0 {
+		n, err := res.RowsAffected()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if n != 1 {
 			writeJSON(w, 409, map[string]string{"error": "version conflict"})
 			return
 		}
-		if err:=a.DB.QueryRow(`SELECT id, database_id, name, type, config, position, version FROM db_views WHERE id=?`, v.ID).Scan(&v.ID, &v.DatabaseID, &v.Name, &v.Type, &v.Config, &v.Position, &v.Version);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+		if err := tx.QueryRow(`SELECT id, database_id, name, type, config, position, version FROM db_views WHERE id=?`, v.ID).Scan(&v.ID, &v.DatabaseID, &v.Name, &v.Type, &v.Config, &v.Position, &v.Version); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not read updated view"})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not commit view update"})
+			return
+		}
 		writeJSON(w, 200, v)
 	case http.MethodDelete:
         id:=r.URL.Query().Get("id")
