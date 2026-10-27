@@ -94,6 +94,8 @@ func TestSelectOptionChangesProtectLiveAndTrashedRecordValues(t *testing.T) {
     update(status, `{"options":["Todo"]}`, http.StatusConflict) // Deleted record still uses Done.
     checkState(status, status.Config, status.Version)
     update(tags, `{"options":["Red"]}`, http.StatusConflict) // Deleted record still uses Blue.
+    update(status, `{"options":[]}`, http.StatusConflict) // Empty options must not orphan selections.
+    update(tags, `{"options":[]}`, http.StatusConflict)
     checkState(tags, tags.Config, tags.Version)
 
     initialStatus := status
