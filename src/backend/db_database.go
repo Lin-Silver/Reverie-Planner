@@ -535,7 +535,10 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		}
 		// get db id for version check
 		var dbID string
-		if err := a.DB.QueryRow(`SELECT r.database_id FROM db_records r JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL WHERE r.id=? AND r.deleted_at IS NULL`, body.ID).Scan(&dbID); err != nil { writeJSON(w, 404, map[string]string{"error": "record not found"}); return }
+		if err := a.DB.QueryRow(`SELECT r.database_id FROM db_records r JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL WHERE r.id=? AND r.deleted_at IS NULL`, body.ID).Scan(&dbID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) { writeJSON(w, 404, map[string]string{"error": "record not found"}) } else { writeJSON(w, 500, map[string]string{"error": err.Error()}) }
+			return
+		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		tx, err := a.DB.Begin()
 		if err != nil {
@@ -544,7 +547,11 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		}
 		// Keep the backing page version stable during property-only edits.
         var previousTitle string
-        if err:=tx.QueryRow("SELECT title FROM db_records WHERE id=?",body.ID).Scan(&previousTitle);err!=nil {tx.Rollback();writeJSON(w,404,map[string]string{"error":"record not found"});return}
+        if err:=tx.QueryRow("SELECT title FROM db_records WHERE id=?",body.ID).Scan(&previousTitle);err!=nil {
+			tx.Rollback()
+			if errors.Is(err, sql.ErrNoRows) { writeJSON(w,404,map[string]string{"error":"record not found"}) } else { writeJSON(w,500,map[string]string{"error":err.Error()}) }
+			return
+		}
 		// version check on record
 		res, err := tx.Exec(`UPDATE db_records SET title=COALESCE(NULLIF(?,''),title), version=version+1, updated_at=? WHERE id=? AND version=? AND deleted_at IS NULL`, body.Title, now, body.ID, body.Version)
 		if err != nil {
@@ -552,7 +559,8 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		n, _ := res.RowsAffected()
+		n, err := res.RowsAffected()
+		if err != nil { tx.Rollback(); writeJSON(w,500,map[string]string{"error":err.Error()}); return }
 		if n == 0 {
 			tx.Rollback()
 			writeJSON(w, 409, map[string]string{"error": "version conflict"})
@@ -629,6 +637,7 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, rec)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
+		if id == "" { writeJSON(w,400,map[string]string{"error":"id required"}); return }
         result,err:=a.DB.Exec("UPDATE db_records SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
         if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         changed,err:=result.RowsAffected()
