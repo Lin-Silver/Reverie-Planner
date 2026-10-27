@@ -796,6 +796,7 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, v)
 	case http.MethodDelete:
         id:=r.URL.Query().Get("id")
+        if id == "" { writeJSON(w, http.StatusBadRequest, map[string]string{"error": "view id required"}); return }
         tx,err:=a.DB.Begin()
         if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         defer tx.Rollback()
@@ -820,6 +821,17 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		dbID := r.URL.Query().Get("databaseId")
 		if dbID == "" {
 			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
+			return
+		}
+		// An empty view list is not evidence that the requested database exists.
+		// Reject missing and soft-deleted owners, and do not mask SQLite failures.
+		var active int
+		if err := a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL", dbID).Scan(&active); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not inspect database"})
+			return
+		}
+		if active != 1 {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "database not found"})
 			return
 		}
 		vs,err:=a.listViews(dbID)
