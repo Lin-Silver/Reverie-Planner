@@ -571,6 +571,15 @@ test('concurrency: stale title save exposes 409 and Retry preserves the local ti
     await expect(pageB.locator('.page-title')).toHaveValue(localTitle)
     expect((await fetchPage(pageB, pageId)).title).toBe(remoteTitle)
 
+    // Neither a second blur nor navigating away may silently retry a stale
+    // title write before the user explicitly resolves the conflict.
+    await pageB.locator('.page-title').focus()
+    await pageB.locator('.bn-editor').click()
+    await pageB.locator('.nav-item').filter({ hasText: 'Home' }).click()
+    await expect(pageB.locator('.page-title')).toHaveValue(localTitle)
+    await expect(pageB.getByText('Version conflict')).toBeVisible()
+    expect((await fetchPage(pageB, pageId)).title).toBe(remoteTitle)
+
     // Explicit Retry applies B's title using the current server version.
     await pageB.getByRole('button', { name: 'Retry my changes' }).click()
     await expect.poll(async () => (await fetchPage(pageB, pageId)).title, { timeout: 20000 })
