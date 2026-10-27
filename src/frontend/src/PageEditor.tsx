@@ -16,7 +16,7 @@ type Props = {
   onSave: (pageId: string, content: string) => Promise<void>
   onContentChange?: (content: string) => void
   onReload: () => Promise<void>
-  onRetry: (content: string) => Promise<void>
+  onRetry: (content: string, retryBody: boolean) => Promise<void>
   onStatus: (s: SaveStatus) => void
 }
 
@@ -171,10 +171,19 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
     if (retrying) return
     const content = JSON.stringify(editor.document)
     const revision = editRevision.current
+    // A title-only conflict must not replay the stale editor body over a
+    // remote body change. Retry the body only when there is a local body draft.
+    const retryBody = pendingContent.current !== null
     setRetrying(true)
     try {
-      await onRetry(content)
+      await onRetry(content, retryBody)
       if (isDiscarded.current) return
+      if (!retryBody && editRevision.current === revision) {
+        // The server may have newer body content. Refresh the editor after
+        // retrying only the title so the next edit starts from that content.
+        await onReload()
+        return
+      }
       conflictLocked.current = false
       if (editRevision.current === revision) {
         pendingContent.current = null
