@@ -71,7 +71,9 @@ func TestSelectOptionChangesProtectLiveAndTrashedRecordValues(t *testing.T) {
         for _, recID := range []string{live.ID, trashed.ID} {
             var version int
             if err := app.DB.QueryRow("SELECT version FROM db_records WHERE id=?", recID).Scan(&version); err != nil { t.Fatal(err) }
-            if version != 2 { t.Fatalf("property edit changed record %s version to %d", recID, version) }
+            wantVersion := 2 // One successful value update.
+            if recID == trashed.ID { wantVersion++ } // Soft deletion also versions the record.
+            if version != wantVersion { t.Fatalf("property edit changed record %s version to %d, want %d", recID, version, wantVersion) }
         }
     }
     update := func(prop DBProperty, config string, wantStatus int) DBProperty {
