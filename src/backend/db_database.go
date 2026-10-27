@@ -774,7 +774,7 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 
 func (a *AppContext) handleDBLinkedView(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		w.WriteHeader(405)
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	var body struct {
@@ -782,52 +782,98 @@ func (a *AppContext) handleDBLinkedView(w http.ResponseWriter, r *http.Request) 
 		PageID     string `json:"pageId"`
 		Name       string `json:"name"`
 	}
-	if _, err := decodeJSONRequest(r, &body); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
+	if _, err := decodeJSONRequest(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request JSON"})
+		return
+	}
 	if body.DatabaseID == "" || body.PageID == "" {
-		writeJSON(w, 400, map[string]string{"error": "databaseId and pageId required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "databaseId and pageId required"})
 		return
 	}
-	// verify page exists
-	var pageExists int
-	if err := a.DB.QueryRow(`SELECT COUNT(*) FROM pages WHERE id=?`, body.PageID).Scan(&pageExists); err != nil || pageExists == 0 {
-		writeJSON(w, 404, map[string]string{"error": "page not found"})
+
+	// The new view and its page binding are a single logical mutation.
+	// Check ownership inside the same transaction, including soft-deleted
+	// owners, so a linked page cannot overwrite an existing link or become
+	// a second owner of a database/record backing page.
+	tx, err := a.DB.Begin()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not begin linked view creation"})
 		return
 	}
-	// verify database exists
-	var dbExists int
-	if err := a.DB.QueryRow(`SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL`, body.DatabaseID).Scan(&dbExists); err != nil || dbExists == 0 {
-		writeJSON(w, 404, map[string]string{"error": "database not found"})
+	defer tx.Rollback()
+	var active int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL", body.DatabaseID).Scan(&active); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not inspect source database"})
+		return
+	}
+	if active != 1 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "database not found"})
+		return
+	}
+	var linkedDatabaseID, linkedViewID sql.NullString
+	if err := tx.QueryRow("SELECT linked_database_id, linked_view_id FROM pages WHERE id=?", body.PageID).Scan(&linkedDatabaseID, &linkedViewID); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "page not found"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not inspect linked view page"})
+		}
+		return
+	}
+	if linkedDatabaseID.String != "" || linkedViewID.String != "" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "page already has a linked view"})
+		return
+	}
+	var backingOwners int
+	if err := tx.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM databases WHERE page_id=?) +
+		(SELECT COUNT(*) FROM db_records WHERE page_id=?)`, body.PageID, body.PageID).Scan(&backingOwners); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not inspect page ownership"})
+		return
+	}
+	if backingOwners != 0 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "page is already a database or record backing page"})
 		return
 	}
 	v := DBView{ID: newID("view"), DatabaseID: body.DatabaseID, Name: body.Name, Type: "table", Config: "{}"}
 	if v.Name == "" {
 		v.Name = "Linked view"
 	}
-	var maxPos sql.NullInt64
-	_ = a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_views WHERE database_id=?`, body.DatabaseID).Scan(&maxPos)
-	v.Position = int(maxPos.Int64)
+	if err := tx.QueryRow("SELECT COALESCE(MAX(position),-1)+1 FROM db_views WHERE database_id=?", body.DatabaseID).Scan(&v.Position); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not determine linked view position"})
+		return
+	}
 	v.Version = 1
-	tx, err := a.DB.Begin()
-	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": err.Error()})
+	if _, err := tx.Exec(`INSERT INTO db_views (id, database_id, name, type, config, position, version) VALUES (?,?,?,?,?,?,1)`,
+		v.ID, v.DatabaseID, v.Name, v.Type, v.Config, v.Position); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create linked view"})
 		return
 	}
-	_, err = tx.Exec(`INSERT INTO db_views (id, database_id, name, type, config, position, version) VALUES (?,?,?,?,?,?,1)`, v.ID, v.DatabaseID, v.Name, v.Type, v.Config, v.Position)
+	// The guarded update also protects against an intervening binding.
+	// Bump the page version so an older BlockNote draft cannot silently
+	// acknowledge a page snapshot predating the new linked view.
+	pageRes, err := tx.Exec(`UPDATE pages SET linked_database_id=?, linked_view_id=?, updated_at=?, version=version+1
+		WHERE id=? AND COALESCE(linked_database_id,'')='' AND COALESCE(linked_view_id,'')=''
+		AND NOT EXISTS (SELECT 1 FROM databases WHERE page_id=pages.id)
+		AND NOT EXISTS (SELECT 1 FROM db_records WHERE page_id=pages.id)`,
+		body.DatabaseID, v.ID, time.Now().UTC().Format(time.RFC3339), body.PageID)
 	if err != nil {
-		tx.Rollback()
-		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not bind linked view page"})
 		return
 	}
-	pageRes, err := tx.Exec(`UPDATE pages SET linked_database_id=?, linked_view_id=?, updated_at=? WHERE id=?`, body.DatabaseID, v.ID, time.Now().UTC().Format(time.RFC3339), body.PageID)
-    if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
-    changed, err := pageRes.RowsAffected()
-    if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
-    if changed != 1 { tx.Rollback(); writeJSON(w, 404, map[string]string{"error": "linked view page missing"}); return }
+	changed, err := pageRes.RowsAffected()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not verify linked view page binding"})
+		return
+	}
+	if changed != 1 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "page is no longer available for a linked view"})
+		return
+	}
 	if err := tx.Commit(); err != nil {
-		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not commit linked view"})
 		return
 	}
-	writeJSON(w, 201, v)
+	writeJSON(w, http.StatusCreated, v)
 }
 
 func validatePropertyValue(propType string, val any) error {
