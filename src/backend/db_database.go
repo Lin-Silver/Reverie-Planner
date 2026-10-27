@@ -303,15 +303,39 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		}
 		if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
 		if err:=validateDBComputedDefinition(a.DB,p.DatabaseID,p.Type,p.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
-		if p.Type=="relation" {
+		// Owner/target validation, position reservation and insertion must be
+		// atomic. Otherwise concurrent creators can reuse MAX(position), or
+		// a property can be inserted after its owner is soft-deleted.
+		tx, err := a.DB.Begin()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		defer tx.Rollback()
+		if err := tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL", p.DatabaseID).Scan(&active); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not inspect property database"})
+			return
+		}
+		if active != 1 {
+			writeJSON(w, 404, map[string]string{"error": "database not found"})
+			return
+		}
+		if p.Type == "relation" {
 			var cfg struct {TargetDatabaseID string `json:"targetDatabaseId"`}
 			_ = json.Unmarshal([]byte(p.Config), &cfg)
 			var target int
-			if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",cfg.TargetDatabaseID).Scan(&target);err!=nil || target!=1 {writeJSON(w,400,map[string]string{"error":"relation target database not found"});return}
+			if err := tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL", cfg.TargetDatabaseID).Scan(&target); err != nil {
+				writeJSON(w, 500, map[string]string{"error": "could not inspect relation target"})
+				return
+			}
+			if target != 1 {
+				writeJSON(w, 400, map[string]string{"error": "relation target database not found"})
+				return
+			}
 		}
-		// position: append
+		// Reserve deleted property positions too: restore must not collide.
 		var nextPosition int64
-		if err := a.DB.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_properties WHERE database_id=?`, p.DatabaseID).Scan(&nextPosition); err != nil {
+		if err := tx.QueryRow(`SELECT COALESCE(MAX(position),-1)+1 FROM db_properties WHERE database_id=?`, p.DatabaseID).Scan(&nextPosition); err != nil {
 			writeJSON(w, 500, map[string]string{"error": "could not calculate property position"})
 			return
 		}
@@ -322,8 +346,11 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		p.Position = int(nextPosition)
 		p.Visible = true
 		p.Version = 1
-		_, err := a.DB.Exec(`INSERT INTO db_properties (id, database_id, name, type, config, position, visible, version) VALUES (?,?,?,?,?,?,1,1)`, p.ID, p.DatabaseID, p.Name, p.Type, p.Config, p.Position)
-		if err != nil {
+		if _, err := tx.Exec(`INSERT INTO db_properties (id, database_id, name, type, config, position, visible, version) VALUES (?,?,?,?,?,?,1,1)`, p.ID, p.DatabaseID, p.Name, p.Type, p.Config, p.Position); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := tx.Commit(); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
