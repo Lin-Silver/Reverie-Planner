@@ -438,6 +438,12 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Reject databases written by newer versions before any known migration runs.
+	// Opening them with an older binary could silently damage user data.
+	if err := rejectUnsupportedSchemaMigrations(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	migrations := []struct {
 		version    int
 		statements []string
