@@ -46,7 +46,7 @@ func (a *AppContext) handleDBTrash(w http.ResponseWriter,r *http.Request) {
         writeJSON(w,200,items)
     case http.MethodPost:
         var request struct{Kind string `json:"kind"`;ID string `json:"id"`}
-        if err:=json.NewDecoder(r.Body).Decode(&request);err!=nil {writeJSON(w,400,map[string]string{"error":"invalid JSON"});return}
+        if _,err:=decodeJSONRequest(r,&request);err!=nil {writeJSON(w,400,map[string]string{"error":"invalid request JSON"});return}
         source,ok:=trashSources[request.Kind]
         if !ok || request.ID==""{writeJSON(w,400,map[string]string{"error":"kind and id required"});return}
         tx,err:=a.DB.Begin()
@@ -68,6 +68,28 @@ func (a *AppContext) handleDBTrash(w http.ResponseWriter,r *http.Request) {
                 if pageID.Valid{
                     var count int
                     if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=?",pageID.String).Scan(&count);err!=nil||count!=1{writeJSON(w,409,map[string]string{"error":"backing record page unavailable"});return}
+                }
+            }
+            // Restoring a relation property must not reactivate a reference to
+            // a database that is still in trash. Preserve the property and
+            // its values so the user can restore the target database first.
+            if request.Kind=="property" {
+                var propertyType, config string
+                if err:=tx.QueryRow("SELECT type,config FROM db_properties WHERE id=? AND database_id=?",request.ID,databaseID).Scan(&propertyType,&config);err!=nil {
+                    writeJSON(w,500,map[string]string{"error":"could not inspect deleted property"});return
+                }
+                if propertyType=="relation" {
+                    var definition struct{TargetDatabaseID string `json:"targetDatabaseId"`}
+                    if err:=json.Unmarshal([]byte(config),&definition);err!=nil || definition.TargetDatabaseID=="" {
+                        writeJSON(w,409,map[string]string{"error":"relation target configuration is invalid"});return
+                    }
+                    var targetCount int
+                    if err:=tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",definition.TargetDatabaseID).Scan(&targetCount);err!=nil {
+                        writeJSON(w,500,map[string]string{"error":"could not validate relation target"});return
+                    }
+                    if targetCount!=1 {
+                        writeJSON(w,409,map[string]string{"error":"restore relation target database first"});return
+                    }
                 }
             }
         }
