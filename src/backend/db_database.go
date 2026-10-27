@@ -340,10 +340,10 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, 400, map[string]string{"error": "property name is required"})
 			return
 		}
-		var currentType, actualDatabaseID string
-		if err := a.DB.QueryRow(`SELECT p.type, p.database_id FROM db_properties p
+		var currentType, actualDatabaseID, currentConfig string
+		if err := a.DB.QueryRow(`SELECT p.type, p.database_id, p.config FROM db_properties p
 			JOIN databases d ON d.id=p.database_id AND d.deleted_at IS NULL
-			WHERE p.id=? AND p.deleted_at IS NULL`, p.ID).Scan(&currentType, &actualDatabaseID); err != nil {
+			WHERE p.id=? AND p.deleted_at IS NULL`, p.ID).Scan(&currentType, &actualDatabaseID, &currentConfig); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeJSON(w, 404, map[string]string{"error": "property not found"})
 			} else {
@@ -359,6 +359,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		}
 		if currentType != p.Type { writeJSON(w, 400, map[string]string{"error": "changing a property type requires a data migration"}); return }
 		if currentType == "title" && !p.Visible { writeJSON(w, 400, map[string]string{"error": "title property must remain visible"}); return }
+		if p.Config == "" { p.Config = "{}" }
 		if currentType != "title" { if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return } }
 		if err:=validateDBComputedDefinition(a.DB,actualDatabaseID,p.Type,p.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
 		if currentType == "relation" {
@@ -378,7 +379,17 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		if p.Visible {
 			visible = 1
 		}
-		res, err := a.DB.Exec(`UPDATE db_properties SET name=?, type=?, config=?, visible=?, version=version+1
+		// Validate existing values and update the schema in one transaction. This
+		// includes values on soft-deleted records, which may later be restored.
+		tx, err := a.DB.Begin()
+		if err != nil { writeJSON(w, 500, map[string]string{"error": "could not begin property update"}); return }
+		defer tx.Rollback()
+		if (currentType == "select" || currentType == "multi_select") && p.Config != currentConfig {
+			compatible, err := validateSelectOptionChange(tx, p.ID, currentType, p.Config)
+			if err != nil { writeJSON(w, 500, map[string]string{"error": "could not inspect existing property values"}); return }
+			if !compatible { writeJSON(w, 409, map[string]string{"error": "property options conflict with existing record values"}); return }
+		}
+		res, err := tx.Exec(`UPDATE db_properties SET name=?, type=?, config=?, visible=?, version=version+1
 			WHERE id=? AND database_id=? AND version=? AND deleted_at IS NULL AND database_id IN (SELECT id FROM databases WHERE deleted_at IS NULL)`,
 			p.Name, p.Type, p.Config, visible, p.ID, actualDatabaseID, p.Version)
 		if err != nil {
@@ -397,11 +408,12 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		// fetch
 		var out DBProperty
 		var vis int
-		if err := a.DB.QueryRow(`SELECT id, database_id, name, type, config, position, visible, version FROM db_properties WHERE id=?`, p.ID).Scan(&out.ID, &out.DatabaseID, &out.Name, &out.Type, &out.Config, &out.Position, &vis, &out.Version); err != nil {
+		if err := tx.QueryRow(`SELECT id, database_id, name, type, config, position, visible, version FROM db_properties WHERE id=?`, p.ID).Scan(&out.ID, &out.DatabaseID, &out.Name, &out.Type, &out.Config, &out.Position, &vis, &out.Version); err != nil {
 			writeJSON(w,500,map[string]string{"error":"could not read updated property"})
 			return
 		}
 		out.Visible = vis == 1
+		if err := tx.Commit(); err != nil { writeJSON(w, 500, map[string]string{"error": "could not commit property update"}); return }
 		writeJSON(w, 200, out)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
