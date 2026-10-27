@@ -203,9 +203,12 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
         pageChanged,err:=pageResult.RowsAffected()
         if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         if pageChanged!=1 {writeJSON(w,409,map[string]string{"error":"database backing page missing"});return}
+        // Materialize the full response before committing. A failed database,
+        // property or view readback must roll back both this rename and the
+        // backing-page version change rather than return 500 after a commit.
+        out,err:=readDatabaseInTx(tx,d.ID)
+        if err!=nil {writeJSON(w,500,map[string]string{"error":"could not read updated database"});return}
         if err:=tx.Commit();err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        out,err:=a.getDatabase(d.ID)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         writeJSON(w,200,out)
 	case http.MethodDelete:
         id:=r.URL.Query().Get("id")
@@ -235,6 +238,68 @@ func (a *AppContext) getDatabase(id string) (Database, error) {
 	if err != nil { return d, err }
 	d.Views, err = a.listViews(d.ID)
 	if err != nil { return d, err }
+	return d, nil
+}
+
+// readDatabaseInTx constructs the entire response on the same SQLite
+// transaction as a database mutation. A readback failure can then roll back
+// the mutation, including the associated backing-page title/version update.
+func readDatabaseInTx(tx *sql.Tx, id string) (Database, error) {
+	var d Database
+	var icon sql.NullString
+	err := tx.QueryRow(`SELECT id, page_id, title, icon, version, created_at, updated_at
+		FROM databases WHERE id=? AND deleted_at IS NULL`, id).
+		Scan(&d.ID, &d.PageID, &d.Title, &icon, &d.Version, &d.CreatedAt, &d.UpdatedAt)
+	if err != nil {
+		return d, err
+	}
+	d.Icon = icon.String
+
+	props, err := tx.Query(`SELECT id, database_id, name, type, config, position, visible, version
+		FROM db_properties WHERE database_id=? AND deleted_at IS NULL ORDER BY position ASC`, id)
+	if err != nil {
+		return d, err
+	}
+	d.Properties = []DBProperty{}
+	for props.Next() {
+		var p DBProperty
+		var visible int
+		if err := props.Scan(&p.ID, &p.DatabaseID, &p.Name, &p.Type, &p.Config, &p.Position, &visible, &p.Version); err != nil {
+			props.Close()
+			return d, err
+		}
+		p.Visible = visible == 1
+		d.Properties = append(d.Properties, p)
+	}
+	if err := props.Err(); err != nil {
+		props.Close()
+		return d, err
+	}
+	if err := props.Close(); err != nil {
+		return d, err
+	}
+
+	views, err := tx.Query(`SELECT id, database_id, name, type, config, position, version
+		FROM db_views WHERE database_id=? AND deleted_at IS NULL ORDER BY position ASC`, id)
+	if err != nil {
+		return d, err
+	}
+	d.Views = []DBView{}
+	for views.Next() {
+		var v DBView
+		if err := views.Scan(&v.ID, &v.DatabaseID, &v.Name, &v.Type, &v.Config, &v.Position, &v.Version); err != nil {
+			views.Close()
+			return d, err
+		}
+		d.Views = append(d.Views, v)
+	}
+	if err := views.Err(); err != nil {
+		views.Close()
+		return d, err
+	}
+	if err := views.Close(); err != nil {
+		return d, err
+	}
 	return d, nil
 }
 
