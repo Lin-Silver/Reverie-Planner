@@ -523,3 +523,44 @@ test('database visual evidence captures five real views with persisted records',
     await page.screenshot({path:'test-results/database-evidence/'+type+'.png',fullPage:true})
   }
 })
+
+
+test('bulk record deletion confirms once and retains selection after a failed request', async ({page}) => {
+  const host = await makeDatabase(page)
+  const first = await record(page, host.databaseId, 'Bulk first')
+  const second = await record(page, host.databaseId, 'Bulk second')
+  await reopen(page, host)
+  await page.getByLabel('Select record Bulk first').check()
+  await page.getByLabel('Select record Bulk second').check()
+  await expect(page.getByText('2 selected')).toBeVisible()
+
+  let confirmations = 0
+  page.on('dialog', async dialog => {
+    expect(dialog.type()).toBe('confirm')
+    confirmations++
+    await dialog.accept()
+  })
+  const deleteEndpoint = '**/api/db/records?id=*'
+  await page.route(deleteEndpoint, async route => {
+    if (route.request().method() === 'DELETE') {
+      await route.fulfill({status: 500, contentType: 'application/json', body: '{"error":"injected deletion failure"}'})
+    } else {
+      await route.continue()
+    }
+  })
+  await page.getByRole('button', {name: 'Delete selected rows'}).click()
+  await expect(page.getByRole('alert')).toContainText('Could not delete record')
+  await expect(page.getByText('2 selected')).toBeVisible()
+  expect(confirmations).toBe(1)
+  expect((await rows(page, host.databaseId)).map(row => row.id)).toEqual([first.id, second.id])
+
+  await page.unroute(deleteEndpoint)
+  await page.getByRole('button', {name: 'Delete selected rows'}).click()
+  await expect.poll(async () => (await rows(page, host.databaseId)).length, {timeout: 15000}).toBe(0)
+  await expect(page.getByText('2 selected')).toHaveCount(0)
+  expect(confirmations).toBe(2)
+  const trash = await page.request.get(API + '/db/trash?kind=record&databaseId=' + host.databaseId)
+  expect(trash.ok()).toBe(true)
+  const deleted = await trash.json() as {id: string}[]
+  expect(deleted.map(row => row.id)).toEqual(expect.arrayContaining([first.id, second.id]))
+})
