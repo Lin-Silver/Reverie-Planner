@@ -554,11 +554,28 @@ test('bulk record deletion confirms once and retains selection after a failed re
   expect(confirmations).toBe(1)
   expect((await rows(page, host.databaseId)).map(row => row.id)).toEqual([first.id, second.id])
 
+  // A failure after a successful deletion is a partial batch, not an
+  // all-or-nothing transaction. Keep only the unprocessed selection.
+  await page.unroute(deleteEndpoint)
+  let attempted = 0
+  await page.route(deleteEndpoint, async route => {
+    if (route.request().method() === 'DELETE' && ++attempted === 2) {
+      await route.fulfill({status: 500, contentType: 'application/json', body: '{"error":"second deletion failed"}'})
+    } else {
+      await route.continue()
+    }
+  })
+  await page.getByRole('button', {name: 'Delete selected rows'}).click()
+  await expect(page.getByRole('alert')).toContainText('Could not delete record')
+  await expect(page.getByText('1 selected')).toBeVisible()
+  expect((await rows(page, host.databaseId)).map(row => row.id)).toEqual([second.id])
+  expect(confirmations).toBe(2)
+
   await page.unroute(deleteEndpoint)
   await page.getByRole('button', {name: 'Delete selected rows'}).click()
   await expect.poll(async () => (await rows(page, host.databaseId)).length, {timeout: 15000}).toBe(0)
-  await expect(page.getByText('2 selected')).toHaveCount(0)
-  expect(confirmations).toBe(2)
+  await expect(page.getByText('1 selected')).toHaveCount(0)
+  expect(confirmations).toBe(3)
   const trash = await page.request.get(API + '/db/trash?kind=record&databaseId=' + host.databaseId)
   expect(trash.ok()).toBe(true)
   const deleted = await trash.json() as {id: string}[]
