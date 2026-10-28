@@ -800,11 +800,27 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
 		if id == "" { writeJSON(w,400,map[string]string{"error":"id required"}); return }
-        result,err:=a.DB.Exec("UPDATE db_records SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        changed,err:=result.RowsAffected()
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        if changed!=1 {writeJSON(w,404,map[string]string{"error":"record not found"});return}
+		tx, err := a.DB.Begin()
+		if err != nil { writeJSON(w,500,map[string]string{"error":err.Error()}); return }
+		defer tx.Rollback()
+		var targetDatabaseID string
+		if err := tx.QueryRow(`SELECT r.database_id FROM db_records r
+			JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL
+			WHERE r.id=? AND r.deleted_at IS NULL`, id).Scan(&targetDatabaseID); err != nil {
+			if errors.Is(err,sql.ErrNoRows) { writeJSON(w,404,map[string]string{"error":"record not found"}) } else { writeJSON(w,500,map[string]string{"error":err.Error()}) }
+			return
+		}
+		// A live source record must never retain a dangling relation to this
+		// record. Restrict deletion rather than silently rewriting user values.
+		blocked, err := hasIncomingActiveRelation(tx, id, targetDatabaseID)
+		if err != nil { writeJSON(w,500,map[string]string{"error":"could not inspect incoming relations"}); return }
+		if blocked { writeJSON(w,409,map[string]string{"error":"record is referenced by another record; remove relations first"}); return }
+		result, err := tx.Exec("UPDATE db_records SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
+		if err != nil { writeJSON(w,500,map[string]string{"error":err.Error()}); return }
+		changed, err := result.RowsAffected()
+		if err != nil { writeJSON(w,500,map[string]string{"error":err.Error()}); return }
+		if changed!=1 { writeJSON(w,409,map[string]string{"error":"record changed during deletion"}); return }
+		if err := tx.Commit(); err != nil { writeJSON(w,500,map[string]string{"error":err.Error()}); return }
 		w.WriteHeader(204)
 	default:
 		w.WriteHeader(405)
