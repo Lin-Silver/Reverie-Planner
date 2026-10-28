@@ -57,6 +57,8 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
       setViewId(old => vs.some(v => v.id === old) ? old : (vs.find(v => v.id === initialViewId)?.id || vs[0]?.id || ''))
       const recs = await api(`/api/db/records?databaseId=${databaseId}`) as DBRecord[]
       setRecords(recs || [])
+      // A reload or database switch must not retain selection from old rows.
+      setSelectedRecords([])
       setFailedEdit(null)
       setError('')
     } catch (e) { setError((e as Error).message) }
@@ -142,10 +144,14 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
 
   const deleteRecord = async (id:string, skipConfirmation = false): Promise<boolean> => {
     if(failedEdit){setError('Resolve the unsaved edit before deleting a record');return false}
+    const rec = records.find(row => row.id === id && row.databaseId === databaseId)
+    if (!rec) { setError('Record is no longer in this database; reload latest before deleting.'); return false }
     if(!skipConfirmation && !confirm('Move this record to Trash? Its data can be restored.'))return false
     try {
-      await api('/api/db/records?id='+encodeURIComponent(id),{method:'DELETE'})
+      // Prevent a stale browser tab from deleting edits made elsewhere.
+      await api('/api/db/records?id='+encodeURIComponent(id)+'&version='+encodeURIComponent(String(rec.version)),{method:'DELETE'})
       setRecords(rows=>rows.filter(r=>r.id!==id))
+      setSelectedRecords(selectedRecords.filter(selectedId=>selectedId!==id))
       setError('')
       return true
     }catch(e){setError('Could not delete record: '+(e as Error).message);return false}
