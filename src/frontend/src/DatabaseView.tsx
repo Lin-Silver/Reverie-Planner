@@ -217,7 +217,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         <button className="btn" aria-label="Delete database view" disabled={!view || db.views.length<=1} onClick={async () => {
           if (!view || !confirm('Delete this view? Records will be kept.')) return
           try {
-            await api('/api/db/views?id='+encodeURIComponent(view.id),{method:'DELETE'})
+            await api('/api/db/views?id='+encodeURIComponent(view.id)+'&version='+encodeURIComponent(String(view.version)),{method:'DELETE'})
             const remaining=db.views.filter(v=>v.id!==view.id)
             setDb(current=>current&&({...current,views:remaining}))
             setViewId(remaining[0]?.id||'')
