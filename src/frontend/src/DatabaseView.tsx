@@ -292,6 +292,8 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     setColumnOrder([...swapped,...columnOrder.filter(id=>!swapped.includes(id))])
   }
   const toggle=(id:string)=>setHiddenColumns(hiddenColumns.includes(id)?hiddenColumns.filter(x=>x!==id):[...hiddenColumns,id])
+  // Fixed widths prevent the browser from stretching the Page column across spare space.
+  const tableWidth=42+180+visibleProps.reduce((sum,p)=>sum+(columnWidths[p.id]||160),0)
   return <div style={{overflowX:'auto'}}>
     <details style={{marginBottom:10}}>
       <summary>Table columns and layout</summary>
@@ -309,7 +311,8 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
         setSelectedRecords([])
       }}>Move selected to Trash</button>
     </div>}
-    <table style={{borderCollapse:'collapse',width:'100%'}}>
+    <table style={{borderCollapse:'collapse',tableLayout:'fixed',width:tableWidth}}>
+      <colgroup><col style={{width:42}}/><col style={{width:180}}/>{visibleProps.map(p=><col key={p.id} style={{width:columnWidths[p.id]||160}} />)}</colgroup>
       <thead><tr>
         <th><input aria-label="Select all visible records" type="checkbox" checked={records.length>0 && records.every(r=>selectedRecords.includes(r.id))} onChange={e=>setSelectedRecords(e.target.checked?[...new Set([...selectedRecords,...records.map(r=>r.id)])]:selectedRecords.filter(id=>!records.some(r=>r.id===id)))} /></th>
         <th>Page</th>{visibleProps.map((p,index)=><th key={p.id} style={{border:'1px solid var(--border)',padding:5,width:columnWidths[p.id]||160,minWidth:100}}>
@@ -375,7 +378,7 @@ function Cell({ prop, recordId, value, onChange }: { prop: DBProperty; recordId:
       if(e.key==='Enter')e.currentTarget.blur()
       if(e.key==='Escape'){e.currentTarget.value=String(value??'');e.currentTarget.blur()}
     }}
-    style={{ width: '100%', border: 'none', background: 'transparent' }} />
+    style={{ width: '100%', border: 'none', background: 'transparent', color: 'var(--fg)' }} />
 }
 
 function RelationCell({ prop, value, onChange }: {prop:DBProperty;value:unknown;onChange:(v:unknown)=>void}) {
