@@ -143,6 +143,21 @@ func verifyAppliedMigrationIndexes(db *sql.DB, version int) error {
         if owner != index.table {
             return fmt.Errorf("index %s belongs to %s instead of %s", index.name, owner, index.table)
         }
+        // Matching names and columns alone are insufficient: a UNIQUE index
+        // may reject valid user writes, while a partial index may omit records
+        // required by lookup queries. The migration defines plain indexes.
+        var isUnique, isPartial int
+        err = db.QueryRow(`SELECT "unique", partial FROM pragma_index_list(?) WHERE name=?`,
+            index.table, index.name).Scan(&isUnique, &isPartial)
+        if errors.Is(err, sql.ErrNoRows) {
+            return fmt.Errorf("index %s is missing from %s index metadata", index.name, index.table)
+        }
+        if err != nil {
+            return fmt.Errorf("inspect index %s flags: %w", index.name, err)
+        }
+        if isUnique != 0 || isPartial != 0 {
+            return fmt.Errorf("index %s has unexpected unique=%d partial=%d flags", index.name, isUnique, isPartial)
+        }
         rows, err := db.Query("PRAGMA index_info(" + index.name + ")")
         if err != nil {
             return fmt.Errorf("inspect columns of index %s: %w", index.name, err)
