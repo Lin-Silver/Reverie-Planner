@@ -577,6 +577,57 @@ test('database multi-key numeric and text sorting persists per view and keeps nu
 })
 
 
+
+test('stale browser cannot delete a property renamed in another context', async ({browser}) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+    const host = await makeDatabase(pageA)
+    const note = await property(pageA, host.databaseId, 'Notes', 'text')
+    const item = await record(pageA, host.databaseId, 'Preserve on property conflict')
+    await reopen(pageB, host)
+    await expect(pageB.getByRole('button', {name:'Delete Notes'})).toBeVisible()
+
+    const beforeResponse = await pageA.request.get(API + '/databases?id=' + host.databaseId)
+    expect(beforeResponse.ok()).toBe(true)
+    const before = await beforeResponse.json() as {properties: {id:string;databaseId:string;name:string;type:string;config:string;visible:boolean;version:number}[]}
+    const original = before.properties.find(p => p.id === note.id)!
+    expect(original).toBeTruthy()
+    const rename = await pageA.request.put(API + '/db/properties', {
+      data: {...original, name:'Remote notes'}
+    })
+    expect(rename.status()).toBe(200)
+    const updated = await rename.json() as {version:number;name:string}
+    expect(updated.version).toBe(original.version + 1)
+
+    const stale = await pageA.request.delete(API + '/db/properties?id=' + note.id + '&version=' + original.version)
+    expect(stale.status()).toBe(409)
+    pageB.on('dialog', async dialog => { await dialog.accept() })
+    await pageB.getByRole('button', {name:'Delete Notes'}).click()
+    await expect(pageB.getByRole('alert')).toContainText('409')
+    const preservedResponse = await pageB.request.get(API + '/databases?id=' + host.databaseId)
+    expect(preservedResponse.ok()).toBe(true)
+    const preserved = await preservedResponse.json() as {properties:{id:string;name:string;version:number}[]}
+    expect(preserved.properties.find(p => p.id === note.id)).toMatchObject({name:'Remote notes',version:updated.version})
+    expect((await rows(pageB, host.databaseId)).some(r => r.id === item.id)).toBe(true)
+
+    await pageB.getByRole('button', {name:'Reload latest', exact:true}).click()
+    await expect(pageB.getByRole('button', {name:'Delete Remote notes'})).toBeVisible()
+    await pageB.getByRole('button', {name:'Delete Remote notes'}).click()
+    await expect.poll(async () => {
+      const res = await pageB.request.get(API + '/databases?id=' + host.databaseId)
+      const db = await res.json() as {properties:{id:string}[]}
+      return db.properties.some(p => p.id === note.id)
+    }, {timeout:15000}).toBe(false)
+    expect((await rows(pageB, host.databaseId)).some(r => r.id === item.id)).toBe(true)
+  } finally {
+    await contextA.close()
+    await contextB.close()
+  }
+})
+
 test('database keyboard cell edits commit on Enter, cancel on Escape, and avoid unchanged writes', async ({page}) => {
   const host=await makeDatabase(page)
   const note=await property(page,host.databaseId,'Note','text')
