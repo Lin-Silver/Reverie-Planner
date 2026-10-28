@@ -99,7 +99,17 @@ func formulaValue(def formulaDefinition, rec DBRecord, byID map[string]DBPropert
     if math.IsNaN(total)||math.IsInf(total,0){return nil}
     return total
 }
+// dbComputedQueryer allows computed rollups to read from the same SQLite
+// transaction as a record mutation, before its changes are committed.
+type dbComputedQueryer interface {
+    QueryRow(query string, args ...any) *sql.Row
+}
+
 func (a *AppContext) computeRollup(def rollupDefinition, record DBRecord) (any,error) {
+    return computeRollupWithQuery(a.DB, def, record)
+}
+
+func computeRollupWithQuery(q dbComputedQueryer, def rollupDefinition, record DBRecord) (any,error) {
     value:=record.Values[def.RelationPropertyID]
     ids,ok:=value.([]any)
     if !ok || len(ids)==0 {
@@ -112,7 +122,7 @@ func (a *AppContext) computeRollup(def rollupDefinition, record DBRecord) (any,e
         // The join confirms referenced record and target property still belong
         // to the same database even after property/record deletion.
         var stored sql.NullString
-        err:=a.DB.QueryRow("SELECT dv.value FROM db_records dr JOIN db_properties dp ON dp.database_id=dr.database_id AND dp.id=? AND dp.deleted_at IS NULL LEFT JOIN db_values dv ON dv.record_id=dr.id AND dv.property_id=dp.id WHERE dr.id=? AND dr.deleted_at IS NULL",def.TargetPropertyID,id).Scan(&stored)
+        err:=q.QueryRow("SELECT dv.value FROM db_records dr JOIN db_properties dp ON dp.database_id=dr.database_id AND dp.id=? AND dp.deleted_at IS NULL LEFT JOIN db_values dv ON dv.record_id=dr.id AND dv.property_id=dp.id WHERE dr.id=? AND dr.deleted_at IS NULL",def.TargetPropertyID,id).Scan(&stored)
         if err==sql.ErrNoRows {continue}
         if err!=nil{return nil,err}
         if !stored.Valid {if def.Aggregate=="count"{count++};continue}
@@ -134,6 +144,10 @@ func (a *AppContext) computeRollup(def rollupDefinition, record DBRecord) (any,e
     return nil,nil
 }
 func (a *AppContext) appendComputedValues(fields []DBProperty, rec *DBRecord) error {
+    return appendComputedValuesWithQuery(a.DB, fields, rec)
+}
+
+func appendComputedValuesWithQuery(q dbComputedQueryer, fields []DBProperty, rec *DBRecord) error {
     byID:=map[string]DBProperty{}
     for _,field:=range fields{byID[field.ID]=field}
     for _,field:=range fields{
@@ -144,7 +158,7 @@ func (a *AppContext) appendComputedValues(fields []DBProperty, rec *DBRecord) er
             rec.Values[field.ID]=formulaValue(def,*rec,byID)
         case "rollup":
             def,err:=parseRollupDefinition(field.Config);if err!=nil{return err}
-            value,err:=a.computeRollup(def,*rec);if err!=nil{return err}
+            value,err:=computeRollupWithQuery(q,def,*rec);if err!=nil{return err}
             rec.Values[field.ID]=value
         }
     }
