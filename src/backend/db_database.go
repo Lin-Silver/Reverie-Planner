@@ -784,12 +784,18 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
             if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=(SELECT page_id FROM db_records WHERE id=?)",body.ID).Scan(&exists);err!=nil {tx.Rollback();writeJSON(w,500,map[string]string{"error":err.Error()});return}
             if exists!=1 {tx.Rollback();writeJSON(w,409,map[string]string{"error":"linked record page missing"});return}
         }
+		// Build the complete response (including computed values) before commit.
+		// An unreadable record, page, property or rollup must not publish the edit.
+		rec, err := readDBRecordInTx(tx, body.ID, body.Title != "" && body.Title != previousTitle)
+		if err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": "could not read updated record"})
+			return
+		}
 		if err := tx.Commit(); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		rec, err := a.getDBRecord(body.ID)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
 		writeJSON(w, 200, rec)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
