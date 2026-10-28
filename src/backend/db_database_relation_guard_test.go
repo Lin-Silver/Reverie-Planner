@@ -225,3 +225,103 @@ func TestDatabaseDeleteRelationInspectionFaultRollsBack(t *testing.T) {
 	}
 	assertViewIntegrityProviders(t, providerPath, providerBefore)
 }
+
+
+func TestRelationPropertyRejectsDuplicateTargetConfiguration(t *testing.T) {
+	app := setupTestContext(t)
+	defer app.DB.Close()
+	source, from := dbRegressionCreate(t, app)
+	target, to := dbRegressionCreate(t, app)
+	providerPath, providerBefore := viewIntegrityProviders(t, app)
+
+	var before int
+	if err := app.DB.QueryRow("SELECT COUNT(*) FROM db_properties WHERE database_id=?", source.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	ambiguous := fmt.Sprintf(`{"targetDatabaseId":%q,"targetDatabaseId":%q}`, source.ID, target.ID)
+	body := fmt.Sprintf(`{"databaseId":%q,"name":"Ambiguous","type":"relation","config":%q}`, source.ID, ambiguous)
+	rejected := dbRegressionCall(t, app, http.MethodPost, "/api/db/properties", body, app.handleDBProperties)
+	if rejected.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate relation target must be rejected: %d %s", rejected.Code, rejected.Body.String())
+	}
+	var after, recordVersion int
+	if err := app.DB.QueryRow("SELECT COUNT(*) FROM db_properties WHERE database_id=?", source.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DB.QueryRow("SELECT version FROM db_records WHERE id=?", from.ID).Scan(&recordVersion); err != nil {
+		t.Fatal(err)
+	}
+	if before != after || recordVersion != from.Version {
+		t.Fatalf("invalid property creation changed schema or record: properties %d -> %d, record version %d", before, after, recordVersion)
+	}
+	assertViewIntegrityProviders(t, providerPath, providerBefore)
+
+	// Rejection must not prevent a subsequent valid relation from persisting.
+	createIncomingRelationForDeleteTest(t, app, source, target, from, to)
+	assertViewIntegrityProviders(t, providerPath, providerBefore)
+}
+
+func TestDuplicateSavedRelationTargetsFailClosedForRecordAndDatabaseDelete(t *testing.T) {
+	app := setupTestContext(t)
+	defer app.DB.Close()
+	source, from := dbRegressionCreate(t, app)
+	target, to := dbRegressionCreate(t, app)
+	property, _ := createIncomingRelationForDeleteTest(t, app, source, target, from, to)
+	providerPath, providerBefore := viewIntegrityProviders(t, app)
+
+	ambiguous := fmt.Sprintf(`{"targetDatabaseId":%q,"targetDatabaseId":%q}`, source.ID, target.ID)
+	if _, err := app.DB.Exec("UPDATE db_properties SET config=? WHERE id=?", ambiguous, property.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		path string
+		handler http.HandlerFunc
+	}{
+		{"/api/databases?id=" + target.ID, app.handleDatabases},
+		{"/api/db/records?id=" + to.ID, app.handleDBRecords},
+	} {
+		response := dbRegressionCall(t, app, http.MethodDelete, test.path, "", test.handler)
+		if response.Code != http.StatusInternalServerError {
+			t.Fatalf("ambiguous saved relation must fail closed at %s: %d %s", test.path, response.Code, response.Body.String())
+		}
+	}
+
+	var dbVersion, recordVersion int
+	var dbDeleted, recordDeleted sql.NullString
+	if err := app.DB.QueryRow("SELECT version,deleted_at FROM databases WHERE id=?", target.ID).Scan(&dbVersion, &dbDeleted); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DB.QueryRow("SELECT version,deleted_at FROM db_records WHERE id=?", to.ID).Scan(&recordVersion, &recordDeleted); err != nil {
+		t.Fatal(err)
+	}
+	var relationValue string
+	if err := app.DB.QueryRow("SELECT value FROM db_values WHERE property_id=? AND record_id=?", property.ID, from.ID).Scan(&relationValue); err != nil {
+		t.Fatal(err)
+	}
+	if dbVersion != target.Version || dbDeleted.Valid || recordVersion != to.Version || recordDeleted.Valid ||
+		relationValue != fmt.Sprintf(`[%q]`, to.ID) {
+		t.Fatalf("rejected deletes changed existing data: db=%d/%v record=%d/%v relation=%s",
+			dbVersion, dbDeleted, recordVersion, recordDeleted, relationValue)
+	}
+	assertViewIntegrityProviders(t, providerPath, providerBefore)
+
+	// Once the legacy/corrupt configuration is repaired, both guards must
+	// still enforce the normal 409 incoming-reference policy.
+	valid := fmt.Sprintf(`{"targetDatabaseId":%q}`, target.ID)
+	if _, err := app.DB.Exec("UPDATE db_properties SET config=? WHERE id=?", valid, property.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		path string
+		handler http.HandlerFunc
+	}{
+		{"/api/databases?id=" + target.ID, app.handleDatabases},
+		{"/api/db/records?id=" + to.ID, app.handleDBRecords},
+	} {
+		response := dbRegressionCall(t, app, http.MethodDelete, test.path, "", test.handler)
+		if response.Code != http.StatusConflict {
+			t.Fatalf("repaired relation must block delete at %s: %d %s", test.path, response.Code, response.Body.String())
+		}
+	}
+	assertViewIntegrityProviders(t, providerPath, providerBefore)
+}
