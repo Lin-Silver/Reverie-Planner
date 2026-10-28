@@ -18,7 +18,7 @@ func TestDBRecordUpdateReadbackFailureRollsBackAllChanges(t *testing.T) {
             name: "unreadable record version",
             trigger: func(recordID, _, _ string) string {
                 return fmt.Sprintf(`CREATE TRIGGER corrupt_record_update AFTER UPDATE ON db_records
-                    WHEN NEW.id=%q AND NEW.title='Faulted update'
+                    WHEN NEW.id='%s' AND NEW.title='Faulted update'
                     BEGIN UPDATE db_records SET version='bad-version' WHERE id=NEW.id; END`, recordID)
             },
         },
@@ -34,7 +34,7 @@ func TestDBRecordUpdateReadbackFailureRollsBackAllChanges(t *testing.T) {
             name: "invalid stored property JSON",
             trigger: func(_, numberPropertyID, _ string) string {
                 return fmt.Sprintf(`CREATE TRIGGER corrupt_record_update AFTER INSERT ON db_values
-                    WHEN NEW.property_id=%q
+                    WHEN NEW.property_id='%s'
                     BEGIN UPDATE db_values SET value='invalid-json' WHERE record_id=NEW.record_id AND property_id=NEW.property_id; END`, numberPropertyID)
             },
         },
@@ -42,8 +42,8 @@ func TestDBRecordUpdateReadbackFailureRollsBackAllChanges(t *testing.T) {
             name: "unreadable computed property",
             trigger: func(recordID, _, formulaPropertyID string) string {
                 return fmt.Sprintf(`CREATE TRIGGER corrupt_record_update AFTER UPDATE ON db_records
-                    WHEN NEW.id=%q AND NEW.title='Faulted update'
-                    BEGIN UPDATE db_properties SET config='invalid-formula' WHERE id=%q; END`, recordID, formulaPropertyID)
+                    WHEN NEW.id='%s' AND NEW.title='Faulted update'
+                    BEGIN UPDATE db_properties SET config='invalid-formula' WHERE id='%s'; END`, recordID, formulaPropertyID)
             },
         },
     }
