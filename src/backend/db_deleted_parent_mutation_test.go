@@ -82,3 +82,64 @@ func TestDBViewDeleteRejectsTrashedParentAndPreservesRestoreData(t *testing.T) {
 		t.Fatal("view delete unexpectedly restored its parent database")
 	}
 }
+
+// Independent properties, like views, must remain available for a later
+// database restore. Preserve the computed-dependency 409 precedence: this
+// test covers properties that have no active computed dependents.
+func TestDBPropertyDeleteRejectsTrashedParentWithoutDependencies(t *testing.T) {
+	app := setupTestContext(t)
+	defer app.DB.Close()
+
+	database, record := dbRegressionCreate(t, app)
+	property := computedProperty(t, app, database.ID, "Retain independent property", "text", map[string]any{})
+	providerPath, providerBefore := viewIntegrityProviders(t, app)
+
+	trashed := dbRegressionCall(t, app, http.MethodDelete,
+		fmt.Sprintf("/api/databases?id=%s&version=%d", database.ID, database.Version),
+		"", app.handleDatabases)
+	if trashed.Code != http.StatusNoContent {
+		t.Fatalf("trash database: %d %s", trashed.Code, trashed.Body.String())
+	}
+
+	for _, tc := range []struct {
+		name, suffix string
+	}{
+		{"legacy versionless", ""},
+		{"matching version", fmt.Sprintf("&version=%d", property.Version)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := dbRegressionCall(t, app, http.MethodDelete,
+				"/api/db/properties?id="+property.ID+tc.suffix, "", app.handleDBProperties)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("property delete after parent trash: got %d, want 404: %s", response.Code, response.Body.String())
+			}
+			var version int
+			var deleted sql.NullString
+			if err := app.DB.QueryRow("SELECT version,deleted_at FROM db_properties WHERE id=?", property.ID).
+				Scan(&version, &deleted); err != nil {
+				t.Fatal(err)
+			}
+			if version != property.Version || deleted.Valid {
+				t.Fatalf("rejected delete changed property: version=%d deleted=%v", version, deleted)
+			}
+			var recordVersion int
+			var recordDeleted sql.NullString
+			if err := app.DB.QueryRow("SELECT version,deleted_at FROM db_records WHERE id=?", record.ID).
+				Scan(&recordVersion, &recordDeleted); err != nil {
+				t.Fatal(err)
+			}
+			if recordVersion != record.Version || recordDeleted.Valid {
+				t.Fatalf("rejected delete changed record: version=%d deleted=%v", recordVersion, recordDeleted)
+			}
+			var databaseDeleted sql.NullString
+			if err := app.DB.QueryRow("SELECT deleted_at FROM databases WHERE id=?", database.ID).
+				Scan(&databaseDeleted); err != nil {
+				t.Fatal(err)
+			}
+			if !databaseDeleted.Valid {
+				t.Fatal("rejected property deletion unexpectedly restored database")
+			}
+			assertViewIntegrityProviders(t, providerPath, providerBefore)
+		})
+	}
+}
