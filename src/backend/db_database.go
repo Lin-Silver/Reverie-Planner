@@ -604,13 +604,6 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
 			return
 		}
-		// Initial property values are not yet supported by the create path.
-		// Refuse them instead of silently returning a record without the values
-		// supplied by the caller. The versioned PUT endpoint supports these edits.
-		if len(rec.Values) != 0 {
-			writeJSON(w, 400, map[string]string{"error": "initial property values must be saved through record update"})
-			return
-		}
 		if rec.PageID != "" {
 			writeJSON(w, 400, map[string]string{"error": "new records must create their own backing page"})
 			return
@@ -652,6 +645,14 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			}
 			rec.PageID = pageID
 		}
+		// Initial values are validated and inserted in the same transaction as
+		// the record and backing page. A bad property or SQLite failure must
+		// leave no record, page or partially saved property values.
+		if status, err := insertInitialRecordValues(tx, rec.ID, rec.DatabaseID, rec.Values, now); err != nil {
+			tx.Rollback()
+			writeJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
 		// Materialize the record and its backing page before commit. A trigger
 		// or damaged schema can make an inserted row unreadable; in that case
 		// neither the record nor its newly created page may be published.
@@ -679,6 +680,16 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		}
 		created.PageID = createdPageID.String
 		created.Values = map[string]any{}
+		if len(rec.Values) != 0 {
+			// The full response (including computed values) must be readable
+			// before publishing a record with initial property values.
+			created, err = readDBRecordInTx(tx, rec.ID, true)
+			if err != nil {
+				tx.Rollback()
+				writeJSON(w, 500, map[string]string{"error": "could not read created record values"})
+				return
+			}
+		}
 		if err := tx.Commit(); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
