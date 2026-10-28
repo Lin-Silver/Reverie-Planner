@@ -595,8 +595,9 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		defer tx.Rollback()
 		var kind, databaseID string
 		var currentVersion int
-		if err := tx.QueryRow(`SELECT type, database_id, version FROM db_properties
-			WHERE id=? AND deleted_at IS NULL`, id).Scan(&kind, &databaseID, &currentVersion); err != nil {
+		if err := tx.QueryRow(`SELECT p.type, p.database_id, p.version FROM db_properties p
+			JOIN databases d ON d.id=p.database_id AND d.deleted_at IS NULL
+			WHERE p.id=? AND p.deleted_at IS NULL`, id).Scan(&kind, &databaseID, &currentVersion); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeJSON(w, 404, map[string]string{"error": "property not found"})
 			} else {
@@ -1137,7 +1138,7 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
         defer tx.Rollback()
         var dbID string
         var currentVersion int
-        if err:=tx.QueryRow("SELECT database_id,version FROM db_views WHERE id=? AND deleted_at IS NULL",id).Scan(&dbID,&currentVersion);err!=nil {
+        if err:=tx.QueryRow("SELECT v.database_id,v.version FROM db_views v JOIN databases d ON d.id=v.database_id AND d.deleted_at IS NULL WHERE v.id=? AND v.deleted_at IS NULL",id).Scan(&dbID,&currentVersion);err!=nil {
             if err==sql.ErrNoRows {writeJSON(w,404,map[string]string{"error":"view not found"})} else {writeJSON(w,500,map[string]string{"error":"could not inspect view"})}
             return
         }
