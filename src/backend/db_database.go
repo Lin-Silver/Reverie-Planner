@@ -215,13 +215,57 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
         if err:=tx.Commit();err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         writeJSON(w,200,out)
 	case http.MethodDelete:
-        id:=r.URL.Query().Get("id")
-        result,err:=a.DB.Exec("UPDATE databases SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        changed,err:=result.RowsAffected()
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        if changed!=1 {writeJSON(w,404,map[string]string{"error":"database not found"});return}
-        w.WriteHeader(204)
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			writeJSON(w, 400, map[string]string{"error": "database id required"})
+			return
+		}
+		tx, err := a.DB.Begin()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not begin database deletion"})
+			return
+		}
+		defer tx.Rollback()
+		var present int
+		if err := tx.QueryRow("SELECT 1 FROM databases WHERE id=? AND deleted_at IS NULL", id).Scan(&present); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, 404, map[string]string{"error": "database not found"})
+			} else {
+				writeJSON(w, 500, map[string]string{"error": "could not inspect database"})
+			}
+			return
+		}
+		// A relation definition in another database becomes unusable if its
+		// target database is trashed, even when no values have been saved yet.
+		// Keep the dependency check and the tombstone in one transaction.
+		blocked, err := hasExternalActiveRelationProperty(tx, id)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not inspect relation dependencies"})
+			return
+		}
+		if blocked {
+			writeJSON(w, 409, map[string]string{"error": "database is referenced by an active relation property"})
+			return
+		}
+		result, err := tx.Exec("UPDATE databases SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL", time.Now().UTC().Format(time.RFC3339), id)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if changed != 1 {
+			writeJSON(w, 409, map[string]string{"error": "database was already deleted"})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not commit database deletion"})
+			return
+		}
+		w.WriteHeader(204)
 	default:
 		w.WriteHeader(405)
 	}
