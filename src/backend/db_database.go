@@ -621,8 +621,21 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, 409, map[string]string{"error": "property is referenced by an active formula or rollup"})
 			return
 		}
+		// Keep the dependency conflict above intact, including dependencies
+		// belonging to a trashed database. Otherwise an independent property
+		// must not be removed from a trashed database's restorable schema.
+		var activeOwner int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL", databaseID).Scan(&activeOwner); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not inspect property database"})
+			return
+		}
+		if activeOwner != 1 {
+			writeJSON(w, 404, map[string]string{"error": "database not found"})
+			return
+		}
 		result, err := tx.Exec(`UPDATE db_properties SET deleted_at=?,version=version+1
-			WHERE id=? AND version=? AND deleted_at IS NULL AND type<>'title'`, time.Now().UTC().Format(time.RFC3339), id, currentVersion)
+			WHERE id=? AND version=? AND deleted_at IS NULL AND type<>'title'
+			AND database_id IN (SELECT id FROM databases WHERE deleted_at IS NULL)`, time.Now().UTC().Format(time.RFC3339), id, currentVersion)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
