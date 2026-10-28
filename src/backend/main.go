@@ -444,6 +444,12 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// An applied migration must have its required schema. Reject inconsistent
+	// historical databases before attempting any subsequent migration.
+	if err := verifyAppliedMigrationSchema(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	migrations := []struct {
 		version    int
 		statements []string
