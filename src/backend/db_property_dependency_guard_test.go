@@ -128,3 +128,26 @@ func TestDBPropertyDeleteFailsClosedOnCorruptComputedConfigAndRecovers(t *testin
 	}
 	assertViewIntegrityProviders(t, providerPath, providerBefore)
 }
+
+func TestDBPropertyDeleteKeepsDependenciesInTrashedDatabase(t *testing.T) {
+	app := setupTestContext(t)
+	defer app.DB.Close()
+	database, record := dbRegressionCreate(t, app)
+	number := computedProperty(t, app, database.ID, "Value", "number", map[string]any{})
+	computedProperty(t, app, database.ID, "Dependent", "formula", map[string]any{
+		"operation": "sum",
+		"args": []any{map[string]any{"propertyId": number.ID}},
+	})
+	providerPath, providerBefore := viewIntegrityProviders(t, app)
+	trashed := dbRegressionCall(t, app, http.MethodDelete,
+		"/api/databases?id="+database.ID, "", app.handleDatabases)
+	if trashed.Code != http.StatusNoContent {
+		t.Fatalf("trash database: %d %s", trashed.Code, trashed.Body.String())
+	}
+
+	// A database can be restored later, so its still-active computed
+	// properties must continue to protect their dependencies.
+	deletePropertyForGuardTest(t, app, number.ID, http.StatusConflict)
+	assertPropertyDeleteGuardState(t, app, number, record)
+	assertViewIntegrityProviders(t, providerPath, providerBefore)
+}
