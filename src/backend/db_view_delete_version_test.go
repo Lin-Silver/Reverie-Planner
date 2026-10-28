@@ -39,6 +39,14 @@ func TestDBViewDeleteRejectsStaleVersionWithoutLosingRemoteChanges(t *testing.T)
     }{
         {"malformed version", "&version=invalid", http.StatusBadRequest},
         {"zero version", "&version=0", http.StatusBadRequest},
+        {"empty version", "&version=", http.StatusBadRequest},
+        {"bare version key", "&version", http.StatusBadRequest},
+        {"duplicate same version", "&version=2&version=2", http.StatusBadRequest},
+        {"duplicate different versions", "&version=1&version=2", http.StatusBadRequest},
+        {"duplicate with empty version", "&version=&version=2", http.StatusBadRequest},
+        {"negative version", "&version=-1", http.StatusBadRequest},
+        {"whitespace version", "&version=%20", http.StatusBadRequest},
+        {"overflow version", "&version=999999999999999999999999999999999", http.StatusBadRequest},
         {"stale version", fmt.Sprintf("&version=%d", original.Version), http.StatusConflict},
     } {
         t.Run(tc.name, func(t *testing.T) {
