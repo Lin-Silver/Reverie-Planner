@@ -1075,13 +1075,25 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
         id:=r.URL.Query().Get("id")
         if id == "" { writeJSON(w, http.StatusBadRequest, map[string]string{"error": "view id required"}); return }
+        // Preserve legacy versionless DELETE callers, but reject stale
+        // browser views so another tab's renamed/configured view survives.
+        var expectedVersion int
+        if raw:=r.URL.Query().Get("version");raw!="" {
+            parsed,parseErr:=strconv.Atoi(raw)
+            if parseErr!=nil || parsed<1 {writeJSON(w,400,map[string]string{"error":"invalid view version"});return}
+            expectedVersion=parsed
+        }
         tx,err:=a.DB.Begin()
         if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         defer tx.Rollback()
         var dbID string
-        if err:=tx.QueryRow("SELECT database_id FROM db_views WHERE id=? AND deleted_at IS NULL",id).Scan(&dbID);err!=nil {
+        var currentVersion int
+        if err:=tx.QueryRow("SELECT database_id,version FROM db_views WHERE id=? AND deleted_at IS NULL",id).Scan(&dbID,&currentVersion);err!=nil {
             if err==sql.ErrNoRows {writeJSON(w,404,map[string]string{"error":"view not found"})} else {writeJSON(w,500,map[string]string{"error":"could not inspect view"})}
             return
+        }
+        if expectedVersion!=0 && expectedVersion!=currentVersion {
+            writeJSON(w,409,map[string]string{"error":"view changed; reload latest before deleting"});return
         }
         var refs int
         if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE linked_view_id=?",id).Scan(&refs);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
@@ -1089,7 +1101,7 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
         var total int
         if err:=tx.QueryRow("SELECT COUNT(*) FROM db_views WHERE database_id=? AND deleted_at IS NULL",dbID).Scan(&total);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         if total<=1 {writeJSON(w,409,map[string]string{"error":"cannot remove last database view"});return}
-        deleted,err:=tx.Exec("UPDATE db_views SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
+        deleted,err:=tx.Exec("UPDATE db_views SET deleted_at=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id,currentVersion)
         if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         count,err:=deleted.RowsAffected()
         if err!=nil || count!=1 {writeJSON(w,409,map[string]string{"error":"view changed during deletion"});return}
