@@ -17,6 +17,13 @@ func verifyAppliedMigrationSchema(db *sql.DB) error {
             columns []string
         }
     }{
+        {7, []struct{name string; columns []string}{
+            {"databases", []string{"id", "page_id", "title", "version"}},
+            {"db_properties", []string{"id", "database_id", "name", "type", "config", "position", "version"}},
+            {"db_records", []string{"id", "database_id", "title", "page_id", "version"}},
+            {"db_values", []string{"record_id", "property_id", "value", "version"}},
+            {"db_views", []string{"id", "database_id", "name", "type", "config", "position", "version"}},
+        }},
         {8, []struct{name string; columns []string}{
             {"pages", []string{"linked_database_id", "linked_view_id"}},
         }},
