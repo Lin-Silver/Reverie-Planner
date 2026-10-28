@@ -223,14 +223,10 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 		}
 		// Legacy clients may omit the version; clients that supply one must
 		// never delete a database renamed by another browser context.
-		var expectedVersion int
-		if raw := r.URL.Query().Get("version"); raw != "" {
-			parsed, parseErr := strconv.Atoi(raw)
-			if parseErr != nil || parsed < 1 {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid database version"})
-				return
-			}
-			expectedVersion = parsed
+		expectedVersion, versionErr := parseOptionalDeleteVersion(r)
+		if versionErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid database version"})
+			return
 		}
 		tx, err := a.DB.Begin()
 		if err != nil {
@@ -585,14 +581,10 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		}
 		// Keep legacy versionless callers compatible while preventing a stale
 		// browser tab from deleting a property renamed or configured elsewhere.
-		var expectedVersion int
-		if raw := r.URL.Query().Get("version"); raw != "" {
-			parsed, parseErr := strconv.Atoi(raw)
-			if parseErr != nil || parsed < 1 {
-				writeJSON(w, 400, map[string]string{"error": "invalid property version"})
-				return
-			}
-			expectedVersion = parsed
+		expectedVersion, versionErr := parseOptionalDeleteVersion(r)
+		if versionErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid property version"})
+			return
 		}
 		// The version/dependency checks and tombstone must share a SQLite
 		// transaction so concurrent edits cannot invalidate either check.
@@ -923,14 +915,10 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		if id == "" { writeJSON(w,400,map[string]string{"error":"id required"}); return }
 		// Version is optional for existing API clients, but the browser sends it
 		// so a stale tab cannot silently delete another tab's newer edits.
-		var expectedVersion int
-		if raw := r.URL.Query().Get("version"); raw != "" {
-			parsed, parseErr := strconv.Atoi(raw)
-			if parseErr != nil || parsed < 1 {
-				writeJSON(w,400,map[string]string{"error":"invalid record version"})
-				return
-			}
-			expectedVersion = parsed
+		expectedVersion, versionErr := parseOptionalDeleteVersion(r)
+		if versionErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid record version"})
+			return
 		}
 		tx, err := a.DB.Begin()
 		if err != nil { writeJSON(w,500,map[string]string{"error":err.Error()}); return }
