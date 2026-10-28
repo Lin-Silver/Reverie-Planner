@@ -420,6 +420,45 @@ test('stale browser cannot delete a view renamed in another context', async ({br
   }
 })
 
+test('stale browser database delete cannot discard a remote rename', async ({browser}) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+    const host = await makeDatabase(pageA)
+    const item = await record(pageA, host.databaseId, 'Keep after rejected database deletion')
+    await reopen(pageB, host)
+
+    const initialResponse = await pageB.request.get(API + '/databases?id=' + host.databaseId)
+    expect(initialResponse.status()).toBe(200)
+    const initial = await initialResponse.json() as {id:string;title:string;icon:string;version:number}
+    const rename = await pageA.request.put(API + '/databases', {
+      data: {id:initial.id,title:'Remote database rename',icon:initial.icon,version:initial.version}
+    })
+    expect(rename.status()).toBe(200)
+    const updated = await rename.json() as {title:string;version:number}
+    expect(updated.version).toBe(initial.version + 1)
+
+    const stale = await pageB.request.delete(API + '/databases?id=' + host.databaseId + '&version=' + initial.version)
+    expect(stale.status()).toBe(409)
+    const preservedResponse = await pageB.request.get(API + '/databases?id=' + host.databaseId)
+    expect(preservedResponse.status()).toBe(200)
+    const preserved = await preservedResponse.json() as {title:string;version:number}
+    expect(preserved).toMatchObject({title:updated.title,version:updated.version})
+    expect((await rows(pageB, host.databaseId)).some(row => row.id === item.id)).toBe(true)
+    await expect(pageB.getByLabel('Active database view')).toBeVisible()
+
+    const latest = await pageB.request.delete(API + '/databases?id=' + host.databaseId + '&version=' + updated.version)
+    expect(latest.status()).toBe(204)
+    const missing = await pageB.request.get(API + '/databases?id=' + host.databaseId)
+    expect(missing.status()).toBe(404)
+  } finally {
+    await contextA.close()
+    await contextB.close()
+  }
+})
+
 test('database trash restores deleted record and preserves its attributes',async({page})=>{
   const host=await makeDatabase(page)
   const prop=await property(page,host.databaseId,'Note','text')
