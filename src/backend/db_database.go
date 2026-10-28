@@ -595,9 +595,8 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		defer tx.Rollback()
 		var kind, databaseID string
 		var currentVersion int
-		if err := tx.QueryRow(`SELECT p.type, p.database_id, p.version FROM db_properties p
-			JOIN databases d ON d.id=p.database_id AND d.deleted_at IS NULL
-			WHERE p.id=? AND p.deleted_at IS NULL`, id).Scan(&kind, &databaseID, &currentVersion); err != nil {
+		if err := tx.QueryRow(`SELECT type, database_id, version FROM db_properties
+			WHERE id=? AND deleted_at IS NULL`, id).Scan(&kind, &databaseID, &currentVersion); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeJSON(w, 404, map[string]string{"error": "property not found"})
 			} else {
