@@ -209,6 +209,55 @@ test('database concurrent edits preserve stale draft until explicit Retry or Rel
 })
 
 
+test('record deletion refuses stale browser versions and preserves newer remote edits', async ({browser}) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+    const host = await makeDatabase(pageA)
+    const item = await record(pageA, host.databaseId, 'Delete conflict original')
+    await reopen(pageB, host)
+    const staleRow = pageB.locator('[data-testid="database-record-row"][data-record-id="' + item.id + '"]')
+    await expect(staleRow).toBeVisible()
+
+    const remote = await pageA.request.put(API + '/db/records', {
+      data: {id: item.id, version: item.version, title: 'Delete conflict remote edit', values: {}}
+    })
+    expect(remote.status()).toBe(200)
+    const updated = await remote.json() as RecordRow
+    expect(updated.version).toBeGreaterThan(item.version)
+
+    const malformed = await pageA.request.delete(API + '/db/records?id=' + item.id + '&version=invalid')
+    expect(malformed.status()).toBe(400)
+    const staleAPI = await pageA.request.delete(API + '/db/records?id=' + item.id + '&version=' + item.version)
+    expect(staleAPI.status()).toBe(409)
+
+    pageB.on('dialog', async dialog => { await dialog.accept() })
+    await staleRow.getByRole('button', {name: 'Delete record Delete conflict original'}).click()
+    await expect(pageB.getByRole('alert')).toContainText('Could not delete record')
+    await expect(staleRow).toBeVisible()
+    const preserved = (await rows(pageB, host.databaseId)).find(row => row.id === item.id)
+    expect(preserved?.title).toBe('Delete conflict remote edit')
+    expect(preserved?.version).toBe(updated.version)
+    const trashBefore = await pageB.request.get(API + '/db/trash?kind=record&databaseId=' + host.databaseId)
+    expect(trashBefore.ok()).toBe(true)
+    expect((await trashBefore.json() as {id: string}[]).some(row => row.id === item.id)).toBe(false)
+
+    await pageB.getByRole('button', {name: 'Reload latest', exact: true}).click()
+    const currentRow = pageB.locator('[data-testid="database-record-row"][data-record-id="' + item.id + '"]')
+    await expect(currentRow.getByLabel('Name')).toHaveValue('Delete conflict remote edit')
+    await currentRow.getByRole('button', {name: 'Delete record Delete conflict remote edit'}).click()
+    await expect.poll(async () => (await rows(pageB, host.databaseId)).some(row => row.id === item.id), {timeout: 15000}).toBe(false)
+    const trashAfter = await pageB.request.get(API + '/db/trash?kind=record&databaseId=' + host.databaseId)
+    expect(trashAfter.ok()).toBe(true)
+    expect((await trashAfter.json() as {id: string}[]).some(row => row.id === item.id)).toBe(true)
+  } finally {
+    await contextA.close()
+    await contextB.close()
+  }
+})
+
 test('database typed AND/OR filters persist and apply consistently after reopening', async ({page}) => {
   const host = await makeDatabase(page)
   const score = await property(page, host.databaseId, 'Score', 'number')
