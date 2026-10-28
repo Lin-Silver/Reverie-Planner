@@ -216,13 +216,61 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
         if err:=tx.Commit();err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
         writeJSON(w,200,out)
 	case http.MethodDelete:
-        id:=r.URL.Query().Get("id")
-        result,err:=a.DB.Exec("UPDATE databases SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        changed,err:=result.RowsAffected()
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        if changed!=1 {writeJSON(w,404,map[string]string{"error":"database not found"});return}
-        w.WriteHeader(204)
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "database id required"})
+			return
+		}
+		// Legacy clients may omit the version; clients that supply one must
+		// never delete a database renamed by another browser context.
+		var expectedVersion int
+		if raw := r.URL.Query().Get("version"); raw != "" {
+			parsed, parseErr := strconv.Atoi(raw)
+			if parseErr != nil || parsed < 1 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid database version"})
+				return
+			}
+			expectedVersion = parsed
+		}
+		tx, err := a.DB.Begin()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not begin database deletion"})
+			return
+		}
+		defer tx.Rollback()
+		var currentVersion int
+		if err := tx.QueryRow("SELECT version FROM databases WHERE id=? AND deleted_at IS NULL", id).Scan(&currentVersion); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "database not found"})
+			} else {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not inspect database"})
+			}
+			return
+		}
+		if expectedVersion != 0 && expectedVersion != currentVersion {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "database changed; reload latest before deleting"})
+			return
+		}
+		result, err := tx.Exec("UPDATE databases SET deleted_at=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL",
+			time.Now().UTC().Format(time.RFC3339), id, currentVersion)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not delete database"})
+			return
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not verify database deletion"})
+			return
+		}
+		if changed != 1 {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "database changed during deletion"})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not commit database deletion"})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(405)
 	}
