@@ -366,6 +366,60 @@ test('database view rename duplicate and deletion preserve data and forbid remov
 })
 
 
+test('stale browser cannot delete a view renamed in another context', async ({browser}) => {
+  const contextA = await browser.newContext()
+  const contextB = await browser.newContext()
+  try {
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+    const host = await makeDatabase(pageA)
+    const item = await record(pageA, host.databaseId, 'Keep record across view conflict')
+    const viewId = await makeView(pageA, host.databaseId, 'table')
+    await reopen(pageB, host)
+    await pageB.getByLabel('Active database view').selectOption(viewId)
+
+    const beforeResponse = await pageA.request.get(API + '/databases?id=' + host.databaseId)
+    expect(beforeResponse.ok()).toBe(true)
+    const before = await beforeResponse.json() as {views: {id:string;version:number;name:string;type:string;config:string}[]}
+    const original = before.views.find(v => v.id === viewId)!
+    expect(original).toBeTruthy()
+
+    const rename = await pageA.request.put(API + '/db/views', {
+      data: {...original, name: 'Renamed remotely'}
+    })
+    expect(rename.status()).toBe(200)
+    const updated = await rename.json() as {version:number;name:string}
+    expect(updated.version).toBeGreaterThan(original.version)
+
+    const invalid = await pageA.request.delete(API + '/db/views?id=' + viewId + '&version=invalid')
+    expect(invalid.status()).toBe(400)
+    const stale = await pageA.request.delete(API + '/db/views?id=' + viewId + '&version=' + original.version)
+    expect(stale.status()).toBe(409)
+
+    pageB.on('dialog', async dialog => { await dialog.accept() })
+    await pageB.getByRole('button', {name: 'Delete database view'}).click()
+    await expect(pageB.getByRole('alert')).toContainText('409')
+    const preservedResponse = await pageB.request.get(API + '/databases?id=' + host.databaseId)
+    expect(preservedResponse.ok()).toBe(true)
+    const preserved = await preservedResponse.json() as {views: {id:string;name:string;version:number}[]}
+    expect(preserved.views.find(v => v.id === viewId)).toMatchObject({name:'Renamed remotely',version:updated.version})
+    expect((await rows(pageB, host.databaseId)).some(r => r.id === item.id)).toBe(true)
+
+    await pageB.getByRole('button', {name:'Reload latest', exact:true}).click()
+    await expect(pageB.getByLabel('Active database view').locator('option:checked')).toContainText('Renamed remotely')
+    await pageB.getByRole('button', {name:'Delete database view'}).click()
+    await expect.poll(async () => {
+      const res = await pageB.request.get(API + '/databases?id=' + host.databaseId)
+      const db = await res.json() as {views:{id:string}[]}
+      return db.views.some(v => v.id === viewId)
+    }, {timeout:15000}).toBe(false)
+    expect((await rows(pageB, host.databaseId)).some(r => r.id === item.id)).toBe(true)
+  } finally {
+    await contextA.close()
+    await contextB.close()
+  }
+})
+
 test('database trash restores deleted record and preserves its attributes',async({page})=>{
   const host=await makeDatabase(page)
   const prop=await property(page,host.databaseId,'Note','text')
