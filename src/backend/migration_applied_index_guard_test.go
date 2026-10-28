@@ -47,6 +47,32 @@ func TestAppliedMigrationIndexGuardPreservesDataAndRecoversAfterRepair(t *testin
             damage: []string{"DROP INDEX idx_db_files_record"},
             repair: []string{"CREATE INDEX idx_db_files_record ON db_files(record_id, deleted_at)"},
         },
+        {
+            name: "v8_partial_property_lookup_index",
+            version: 8,
+            index: "idx_db_values_property",
+            damage: []string{
+                "DROP INDEX idx_db_values_property",
+                "CREATE INDEX idx_db_values_property ON db_values(property_id) WHERE value IS NOT NULL",
+            },
+            repair: []string{
+                "DROP INDEX idx_db_values_property",
+                "CREATE INDEX idx_db_values_property ON db_values(property_id)",
+            },
+        },
+        {
+            name: "v10_unexpected_unique_attachment_index",
+            version: 10,
+            index: "idx_db_files_database",
+            damage: []string{
+                "DROP INDEX idx_db_files_database",
+                "CREATE UNIQUE INDEX idx_db_files_database ON db_files(database_id)",
+            },
+            repair: []string{
+                "DROP INDEX idx_db_files_database",
+                "CREATE INDEX idx_db_files_database ON db_files(database_id)",
+            },
+        },
     }
     for _, tc := range cases {
         t.Run(tc.name, func(t *testing.T) {
