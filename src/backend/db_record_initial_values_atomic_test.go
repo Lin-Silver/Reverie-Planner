@@ -166,3 +166,66 @@ func TestDBRecordCreateInitialValuesValidationAndSQLiteFailureRollback(t *testin
     }
     assertViewIntegrityProviders(t, providerPath, providerBefore)
 }
+
+func TestDBRecordCreateInitialValueReadbackRollback(t *testing.T) {
+    app := setupTestContext(t)
+    defer app.DB.Close()
+    database, original := dbRegressionCreate(t, app)
+    providerPath, providerBefore := viewIntegrityProviders(t, app)
+    propertyResponse := dbRegressionCall(t, app, http.MethodPost, "/api/db/properties",
+        fmt.Sprintf(`{"databaseId":%q,"name":"Readback","type":"text"}`, database.ID), app.handleDBProperties)
+    if propertyResponse.Code != http.StatusCreated {
+        t.Fatalf("create property: %d %s", propertyResponse.Code, propertyResponse.Body.String())
+    }
+    var property DBProperty
+    if err := json.Unmarshal(propertyResponse.Body.Bytes(), &property); err != nil { t.Fatal(err) }
+    var beforeRecords, beforePages, beforeValues int
+    for _, check := range []struct { query string; out *int }{
+        {"SELECT COUNT(*) FROM db_records", &beforeRecords},
+        {"SELECT COUNT(*) FROM pages", &beforePages},
+        {"SELECT COUNT(*) FROM db_values", &beforeValues},
+    } {
+        if err := app.DB.QueryRow(check.query).Scan(check.out); err != nil { t.Fatal(err) }
+    }
+    const recordID = "rec_initial_readback_corrupt"
+    _, err := app.DB.Exec(`CREATE TRIGGER corrupt_initial_value AFTER INSERT ON db_values
+        WHEN NEW.record_id='rec_initial_readback_corrupt'
+        BEGIN UPDATE db_values SET value='invalid-json'
+        WHERE record_id=NEW.record_id AND property_id=NEW.property_id; END`)
+    if err != nil { t.Fatal(err) }
+    payload := fmt.Sprintf(`{"id":%q,"databaseId":%q,"title":"Readback","values":{%q:"Persist me"}}`,
+        recordID, database.ID, property.ID)
+    failed := dbRegressionCall(t, app, http.MethodPost, "/api/db/records", payload, app.handleDBRecords)
+    if failed.Code != http.StatusInternalServerError {
+        t.Fatalf("corrupt readback should return 500: %d %s", failed.Code, failed.Body.String())
+    }
+    var afterRecords, afterPages, afterValues, leaked int
+    for _, check := range []struct { query string; args []any; out *int }{
+        {"SELECT COUNT(*) FROM db_records", nil, &afterRecords},
+        {"SELECT COUNT(*) FROM pages", nil, &afterPages},
+        {"SELECT COUNT(*) FROM db_values", nil, &afterValues},
+        {"SELECT COUNT(*) FROM db_records WHERE id=?", []any{recordID}, &leaked},
+    } {
+        if err := app.DB.QueryRow(check.query, check.args...).Scan(check.out); err != nil { t.Fatal(err) }
+    }
+    if afterRecords != beforeRecords || afterPages != beforePages || afterValues != beforeValues || leaked != 0 {
+        t.Fatalf("readback failure leaked data: records=%d/%d pages=%d/%d values=%d/%d leaked=%d",
+            afterRecords, beforeRecords, afterPages, beforePages, afterValues, beforeValues, leaked)
+    }
+    var originalVersion int
+    if err := app.DB.QueryRow("SELECT version FROM db_records WHERE id=?", original.ID).Scan(&originalVersion); err != nil || originalVersion != original.Version {
+        t.Fatalf("original record changed: version=%d err=%v", originalVersion, err)
+    }
+    assertViewIntegrityProviders(t, providerPath, providerBefore)
+    if _, err := app.DB.Exec("DROP TRIGGER corrupt_initial_value"); err != nil { t.Fatal(err) }
+    retried := dbRegressionCall(t, app, http.MethodPost, "/api/db/records", payload, app.handleDBRecords)
+    if retried.Code != http.StatusCreated {
+        t.Fatalf("retry after readback fault removal: %d %s", retried.Code, retried.Body.String())
+    }
+    var created DBRecord
+    if err := json.Unmarshal(retried.Body.Bytes(), &created); err != nil { t.Fatal(err) }
+    if created.Values[property.ID] != "Persist me" || created.Version != 1 || created.PageID == "" {
+        t.Fatalf("successful retry did not persist initial value: %+v", created)
+    }
+    assertViewIntegrityProviders(t, providerPath, providerBefore)
+}
