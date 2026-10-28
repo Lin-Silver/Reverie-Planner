@@ -1401,6 +1401,10 @@ func validatePropertyDefinition(kind, config string) error {
     case "rollup":
         _,err:=parseRollupDefinition(config);return err
     case "relation":
+        // Ambiguous relation targets must never enter persisted schema.
+        if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+            return fmt.Errorf("invalid relation configuration: %w", err)
+        }
         var v struct { TargetDatabaseID string `json:"targetDatabaseId"` }
         if err:=json.Unmarshal([]byte(config),&v);err!=nil || v.TargetDatabaseID=="" {return fmt.Errorf("relation targetDatabaseId required")}
         return nil
