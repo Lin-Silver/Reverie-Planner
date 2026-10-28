@@ -50,6 +50,9 @@ func verifyAppliedMigrationSchema(db *sql.DB) error {
                 return fmt.Errorf("migration %d is marked applied but its schema is incomplete: %w; back up and inspect the database before repair", requirement.version, err)
             }
         }
+        if err := verifyAppliedMigrationIndexes(db, requirement.version); err != nil {
+            return fmt.Errorf("migration %d is marked applied but its index schema is incomplete: %w; back up and inspect the database before repair", requirement.version, err)
+        }
     }
     return nil
 }
@@ -92,6 +95,86 @@ func verifyMigrationTableColumns(db *sql.DB, table string, required []string) er
     for _, column := range required {
         if !found[column] {
             return fmt.Errorf("missing %s.%s", table, column)
+        }
+    }
+    return nil
+}
+
+// verifyAppliedMigrationIndexes checks that migration-created lookup indexes
+// still point to the intended table and ordered columns. A missing or
+// incorrectly repurposed index can silently degrade record and relation
+// queries, and IF NOT EXISTS would not repair an index with the wrong shape.
+// These names are fixed application constants, never user-provided SQL.
+func verifyAppliedMigrationIndexes(db *sql.DB, version int) error {
+    type indexSpec struct {
+        name, table string
+        columns []string
+    }
+    var indexes []indexSpec
+    switch version {
+    case 8:
+        indexes = []indexSpec{
+            {"idx_db_records_database_created", "db_records", []string{"database_id", "created_at"}},
+            {"idx_db_values_property", "db_values", []string{"property_id"}},
+            {"idx_db_properties_order", "db_properties", []string{"database_id", "position"}},
+            {"idx_db_views_order", "db_views", []string{"database_id", "position"}},
+        }
+    case 9:
+        indexes = []indexSpec{
+            {"idx_db_records_live", "db_records", []string{"database_id", "deleted_at", "created_at"}},
+            {"idx_db_properties_live", "db_properties", []string{"database_id", "deleted_at", "position"}},
+            {"idx_db_views_live", "db_views", []string{"database_id", "deleted_at", "position"}},
+        }
+    case 10:
+        indexes = []indexSpec{
+            {"idx_db_files_record", "db_files", []string{"record_id", "deleted_at"}},
+            {"idx_db_files_database", "db_files", []string{"database_id"}},
+        }
+    }
+    for _, index := range indexes {
+        var owner string
+        err := db.QueryRow("SELECT tbl_name FROM sqlite_master WHERE type='index' AND name=?", index.name).Scan(&owner)
+        if errors.Is(err, sql.ErrNoRows) {
+            return fmt.Errorf("missing index %s on %s", index.name, index.table)
+        }
+        if err != nil {
+            return fmt.Errorf("inspect index %s: %w", index.name, err)
+        }
+        if owner != index.table {
+            return fmt.Errorf("index %s belongs to %s instead of %s", index.name, owner, index.table)
+        }
+        rows, err := db.Query("PRAGMA index_info(" + index.name + ")")
+        if err != nil {
+            return fmt.Errorf("inspect columns of index %s: %w", index.name, err)
+        }
+        var actual []string
+        for rows.Next() {
+            var sequence, columnID int
+            var name sql.NullString
+            if err := rows.Scan(&sequence, &columnID, &name); err != nil {
+                rows.Close()
+                return fmt.Errorf("read index %s columns: %w", index.name, err)
+            }
+            if !name.Valid {
+                rows.Close()
+                return fmt.Errorf("index %s contains an expression rather than a named column", index.name)
+            }
+            actual = append(actual, name.String)
+        }
+        if err := rows.Err(); err != nil {
+            rows.Close()
+            return fmt.Errorf("scan index %s: %w", index.name, err)
+        }
+        if err := rows.Close(); err != nil {
+            return fmt.Errorf("close index %s: %w", index.name, err)
+        }
+        if len(actual) != len(index.columns) {
+            return fmt.Errorf("index %s has %d columns, expected %d", index.name, len(actual), len(index.columns))
+        }
+        for i, expected := range index.columns {
+            if actual[i] != expected {
+                return fmt.Errorf("index %s column %d is %s, expected %s", index.name, i, actual[i], expected)
+            }
         }
     }
     return nil
