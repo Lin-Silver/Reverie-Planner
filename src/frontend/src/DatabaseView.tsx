@@ -140,14 +140,15 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     setRecords(rs => [...rs, rec])
   }
 
-  const deleteRecord = async (id:string) => {
-    if(failedEdit){setError('Resolve the unsaved edit before deleting a record');return}
-    if(!confirm('Move this record to Trash? Its data can be restored.'))return
+  const deleteRecord = async (id:string, skipConfirmation = false): Promise<boolean> => {
+    if(failedEdit){setError('Resolve the unsaved edit before deleting a record');return false}
+    if(!skipConfirmation && !confirm('Move this record to Trash? Its data can be restored.'))return false
     try {
       await api('/api/db/records?id='+encodeURIComponent(id),{method:'DELETE'})
       setRecords(rows=>rows.filter(r=>r.id!==id))
       setError('')
-    }catch(e){setError('Could not delete record: '+(e as Error).message)}
+      return true
+    }catch(e){setError('Could not delete record: '+(e as Error).message);return false}
   }
   const deleteProperty = async (pid: string) => {
     await api(`/api/db/properties?id=${pid}`, { method: 'DELETE' })
@@ -275,7 +276,7 @@ function navigateTableCell(event: KeyboardEvent<HTMLTableCellElement>) {
 }
 function TableView({ records, props, updateRecord, deleteProperty, deleteRecord, onOpenRecord, columnOrder, setColumnOrder, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidths, selectedRecords, setSelectedRecords }: {
   records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; deleteProperty: (id: string) => Promise<void>;
-  deleteRecord: (id: string) => Promise<void>; onOpenRecord?: OpenRecord;
+  deleteRecord: (id: string, skipConfirmation?: boolean) => Promise<boolean>; onOpenRecord?: OpenRecord;
   columnOrder: string[]; setColumnOrder: (next: string[]) => void;
   hiddenColumns: string[]; setHiddenColumns: (next: string[]) => void;
   columnWidths: Record<string,number>; setColumnWidths: (next: Record<string,number>) => void;
@@ -307,7 +308,14 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
       <button aria-label="Clear selected rows" onClick={()=>setSelectedRecords([])}>Clear selection</button>
       <button aria-label="Delete selected rows" onClick={async()=>{
         if(!confirm('Move '+selectedRecords.length+' records to Trash?'))return
-        for(const id of selectedRecords)await deleteRecord(id)
+        for(let i=0;i<selectedRecords.length;i++){
+          // A failed deletion must not silently clear the remaining selection.
+          // Bulk deletion is not atomic: stop and preserve failed/unprocessed IDs.
+          if(!await deleteRecord(selectedRecords[i],true)){
+            setSelectedRecords(selectedRecords.slice(i))
+            return
+          }
+        }
         setSelectedRecords([])
       }}>Move selected to Trash</button>
     </div>}
