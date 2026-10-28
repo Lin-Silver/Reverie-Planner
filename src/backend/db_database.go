@@ -1439,6 +1439,12 @@ func validateDBViewConfig(kind,config string) error {
     default:return fmt.Errorf("unsupported database view type: %s",kind)
     }
     if len(config)>64*1024{return fmt.Errorf("view config exceeds 64KB")}
+    // Reject ambiguous view settings, including duplicate keys inside nested
+    // filter/sort/layout objects. JSON unmarshalling otherwise keeps the last
+    // value and can silently change the meaning of a persisted view.
+    if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+        return fmt.Errorf("invalid view configuration: %w", err)
+    }
     var body map[string]json.RawMessage
     if err:=json.Unmarshal([]byte(config),&body);err!=nil{return fmt.Errorf("view config must be a JSON object: %w",err)}
     if body==nil{return fmt.Errorf("view config must be an object")}
