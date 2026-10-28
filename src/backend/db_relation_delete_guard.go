@@ -24,6 +24,10 @@ func hasIncomingActiveRelation(tx *sql.Tx, targetID, targetDatabaseID string) (b
     for rows.Next() {
         var config, raw string
         if err := rows.Scan(&config, &raw); err != nil { return false, err }
+        // Do not trust last-wins JSON parsing for persisted relation targets.
+        if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+            return false, fmt.Errorf("invalid saved relation configuration: %w", err)
+        }
         var definition struct {
             TargetDatabaseID string `json:"targetDatabaseId"`
         }
