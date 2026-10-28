@@ -583,9 +583,19 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, 400, map[string]string{"error": "property id required"})
 			return
 		}
-		// The dependency check and tombstone must use the same SQLite
-		// transaction. Otherwise a computed field could be created between
-		// validation and deletion, leaving a broken formula or rollup.
+		// Keep legacy versionless callers compatible while preventing a stale
+		// browser tab from deleting a property renamed or configured elsewhere.
+		var expectedVersion int
+		if raw := r.URL.Query().Get("version"); raw != "" {
+			parsed, parseErr := strconv.Atoi(raw)
+			if parseErr != nil || parsed < 1 {
+				writeJSON(w, 400, map[string]string{"error": "invalid property version"})
+				return
+			}
+			expectedVersion = parsed
+		}
+		// The version/dependency checks and tombstone must share a SQLite
+		// transaction so concurrent edits cannot invalidate either check.
 		tx, err := a.DB.Begin()
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": "could not begin property deletion"})
@@ -593,8 +603,9 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		}
 		defer tx.Rollback()
 		var kind, databaseID string
-		if err := tx.QueryRow(`SELECT type, database_id FROM db_properties
-			WHERE id=? AND deleted_at IS NULL`, id).Scan(&kind, &databaseID); err != nil {
+		var currentVersion int
+		if err := tx.QueryRow(`SELECT type, database_id, version FROM db_properties
+			WHERE id=? AND deleted_at IS NULL`, id).Scan(&kind, &databaseID, &currentVersion); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeJSON(w, 404, map[string]string{"error": "property not found"})
 			} else {
@@ -604,6 +615,10 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		}
 		if kind == "title" {
 			writeJSON(w, 400, map[string]string{"error": "title property cannot be deleted"})
+			return
+		}
+		if expectedVersion != 0 && expectedVersion != currentVersion {
+			writeJSON(w, 409, map[string]string{"error": "property changed; reload latest before deleting"})
 			return
 		}
 		blocked, err := hasActiveComputedPropertyDependency(tx, id, databaseID)
@@ -616,7 +631,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		result, err := tx.Exec(`UPDATE db_properties SET deleted_at=?,version=version+1
-			WHERE id=? AND deleted_at IS NULL AND type<>'title'`, time.Now().UTC().Format(time.RFC3339), id)
+			WHERE id=? AND version=? AND deleted_at IS NULL AND type<>'title'`, time.Now().UTC().Format(time.RFC3339), id, currentVersion)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -627,7 +642,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if changed != 1 {
-			writeJSON(w, 404, map[string]string{"error": "property not found"})
+			writeJSON(w, 409, map[string]string{"error": "property changed during deletion"})
 			return
 		}
 		if err := tx.Commit(); err != nil {
