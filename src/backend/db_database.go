@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -1128,11 +1127,10 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
         if id == "" { writeJSON(w, http.StatusBadRequest, map[string]string{"error": "view id required"}); return }
         // Preserve legacy versionless DELETE callers, but reject stale
         // browser views so another tab's renamed/configured view survives.
-        var expectedVersion int
-        if raw:=r.URL.Query().Get("version");raw!="" {
-            parsed,parseErr:=strconv.Atoi(raw)
-            if parseErr!=nil || parsed<1 {writeJSON(w,400,map[string]string{"error":"invalid view version"});return}
-            expectedVersion=parsed
+        expectedVersion, parseErr := parseOptionalDeleteVersion(r)
+        if parseErr != nil {
+            writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid view version"})
+            return
         }
         tx,err:=a.DB.Begin()
         if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
