@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestDatabaseDeleteRestrictsExternalRelationSchemas(t *testing.T) {
+func TestDatabaseDeleteRestrictsExternalLiveRelations(t *testing.T) {
 	app := setupTestContext(t)
 	defer app.DB.Close()
 	source, from := dbRegressionCreate(t, app)
@@ -51,8 +51,8 @@ func TestDatabaseDeleteRestrictsExternalRelationSchemas(t *testing.T) {
 		assertPreserved()
 	}
 
-	// Removing the schema dependency, not just clearing its values, makes the
-	// target database safe to trash and restore without dangling relation types.
+	// Removing the active relation property removes the dependency, allowing
+	// a later database restore to recover the saved relation configuration.
 	removed := dbRegressionCall(t, app, http.MethodDelete,
 		"/api/db/properties?id="+property.ID, "", app.handleDBProperties)
 	if removed.Code != http.StatusNoContent {
@@ -135,6 +135,62 @@ func TestDatabaseDeleteProtectsTrashedSourceRelationsButAllowsSelfRelations(t *t
 			fmt.Sprintf(`{"kind":"database","id":%q}`, db.ID), app.handleDBTrash)
 		if restored.Code != http.StatusOK {
 			t.Fatalf("restore self-related database: %d %s", restored.Code, restored.Body.String())
+		}
+		assertViewIntegrityProviders(t, providerPath, providerBefore)
+	})
+}
+
+func TestDatabaseDeleteAllowsEmptyAndTrashedRecordRelations(t *testing.T) {
+	t.Run("empty active relation", func(t *testing.T) {
+		app := setupTestContext(t)
+		defer app.DB.Close()
+		source, from := dbRegressionCreate(t, app)
+		target, to := dbRegressionCreate(t, app)
+		property, saved := createIncomingRelationForDeleteTest(t, app, source, target, from, to)
+		providerPath, providerBefore := viewIntegrityProviders(t, app)
+		clear := dbRegressionCall(t, app, http.MethodPut, "/api/db/records",
+			fmt.Sprintf(`{"id":%q,"version":%d,"values":{%q:[]}}`, from.ID, saved.Version, property.ID),
+			app.handleDBRecords)
+		if clear.Code != http.StatusOK {
+			t.Fatalf("clear relation values: %d %s", clear.Code, clear.Body.String())
+		}
+		deleted := dbRegressionCall(t, app, http.MethodDelete,
+			"/api/databases?id="+target.ID, "", app.handleDatabases)
+		if deleted.Code != http.StatusNoContent {
+			t.Fatalf("empty relation must not block target deletion: %d %s", deleted.Code, deleted.Body.String())
+		}
+		assertViewIntegrityProviders(t, providerPath, providerBefore)
+	})
+	t.Run("trashed source record", func(t *testing.T) {
+		app := setupTestContext(t)
+		defer app.DB.Close()
+		source, from := dbRegressionCreate(t, app)
+		target, to := dbRegressionCreate(t, app)
+		createIncomingRelationForDeleteTest(t, app, source, target, from, to)
+		providerPath, providerBefore := viewIntegrityProviders(t, app)
+		trashed := dbRegressionCall(t, app, http.MethodDelete,
+			"/api/db/records?id="+from.ID, "", app.handleDBRecords)
+		if trashed.Code != http.StatusNoContent {
+			t.Fatalf("trash source record: %d %s", trashed.Code, trashed.Body.String())
+		}
+		deleted := dbRegressionCall(t, app, http.MethodDelete,
+			"/api/databases?id="+target.ID, "", app.handleDatabases)
+		if deleted.Code != http.StatusNoContent {
+			t.Fatalf("trashed record must not block target deletion: %d %s", deleted.Code, deleted.Body.String())
+		}
+		restoreSource := fmt.Sprintf(`{"kind":"record","id":%q}`, from.ID)
+		blocked := dbRegressionCall(t, app, http.MethodPost, "/api/db/trash", restoreSource, app.handleDBTrash)
+		if blocked.Code != http.StatusConflict {
+			t.Fatalf("source restore must reject trashed relation target: %d %s", blocked.Code, blocked.Body.String())
+		}
+		restoredTarget := dbRegressionCall(t, app, http.MethodPost, "/api/db/trash",
+			fmt.Sprintf(`{"kind":"database","id":%q}`, target.ID), app.handleDBTrash)
+		if restoredTarget.Code != http.StatusOK {
+			t.Fatalf("restore target: %d %s", restoredTarget.Code, restoredTarget.Body.String())
+		}
+		restoredSource := dbRegressionCall(t, app, http.MethodPost, "/api/db/trash", restoreSource, app.handleDBTrash)
+		if restoredSource.Code != http.StatusOK {
+			t.Fatalf("restore source after target: %d %s", restoredSource.Code, restoredSource.Body.String())
 		}
 		assertViewIntegrityProviders(t, providerPath, providerBefore)
 	})
