@@ -645,15 +645,38 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			}
 			rec.PageID = pageID
 		}
+		// Materialize the record and its backing page before commit. A trigger
+		// or damaged schema can make an inserted row unreadable; in that case
+		// neither the record nor its newly created page may be published.
+		var created DBRecord
+		var createdPageID sql.NullString
+		var pageTitle string
+		var pageVersion int
+		if err := tx.QueryRow(`SELECT r.id, r.database_id, r.title, r.page_id,
+			r.version, r.created_at, r.updated_at, p.title, p.version
+			FROM db_records r JOIN pages p ON p.id=r.page_id
+			WHERE r.id=? AND r.database_id=? AND r.deleted_at IS NULL`,
+			rec.ID, rec.DatabaseID).Scan(
+			&created.ID, &created.DatabaseID, &created.Title, &createdPageID,
+			&created.Version, &created.CreatedAt, &created.UpdatedAt,
+			&pageTitle, &pageVersion); err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": "could not read created record and backing page"})
+			return
+		}
+		if !createdPageID.Valid || createdPageID.String == "" ||
+			pageTitle != created.Title || pageVersion <= 0 || created.Version <= 0 {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": "created record and backing page are inconsistent"})
+			return
+		}
+		created.PageID = createdPageID.String
+		created.Values = map[string]any{}
 		if err := tx.Commit(); err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		rec.Version = 1
-		rec.CreatedAt = now
-		rec.UpdatedAt = now
-		rec.Values = map[string]any{}
-		writeJSON(w, 201, rec)
+		writeJSON(w, 201, created)
 	case http.MethodPut:
 		var body struct {
 			ID       string         `json:"id"`
