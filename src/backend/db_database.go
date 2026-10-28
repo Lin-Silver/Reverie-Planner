@@ -1410,6 +1410,11 @@ func validatePropertyDefinition(kind, config string) error {
         return nil
     case "select", "multi_select":
         if config == "" { return nil }
+        // Duplicate keys (including nested ones) make persisted option rules
+        // ambiguous under encoding/json last-key-wins semantics.
+        if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+            return fmt.Errorf("invalid select configuration: %w", err)
+        }
         var cfg map[string]json.RawMessage
         if err := json.Unmarshal([]byte(config), &cfg); err != nil { return fmt.Errorf("invalid options JSON") }
         if raw, ok := cfg["options"]; ok {
