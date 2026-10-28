@@ -88,7 +88,7 @@ test('database calendar date edit and view configuration persist after reload',a
   await page.getByLabel('Calendar date property').selectOption(due.id)
   await page.getByRole('button',{name:'Save view settings',exact:true}).click()
   await page.getByLabel('Date for Calendar item').fill(second)
-  await expect.poll(async()=> (await rows(page,host.databaseId)).find(r=>r.id===item.id)?.values[due.id],{timeout:15000}).toBe(second)
+  await expect.poll(async()=> (await rows(page,host.databaseId)).find(r=>r.id===item.id)?.values?.[due.id],{timeout:15000}).toBe(second)
   await reopen(page,host)
   await page.getByLabel('Active database view').selectOption(viewId)
   await expect(page.locator('[data-testid="calendar-cell"][data-date="'+second+'"]')).toContainText('Calendar item')
@@ -386,9 +386,9 @@ test('database calendar drag and unscheduled tray update actual dates',async({pa
   const dest=page.locator('[data-testid="calendar-cell"][data-date="'+date2+'"]')
   await expect(origin).toBeVisible()
   await origin.dragTo(dest)
-  await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===firstRec.id)?.values[due.id],{timeout:15000}).toBe(date2)
+  await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===firstRec.id)?.values?.[due.id],{timeout:15000}).toBe(date2)
   await page.getByLabel('Schedule Unscheduled calendar').fill(date3)
-  await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===undated.id)?.values[due.id],{timeout:15000}).toBe(date3)
+  await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===undated.id)?.values?.[due.id],{timeout:15000}).toBe(date3)
 })
 
 
