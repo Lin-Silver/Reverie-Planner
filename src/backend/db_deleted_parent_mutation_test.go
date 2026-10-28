@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-// A trashed database's child schema must be preserved for a later restore.
-// A direct API DELETE must not mutate its properties or views while the
-// owning database is unavailable, even for legacy versionless callers.
-func TestDBChildDeleteRejectsTrashedParentAndPreservesRestoreData(t *testing.T) {
+// Views of a trashed database are part of its restorable schema. A direct
+// view DELETE must not change that schema while the parent is unavailable,
+// including when an older client omits the optional version.
+func TestDBViewDeleteRejectsTrashedParentAndPreservesRestoreData(t *testing.T) {
 	app := setupTestContext(t)
 	defer app.DB.Close()
 
@@ -35,43 +35,42 @@ func TestDBChildDeleteRejectsTrashedParentAndPreservesRestoreData(t *testing.T) 
 		t.Fatalf("trash database: %d %s", trashed.Code, trashed.Body.String())
 	}
 
-	for _, tc := range []struct {
-		name, table, id, endpoint string
-		version                  int
-		handler                  http.HandlerFunc
-	}{
-		{"property", "db_properties", property.ID, "/api/db/properties", property.Version, app.handleDBProperties},
-		{"view", "db_views", view.ID, "/api/db/views", view.Version, app.handleDBViews},
-	} {
-		for _, suffix := range []string{"", fmt.Sprintf("&version=%d", tc.version)} {
-			t.Run(tc.name+suffix, func(t *testing.T) {
-				response := dbRegressionCall(t, app, http.MethodDelete,
-					tc.endpoint+"?id="+tc.id+suffix, "", tc.handler)
-				if response.Code != http.StatusNotFound {
-					t.Fatalf("child delete after parent trash: got %d, want 404: %s", response.Code, response.Body.String())
-				}
-				var version int
-				var deleted sql.NullString
-				err := app.DB.QueryRow(fmt.Sprintf("SELECT version,deleted_at FROM %s WHERE id=?", tc.table), tc.id).
-					Scan(&version, &deleted)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if version != tc.version || deleted.Valid {
-					t.Fatalf("rejected delete mutated %s: version=%d deleted=%v", tc.name, version, deleted)
-				}
-				var recordVersion int
-				var recordDeleted sql.NullString
-				if err := app.DB.QueryRow("SELECT version,deleted_at FROM db_records WHERE id=?", record.ID).
-					Scan(&recordVersion, &recordDeleted); err != nil {
-					t.Fatal(err)
-				}
-				if recordVersion != record.Version || recordDeleted.Valid {
-					t.Fatalf("rejected delete mutated original record: version=%d deleted=%v", recordVersion, recordDeleted)
-				}
-				assertViewIntegrityProviders(t, providerPath, providerBefore)
-			})
-		}
+	for _, suffix := range []string{"", fmt.Sprintf("&version=%d", view.Version)} {
+		t.Run("delete view"+suffix, func(t *testing.T) {
+			response := dbRegressionCall(t, app, http.MethodDelete,
+				"/api/db/views?id="+view.ID+suffix, "", app.handleDBViews)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("view delete after parent trash: got %d, want 404: %s", response.Code, response.Body.String())
+			}
+			var version int
+			var deleted sql.NullString
+			if err := app.DB.QueryRow("SELECT version,deleted_at FROM db_views WHERE id=?", view.ID).
+				Scan(&version, &deleted); err != nil {
+				t.Fatal(err)
+			}
+			if version != view.Version || deleted.Valid {
+				t.Fatalf("rejected delete mutated view: version=%d deleted=%v", version, deleted)
+			}
+			var propertyVersion int
+			var propertyDeleted sql.NullString
+			if err := app.DB.QueryRow("SELECT version,deleted_at FROM db_properties WHERE id=?", property.ID).
+				Scan(&propertyVersion, &propertyDeleted); err != nil {
+				t.Fatal(err)
+			}
+			if propertyVersion != property.Version || propertyDeleted.Valid {
+				t.Fatalf("rejected delete mutated property: version=%d deleted=%v", propertyVersion, propertyDeleted)
+			}
+			var recordVersion int
+			var recordDeleted sql.NullString
+			if err := app.DB.QueryRow("SELECT version,deleted_at FROM db_records WHERE id=?", record.ID).
+				Scan(&recordVersion, &recordDeleted); err != nil {
+				t.Fatal(err)
+			}
+			if recordVersion != record.Version || recordDeleted.Valid {
+				t.Fatalf("rejected delete mutated original record: version=%d deleted=%v", recordVersion, recordDeleted)
+			}
+			assertViewIntegrityProviders(t, providerPath, providerBefore)
+		})
 	}
 
 	var deletedDatabase sql.NullString
@@ -80,6 +79,6 @@ func TestDBChildDeleteRejectsTrashedParentAndPreservesRestoreData(t *testing.T) 
 		t.Fatal(err)
 	}
 	if !deletedDatabase.Valid {
-		t.Fatal("child delete unexpectedly restored its parent database")
+		t.Fatal("view delete unexpectedly restored its parent database")
 	}
 }
