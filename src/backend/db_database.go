@@ -530,9 +530,22 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 200, out)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		if id == "" { writeJSON(w, 400, map[string]string{"error": "property id required"}); return }
-		var kind string
-		if err := a.DB.QueryRow(`SELECT type FROM db_properties WHERE id=? AND deleted_at IS NULL`, id).Scan(&kind); err != nil {
+		if id == "" {
+			writeJSON(w, 400, map[string]string{"error": "property id required"})
+			return
+		}
+		// The dependency check and tombstone must use the same SQLite
+		// transaction. Otherwise a computed field could be created between
+		// validation and deletion, leaving a broken formula or rollup.
+		tx, err := a.DB.Begin()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not begin property deletion"})
+			return
+		}
+		defer tx.Rollback()
+		var kind, databaseID string
+		if err := tx.QueryRow(`SELECT type, database_id FROM db_properties
+			WHERE id=? AND deleted_at IS NULL`, id).Scan(&kind, &databaseID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeJSON(w, 404, map[string]string{"error": "property not found"})
 			} else {
@@ -540,12 +553,38 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			}
 			return
 		}
-		if kind == "title" { writeJSON(w, 400, map[string]string{"error": "title property cannot be deleted"}); return }
-        result,err:=a.DB.Exec("UPDATE db_properties SET deleted_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        changed,err:=result.RowsAffected()
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        if changed!=1 {writeJSON(w,404,map[string]string{"error":"property not found"});return}
+		if kind == "title" {
+			writeJSON(w, 400, map[string]string{"error": "title property cannot be deleted"})
+			return
+		}
+		blocked, err := hasActiveComputedPropertyDependency(tx, id, databaseID)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not inspect computed dependencies"})
+			return
+		}
+		if blocked {
+			writeJSON(w, 409, map[string]string{"error": "property is referenced by an active formula or rollup"})
+			return
+		}
+		result, err := tx.Exec(`UPDATE db_properties SET deleted_at=?,version=version+1
+			WHERE id=? AND deleted_at IS NULL AND type<>'title'`, time.Now().UTC().Format(time.RFC3339), id)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if changed != 1 {
+			writeJSON(w, 404, map[string]string{"error": "property not found"})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not commit property deletion"})
+			return
+		}
 		w.WriteHeader(204)
 	default:
 		w.WriteHeader(405)
