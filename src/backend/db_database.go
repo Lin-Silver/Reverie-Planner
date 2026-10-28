@@ -246,16 +246,16 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "database changed; reload latest before deleting"})
 			return
 		}
-		// Restrict deletion when another database's active relation property
-		// still targets this database. Trashed source databases count because
-		// their relations must remain valid if they are restored.
+		// Restrict deletion when another database's live records contain
+		// incoming relation values. Trashed source databases still count,
+		// but trashed source records are validated when restored.
 		blocked, err := hasIncomingDatabaseRelation(tx, id)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not inspect incoming database relations"})
 			return
 		}
 		if blocked {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "database is referenced by another database; remove relation properties first"})
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "database has incoming live relations; clear references first"})
 			return
 		}
 		result, err := tx.Exec("UPDATE databases SET deleted_at=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL",
