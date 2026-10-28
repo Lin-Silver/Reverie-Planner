@@ -30,6 +30,11 @@ func hasIncomingDatabaseRelation(tx *sql.Tx, targetDatabaseID string) (bool, err
 		if err := rows.Scan(&configRaw, &valueRaw); err != nil {
 			return false, err
 		}
+		// Legacy/corrupt saved configs can bypass normal write validation.
+		// Never choose a last-wins target from ambiguous duplicate keys.
+		if err := rejectDuplicateJSONKeys([]byte(configRaw)); err != nil {
+			return false, fmt.Errorf("invalid saved relation configuration: %w", err)
+		}
 		var config struct {
 			TargetDatabaseID string `json:"targetDatabaseId"`
 		}
