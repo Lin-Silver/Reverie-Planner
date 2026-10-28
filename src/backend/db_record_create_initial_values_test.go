@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestRecordCreateRejectsInitialValuesInsteadOfSilentlyDiscardingThem(t *testing.T) {
+func TestRecordCreateRejectsUnknownInitialPropertyWithoutPartialWrites(t *testing.T) {
 	app := setupTestContext(t)
 	defer app.DB.Close()
 	database, existing := dbRegressionCreate(t, app)
@@ -36,7 +36,7 @@ func TestRecordCreateRejectsInitialValuesInsteadOfSilentlyDiscardingThem(t *test
 		}
 	}
 	const recordID = "rec_initial_values_must_not_be_lost"
-	request := fmt.Sprintf(`{"id":%q,"databaseId":%q,"title":"Not lost","values":{%q:"Keep me"}}`, recordID, database.ID, property.ID)
+	request := fmt.Sprintf(`{"id":%q,"databaseId":%q,"title":"Not lost","values":{"missing_property":"Keep me"}}`, recordID, database.ID)
 	response := dbRegressionCall(t, app, http.MethodPost, "/api/db/records", request, app.handleDBRecords)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("initial values must not be silently dropped: %d %s", response.Code, response.Body.String())
