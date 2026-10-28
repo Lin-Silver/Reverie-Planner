@@ -157,8 +157,16 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     }catch(e){setError('Could not delete record: '+(e as Error).message);return false}
   }
   const deleteProperty = async (pid: string) => {
-    await api(`/api/db/properties?id=${pid}`, { method: 'DELETE' })
-    await load()
+    if (failedEdit) { setError('Resolve the unsaved edit before deleting a property.'); return }
+    const property = props.find(p => p.id === pid)
+    if (!property) { setError('Property is no longer available; reload latest before deleting.'); return }
+    try {
+      // Reject stale deletions after a remote property rename or option edit.
+      await api(`/api/db/properties?id=${encodeURIComponent(pid)}&version=${encodeURIComponent(String(property.version))}`, { method: 'DELETE' })
+      await load()
+    } catch (e) {
+      setError('Could not delete property: ' + (e as Error).message + '. Reload latest before retrying.')
+    }
   }
 
   const renameDb = async () => {
