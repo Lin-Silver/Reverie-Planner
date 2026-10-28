@@ -17,6 +17,7 @@ func TestAppliedMigrationIndexGuardPreservesDataAndRecoversAfterRepair(t *testin
         name string
         version int
         index string
+        expectedFlag string
         damage []string
         repair []string
     }{
@@ -51,6 +52,7 @@ func TestAppliedMigrationIndexGuardPreservesDataAndRecoversAfterRepair(t *testin
             name: "v8_partial_property_lookup_index",
             version: 8,
             index: "idx_db_values_property",
+            expectedFlag: "partial=1",
             damage: []string{
                 "DROP INDEX idx_db_values_property",
                 "CREATE INDEX idx_db_values_property ON db_values(property_id) WHERE value IS NOT NULL",
@@ -64,6 +66,7 @@ func TestAppliedMigrationIndexGuardPreservesDataAndRecoversAfterRepair(t *testin
             name: "v10_unexpected_unique_attachment_index",
             version: 10,
             index: "idx_db_files_database",
+            expectedFlag: "unique=1",
             damage: []string{
                 "DROP INDEX idx_db_files_database",
                 "CREATE UNIQUE INDEX idx_db_files_database ON db_files(database_id)",
@@ -119,7 +122,8 @@ func TestAppliedMigrationIndexGuardPreservesDataAndRecoversAfterRepair(t *testin
                 t.Fatal("startup accepted a damaged applied migration index")
             }
             if !strings.Contains(err.Error(), fmt.Sprintf("migration %d is marked applied", tc.version)) ||
-                !strings.Contains(err.Error(), tc.index) {
+                !strings.Contains(err.Error(), tc.index) ||
+                (tc.expectedFlag != "" && !strings.Contains(err.Error(), tc.expectedFlag)) {
                 t.Fatalf("unexpected index integrity diagnostic: %v", err)
             }
 
