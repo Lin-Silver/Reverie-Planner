@@ -54,6 +54,9 @@ func verifyAppliedMigrationSchema(db *sql.DB) error {
             return fmt.Errorf("migration %d is marked applied but its index schema is incomplete: %w; back up and inspect the database before repair", requirement.version, err)
         }
     }
+    var recoveryApplied int
+    if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=11").Scan(&recoveryApplied); err != nil { return err }
+    if recoveryApplied > 0 { return verifyPageRecoverySchema(db) }
     return nil
 }
 
@@ -125,6 +128,8 @@ func verifyAppliedMigrationIndexes(db *sql.DB, version int) error {
             {"idx_db_properties_live", "db_properties", []string{"database_id", "deleted_at", "position"}},
             {"idx_db_views_live", "db_views", []string{"database_id", "deleted_at", "position"}},
         }
+    case 11:
+        indexes = []indexSpec{{"idx_page_revisions_page", "page_revisions", []string{"page_id", "id"}}}
     case 10:
         indexes = []indexSpec{
             {"idx_db_files_record", "db_files", []string{"record_id", "deleted_at"}},

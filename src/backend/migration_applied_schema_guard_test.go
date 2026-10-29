@@ -41,6 +41,7 @@ func TestAppliedMigrationMarkerRejectsIncompleteSchemaWithoutChangingUserData(t 
             providerPath := filepath.Join(root, "config", "providers.json")
             providerBefore, err := os.ReadFile(providerPath)
             if err != nil { t.Fatal(err) }
+            if tc.version == 8 { removePageRecoveryTestSchema(t,app.DB) }
             for _, stmt := range tc.damage {
                 if _, err := app.DB.Exec(stmt); err != nil { t.Fatalf("prepare damaged fixture (%s): %v", stmt, err) }
             }

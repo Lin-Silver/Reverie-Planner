@@ -3,6 +3,7 @@ import DatabaseView from './DatabaseView'
 import WorkspaceStorage from './WorkspaceStorage'
 import Icon from './Icon'
 import Dialog from './Dialog'
+import PageRecovery from './PageRecovery'
 import { pageTemplates } from './pageTemplates'
 import type { FormEvent } from 'react'
 import './App.css'
@@ -342,9 +343,41 @@ export default function App() {
     if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true)
     setView('page')
   }
+  const [recovery, setRecovery] = useState<{pageId?: string; version?: number; returnFocus?: HTMLElement | null} | null>(null)
+  const [pageRecoveryBusy, setPageRecoveryBusy] = useState(false)
+  const openHistory = async () => {
+    if (!pageEditor || pageRecoveryBusy) return
+    const returnFocus = document.activeElement as HTMLElement | null
+    setPageRecoveryBusy(true)
+    try {
+      if (pageLeaveError) throw new Error('Resolve the page conflict before opening history.')
+      await savePageContent(pageEditor.id, pageDraft.content)
+      setRecovery({pageId: pageEditor.id, version: pageVersions.current.get(pageEditor.id), returnFocus})
+    } catch (e) { setError((e as Error).message) }
+    finally { setPageRecoveryBusy(false) }
+  }
   const deletePage = async (id: string) => {
-    if (!confirm('Delete this page?')) return
-    try { await apiFetch('/api/pages', { method: 'DELETE', body: JSON.stringify({ id }) }); setView('home'); await refresh() } catch (e) { setError((e as Error).message) }
+    if (pageLeaveError || pageRecoveryBusy) { setError('Resolve the page conflict before moving it to trash.'); return }
+    if (!confirm('Move this page to trash? You can restore it from Page trash. Move child pages first.')) return
+    setPageRecoveryBusy(true)
+    try {
+      await savePageContent(id, pageDraft.content)
+      await apiFetch(`/api/pages?id=${encodeURIComponent(id)}&version=${pageVersions.current.get(id)}`, { method: 'DELETE' })
+      pageDiscardRef.current = true
+      setPageEditor(null); _setView('home'); await refresh()
+    } catch (e) { setError((e as Error).message) }
+    finally { setPageRecoveryBusy(false) }
+  }
+  const reloadRecoveredPage = async () => {
+    if (!pageEditor) return
+    const latest = await apiFetch<Page>(`/api/pages?id=${encodeURIComponent(pageEditor.id)}`)
+    pageVersions.current.set(latest.id, latest.version || 1)
+    pageSnapshots.current.set(latest.id, latest)
+    pageTitleDirtyRef.current = false
+    pageEditorRef.current = latest; pageTitleRef.current = latest.title
+    setPageEditor(latest); setPageDraft({title: latest.title, icon: latest.icon || '', content: latest.content})
+    setPageLeaveError(false); setReloadToken(t => t + 1)
+    await refresh()
   }
 
   const createCycle = async () => {
@@ -458,6 +491,7 @@ export default function App() {
         {nav('cycles', 'Cycles', 'clock')}{nav('modules', 'Modules', 'grid')}{nav('intake', 'Intake', 'folder')}
         {nav('stickies', 'Stickies', 'page')}{nav('drafts', 'Drafts', 'page')}{nav('analytics', 'Analytics', 'chart')}
       </details>
+      <button className="nav-item" onClick={() => setRecovery({})}><Icon name="page" /><span>Page trash</span></button>
       <div className="nav-section page-section"><span>Pages</span><button className="icon-button" aria-label="Add page" onClick={() => void openPageEditor()}><Icon name="plus" size={16} /></button></div>
       {(() => {
         const roots = pages.filter((p) => p.workspace && !p.parentId)
@@ -524,7 +558,7 @@ export default function App() {
       return <DatabaseView databaseId={pageDatabaseId} viewId={pageDatabaseViewId || undefined} onBack={() => { setPageDatabaseId(''); setPageDatabaseViewId(''); setView('home') }} onLinkedPageCreated={() => { void refresh() }} onPendingEditChange={pending => { databasePendingEditRef.current = pending }} onOpenRecord={pageId => { void (async () => { try { const full = await apiFetch<Page>(`/api/pages?id=${encodeURIComponent(pageId)}`); setSelectedPage(pageId); await openPageEditor(full) } catch (e) { setError((e as Error).message) } })() }} />
     }
     return (
-      <div className={`page-wrap document-page ${fullWidth ? 'full-width' : ''}`}>
+      <div className={`page-wrap document-page ${fullWidth ? 'full-width' : ''}`} inert={pageRecoveryBusy}>
         <div className="row page-actions" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
           <div className="breadcrumb" style={{ color: 'var(--muted)', fontSize: 13 }}>
             {(() => {
@@ -537,7 +571,8 @@ export default function App() {
           <div className="row">
             {pageEditor && <button className="btn" aria-label={library.favorites.includes(pageEditor.id) ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={library.favorites.includes(pageEditor.id)} onClick={() => void toggleFavorite(pageEditor.id)}><Icon name="star" size={16} />{library.favorites.includes(pageEditor.id) ? 'Favorited' : 'Favorite'}</button>}
             <button className="btn" aria-pressed={fullWidth} onClick={() => setFullWidth(v => !v)}>Full width</button>
-            {pageEditor && <button className="btn quiet" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
+            {pageEditor && <button className="btn" disabled={pageRecoveryBusy} onClick={() => void openHistory()}>Page history</button>}
+            {pageEditor && <button className="btn quiet" disabled={pageRecoveryBusy} onClick={() => void deletePage(pageEditor.id)}>Move to trash</button>}
             {pageEditor && <button className="btn" onClick={async () => {
               try {
                 const db = await apiFetch<any>('/api/databases', { method: 'POST', body: JSON.stringify({ title: pageEditor.title || 'Untitled database', pageId: pageEditor.id }) })
@@ -797,6 +832,7 @@ export default function App() {
     <div className="app" data-theme={theme} onPointerDown={() => document.documentElement.dataset.input = 'pointer'} onKeyDown={() => document.documentElement.dataset.input = 'keyboard'}>
       <a className="skip-link" href="#main-content">Skip to content</a>
       {narrow ? !sidebarCollapsed && <Dialog label="Workspace navigation" navigation onClose={() => setSidebarCollapsed(true)}>{sidebar}<button className="icon-button navigation-close" aria-label="Close navigation" onClick={() => setSidebarCollapsed(true)}><Icon name="close" /></button></Dialog> : sidebar}
+      {recovery && <PageRecovery pageId={recovery.pageId} version={recovery.version} returnFocus={recovery.returnFocus} onClose={() => setRecovery(null)} onRestored={async () => { if (recovery.pageId) await reloadRecoveredPage(); else await refresh() }} />}
       <main className="main">
         <header className="topbar">
           <button className="icon-button" aria-label="Toggle sidebar" aria-controls="workspace-sidebar" aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(c => !c)}><Icon name="sidebar" /></button>

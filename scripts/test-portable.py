@@ -12,6 +12,12 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
     cfg=json.loads((root/'config/app.json').read_text());cfg['port']=port
     (dest/'config/app.json').write_text(json.dumps(cfg))
     url=f'http://127.0.0.1:{port}'
+    def api(path, method='GET', payload=None):
+        body = None if payload is None else json.dumps(payload).encode()
+        request = urllib.request.Request(url+path, data=body, method=method, headers={'Content-Type':'application/json'})
+        with http.open(request) as response:
+            data=response.read()
+            return json.loads(data) if data else None
     for cycle in range(2):
         proc=subprocess.Popen([str(dest/'runtime'/exe),'--root='+str(dest)],cwd=tempfile.gettempdir())
         try:
@@ -29,6 +35,20 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             req=urllib.request.Request(url+'/api/shutdown',method='POST',headers={'Authorization':'Bearer wrong-owner'})
             try: http.open(req);raise AssertionError('unauthenticated stop accepted')
             except urllib.error.HTTPError as err: assert err.code in (401,403)
+            if cycle == 0:
+                saved = api('/api/pages', 'POST', {'title':'Native recovery page','workspace':True,'content':'Original native writing'})
+                edited = api('/api/pages','PUT',{**saved,'content':'Newer native writing'})
+                api(f"/api/pages?id={edited['id']}&version={edited['version']}",'DELETE')
+            else:
+                trash=api('/api/page-trash')
+                item=next(p for p in trash if p['id']==saved['id'])
+                api('/api/page-trash','POST',{'id':item['id'],'version':item['version']})
+                recovered=api('/api/pages?id='+saved['id'])
+                assert recovered['content']=='Newer native writing' and recovered['version']>edited['version']
+                history=api('/api/page-history?pageId='+saved['id'])
+                assert any(p['version']==saved['version'] for p in history)
+                deleted=api('/api/pages','POST',{'title':'Archive trash page','workspace':True,'content':'Archive retained writing'})
+                api(f"/api/pages?id={deleted['id']}&version={deleted['version']}",'DELETE')
             if cycle == 1:
                 archive = dest/'native-workspace.zip'
                 request = urllib.request.Request(url+'/api/workspace/archive', method='POST')
@@ -60,6 +80,13 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                     break
                 except OSError: time.sleep(.1)
             else: raise RuntimeError('restored service did not become ready')
+            assert api('/api/pages?id='+saved['id'])['content']=='Newer native writing'
+            history=api('/api/page-history?pageId='+saved['id'])
+            assert any(p['version']==saved['version'] for p in history)
+            if cycle == 0:
+                item=next(p for p in api('/api/page-trash') if p['id']==deleted['id'])
+                api('/api/page-trash','POST',{'id':item['id'],'version':item['version']})
+            assert api('/api/pages?id='+deleted['id'])['content']=='Archive retained writing'
             # Restored roots reuse only static assets from the existing package.
             with http.open(url+'/') as response: assert b'<div id="root">' in response.read()
             with http.open(url+'/api/ai/providers') as response: assert json.load(response) == []

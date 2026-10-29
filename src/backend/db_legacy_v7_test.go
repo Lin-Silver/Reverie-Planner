@@ -22,6 +22,7 @@ func TestSyntheticV7UpgradePreservesRecordsAndConfiguration(t *testing.T) {
  if err != nil { t.Fatal(err) }
  attachmentPath := filepath.Join(root,"data","legacy-file.bin")
  if err := os.WriteFile(attachmentPath,[]byte{0,1,2,255},0600); err != nil { t.Fatal(err) }
+ removePageRecoveryTestSchema(t,app.DB)
  for _, statement := range []string{
   "DROP TABLE db_files",
   "DROP INDEX idx_db_records_live",
@@ -56,7 +57,7 @@ func TestSyntheticV7UpgradePreservesRecordsAndConfiguration(t *testing.T) {
    if err:=upgraded.QueryRow(c.query,c.arg).Scan(&got);err!=nil || got!=c.want { t.Fatalf("restart %d: %s got %q want %q err %v",restart,c.query,got,c.want,err) }
   }
   var migrations int
-  if err:=upgraded.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations);err!=nil || migrations!=10 { t.Fatalf("migrations=%d err=%v",migrations,err) }
+  if err:=upgraded.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations);err!=nil || migrations!=latestSupportedSchemaMigration { t.Fatalf("migrations=%d err=%v",migrations,err) }
   if err:=upgraded.Close();err!=nil { t.Fatal(err) }
  }
  after,err:=os.ReadFile(providerPath)

@@ -626,26 +626,7 @@ func (a *AppContext) handlePages(w http.ResponseWriter, r *http.Request) {
 		p.Version = newVersion
 		writeJSON(w, 200, p)
 	case http.MethodDelete:
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if id == "" {
-			writeJSONError(w, http.StatusBadRequest, "id required")
-			return
-		}
-		result, err := a.DB.Exec(`DELETE FROM pages WHERE id=?`, id)
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "page could not be deleted")
-			return
-		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "page deletion could not be verified")
-			return
-		}
-		if affected == 0 {
-			writeJSONError(w, http.StatusNotFound, "page not found")
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
+		a.deletePageToTrash(w, r)
 	default:
 		w.WriteHeader(405)
 	}

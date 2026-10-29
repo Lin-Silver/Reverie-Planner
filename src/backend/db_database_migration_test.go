@@ -38,6 +38,7 @@ func TestDatabaseMigrationEightUpgradesPartiallyExistingColumns(t *testing.T) {
     ctx := setupTestContext(t)
     root := ctx.RootPath
     if _,err:=ctx.DB.Exec("DELETE FROM schema_migrations WHERE version=8");err!=nil {t.Fatal(err)}
+ removePageRecoveryTestSchema(t,ctx.DB)
     if _,err:=ctx.DB.Exec("ALTER TABLE pages DROP COLUMN linked_view_id");err!=nil {t.Fatalf("prepare legacy schema: %v",err)}
     if err:=ctx.DB.Close();err!=nil {t.Fatal(err)}
     db,err:=initializeDatabase(root)

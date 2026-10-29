@@ -20,6 +20,7 @@ func TestSyntheticV6UpgradePreservesPagesProjectsAndAIState(t *testing.T) {
  providerPath:=filepath.Join(root,"config","providers.json")
  before,err:=os.ReadFile(providerPath)
  if err!=nil { t.Fatal(err) }
+ removePageRecoveryTestSchema(t,app.DB)
  for _,stmt:=range []string{
   "DROP TABLE db_files",
   "DROP TABLE db_values",
@@ -49,7 +50,7 @@ func TestSyntheticV6UpgradePreservesPagesProjectsAndAIState(t *testing.T) {
    if err:=db.QueryRow(c.query,c.arg).Scan(&got);err!=nil || got!=c.want { t.Fatalf("restart %d %s: got %q want %q err %v",restart,c.query,got,c.want,err) }
   }
   var migrations int
-  if err:=db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations);err!=nil || migrations!=10 { t.Fatalf("migration count %d: %v",migrations,err) }
+  if err:=db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations);err!=nil || migrations!=latestSupportedSchemaMigration { t.Fatalf("migration count %d: %v",migrations,err) }
   if err:=db.Close();err!=nil { t.Fatal(err) }
  }
  after,err:=os.ReadFile(providerPath)

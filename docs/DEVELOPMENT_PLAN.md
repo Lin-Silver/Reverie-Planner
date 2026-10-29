@@ -25,7 +25,12 @@ This is the durable checkpoint for human and scheduled development. The target i
 - [x] Preview and restore validate archive limits, names, duplicates, checksums, database integrity, foreign keys and supported schema.
 - [x] Restore publishes only to a new directory; failures/cancellation leave the current workspace unchanged. Reopen the restored workspace and verify contents and attachments.
 - [x] Settings has download, preview, restore, status and error/retry controls; offline CLI restoration is documented and tested.
-- [ ] Page revision history and restore preserve current/newer content through version checks; page delete/trash/restart matrix is tested.
+- [ ] Page recovery final native acceptance (implementation/local validation complete; pending SHA-matched Linux/Windows/macOS CI).
+  - [x] Transactional pre-change revisions, bounded history browsing/plain-text preview/block download, version-checked restore and undo of restore.
+  - [x] Preserve current parent/project/links and database-owned titles/properties; recover document writing without replaying stale structural metadata.
+  - [x] Version-checked page trash, same-ID restore/newer version, parent ordering, owned-page guards and restart/rollback regressions.
+  - [x] Native portable script now checks history/trash through restart, workspace archive, CLI restore and another restart.
+  - [ ] Final native CI evidence and manual platform/assistive-technology acceptance recorded separately.
 - [ ] Historical v6/v7 sample acceptance is recorded only when an authorized real sample exists; synthetic fixtures are labelled synthetic.
 
 ## M2 — Migration and daily organization
@@ -60,6 +65,10 @@ This is the durable checkpoint for human and scheduled development. The target i
 
 M1 workspace archive and isolated restore accepted on code commit `a6ab2efab816b38b303d44ba298d5e5326c67117`: [native CI 40969661631](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40969661631), all Linux/Windows/macOS jobs successful, **63/63 browser tests on each platform**, Go tests/build, lifecycle and offline CLI restore/restart checks passed. Local Go tests, go vet, production frontend build/lint and 63 browser tests also passed; existing lint warnings/editor chunk debt remain. Synthetic fixtures do not establish real historical backup acceptance.
 
-Next active item: **page revision history and trash recovery**. Add version-checked restore, preserve current/newer content, retain a recoverable copy of deletion, and test restart plus multi-window conflicts. Do not redo the accepted archive workflow unless a regression or new requirement justifies it.
+Page recovery increment now implemented on top of `4f8446fe5e4fd19fe00878ae345aa7abfb49bde3` (previous dev/native CI 40970433174 successful). Schema 11 captures pre-change page data inside SQLite transactions and retains deleted pages. Fixed the broken frontend DELETE body/query mismatch and post-delete navigation save. New history/trash UI follows the existing native dialog/tokens, immediate keyboard interactions, explicit focus return and an opaque reading panel. See [PAGE_RECOVERY.md](PAGE_RECOVERY.md) for exact retention, backup/version compatibility and owner/parent boundaries.
+
+Local validation complete: Go suite/vet, production frontend build/lint and extended native portable/CLI restore checks passed. Final full browser suite **66/66** passed, including 3 new regressions for history/restore/conflict, delete/recover/stale writes and retry/focus/narrow reduced-motion layout. Actual narrow/light and desktop/dark recovery screenshots reviewed; reading panels are opaque. Final native Linux/Windows/macOS CI is pending for this increment. Existing React lint warnings and editor chunk debt remain; this increment does not claim complete accessibility or full Notion replacement.
+
+Next after this acceptance: complete the remaining entity/dependency delete → restore → restart matrix (database/property/view/record/relations/formulas); then bounded multi-page Markdown/Notion package import with preview, assets, explicit format limits and transactional rollback. Real v6/v7 samples are unavailable and remain unverified; do not invent historical acceptance or block synthetic regressions on private samples.
 
 The hourly scheduled development task reads this plan and current dev/CI state to resume. A scheduled wake-up is not proof that new code was produced or tests passed. `main` remains V0.0.1; these changes are on `dev` pending a separately versioned release.

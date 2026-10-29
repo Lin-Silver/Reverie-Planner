@@ -130,13 +130,13 @@ func TestPageReadCreateDeleteFailuresPreserveExistingData(t *testing.T) {
 	if _, err := app.DB.Exec("CREATE TRIGGER reject_page_delete BEFORE DELETE ON pages BEGIN SELECT RAISE(ABORT, 'blocked'); END"); err != nil {
 		t.Fatal(err)
 	}
-	assertError(request(http.MethodDelete, "/api/pages?id="+originalID, nil), http.StatusInternalServerError)
+	assertError(request(http.MethodDelete, "/api/pages?id="+originalID+"&version=1", nil), http.StatusInternalServerError)
 	assertPreserved()
 	if _, err := app.DB.Exec("DROP TRIGGER reject_page_delete"); err != nil {
 		t.Fatal(err)
 	}
 
-	deleted := request(http.MethodDelete, "/api/pages?id="+originalID, nil)
+	deleted := request(http.MethodDelete, "/api/pages?id="+originalID+"&version=1", nil)
 	if deleted.Code != http.StatusNoContent {
 		t.Fatalf("valid page deletion failed: %d %s", deleted.Code, deleted.Body.String())
 	}
