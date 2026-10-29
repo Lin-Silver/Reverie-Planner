@@ -774,3 +774,49 @@ test('bulk record deletion confirms once and retains selection after a failed re
   const deleted = await trash.json() as {id: string}[]
   expect(deleted.map(row => row.id)).toEqual(expect.arrayContaining([first.id, second.id]))
 })
+
+test('database TSV paste commits selected rows atomically and retains conflict drafts', async ({page}) => {
+  const host = await makeDatabase(page)
+  const note = await property(page, host.databaseId, 'Paste note', 'text')
+  const score = await property(page, host.databaseId, 'Paste score', 'number')
+  await record(page, host.databaseId, 'Paste alpha')
+  await record(page, host.databaseId, 'Paste beta')
+  await reopen(page, host)
+  await page.getByLabel('Select record Paste alpha').check()
+  await page.getByLabel('Select record Paste beta').check()
+  await page.getByLabel('Bulk paste start column').selectOption(note.id)
+  await page.getByLabel('Bulk paste TSV').fill('alpha note\t12\nbeta note\t24')
+  await expect(page.getByText('Ready to update 2 records.')).toBeVisible()
+  page.once('dialog', dialog => dialog.accept())
+  await page.getByLabel('Apply bulk paste').click()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
+  await expect.poll(async () => (await rows(page, host.databaseId)).map(r => [r.values[note.id], r.values[score.id]])).toEqual([
+    ['alpha note', 12], ['beta note', 24]
+  ])
+
+  const current = await rows(page, host.databaseId)
+  const beta = current.find(r => r.title === 'Paste beta')!
+  const remote = await page.request.put(API + '/db/records', {data: {
+    id: beta.id, title: beta.title, version: beta.version, values: {[note.id]: 'remote note'}
+  }})
+  expect(remote.status()).toBe(200)
+  const draft = 'retry alpha\t33\nretry beta\t44'
+  await page.getByLabel('Bulk paste TSV').fill(draft)
+  page.once('dialog', dialog => dialog.accept())
+  await page.getByLabel('Apply bulk paste').click()
+  await expect(page.getByRole('alert').filter({hasText:'Bulk paste failed'})).toBeVisible()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue(draft)
+  const rolledBack = await rows(page, host.databaseId)
+  expect(rolledBack.find(r => r.title === 'Paste alpha')?.values[note.id]).toBe('alpha note')
+  expect(rolledBack.find(r => r.title === 'Paste alpha')?.values[score.id]).toBe(12)
+  expect(rolledBack.find(r => r.title === 'Paste beta')?.values[note.id]).toBe('remote note')
+
+  await page.getByLabel('Refresh bulk record versions').click()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue(draft)
+  page.once('dialog', dialog => dialog.accept())
+  await page.getByLabel('Apply bulk paste').click()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
+  await expect.poll(async () => (await rows(page, host.databaseId)).map(r => [r.values[note.id], r.values[score.id]])).toEqual([
+    ['retry alpha', 33], ['retry beta', 44]
+  ])
+})
