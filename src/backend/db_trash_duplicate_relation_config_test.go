@@ -68,7 +68,7 @@ func TestTrashRestoreRejectsAmbiguousSavedRelationTargets(t *testing.T) {
 			}
 			var version int
 			var deletedAt string
-			if err := app.DB.QueryRow("SELECT version,deleted_at FROM "+table+" WHERE id=?",
+			if err := app.DB.QueryRow("SELECT version,COALESCE(deleted_at, '') FROM "+table+" WHERE id=?",
 				id).Scan(&version, &deletedAt); err != nil {
 				t.Fatal(err)
 			}
@@ -95,7 +95,7 @@ func TestTrashRestoreRejectsAmbiguousSavedRelationTargets(t *testing.T) {
 
 			var actualVersion int
 			var actualDeleted, actualConfig string
-			if err := app.DB.QueryRow("SELECT version,deleted_at FROM "+table+" WHERE id=?",
+			if err := app.DB.QueryRow("SELECT version,COALESCE(deleted_at, '') FROM "+table+" WHERE id=?",
 				id).Scan(&actualVersion, &actualDeleted); err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +126,7 @@ func TestTrashRestoreRejectsAmbiguousSavedRelationTargets(t *testing.T) {
 				t.Fatal(err)
 			}
 			restore(http.StatusOK)
-			if err := app.DB.QueryRow("SELECT version,deleted_at FROM "+table+" WHERE id=?",
+			if err := app.DB.QueryRow("SELECT version,COALESCE(deleted_at, '') FROM "+table+" WHERE id=?",
 				id).Scan(&actualVersion, &actualDeleted); err != nil {
 				t.Fatal(err)
 			}
