@@ -919,8 +919,8 @@ test('database clipboard paste validates before creating a review draft and neve
   await expect(page.getByLabel('Select record Clipboard alpha')).toBeDisabled()
   const beforeApply = await rows(page, host.databaseId)
   for (const item of beforeApply) {
-    expect(item.values[note.id] ?? null).toBeNull()
-    expect(item.values[score.id] ?? null).toBeNull()
+    expect(item.values?.[note.id] ?? null).toBeNull()
+    expect(item.values?.[score.id] ?? null).toBeNull()
   }
 
   await page.getByLabel('Discard bulk paste draft').click()
