@@ -59,7 +59,14 @@ func localSecurityMiddleware(config AppConfig, next http.Handler) http.Handler {
 			}
 		}
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+			limit := int64(4 << 20)
+			if r.URL.Path == "/api/db/files" && r.Method == http.MethodPost {
+				limit = maxDatabaseFileBytes + (1 << 20)
+			}
+			if r.URL.Path == "/api/workspace/restore-preview" || r.URL.Path == "/api/workspace/restore" {
+				limit = maxWorkspaceArchiveBytes + 1
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 		next.ServeHTTP(w, r)
 	})

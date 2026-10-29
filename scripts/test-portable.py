@@ -29,6 +29,10 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             req=urllib.request.Request(url+'/api/shutdown',method='POST',headers={'Authorization':'Bearer wrong-owner'})
             try: http.open(req);raise AssertionError('unauthenticated stop accepted')
             except urllib.error.HTTPError as err: assert err.code in (401,403)
+            if cycle == 1:
+                archive = dest/'native-workspace.zip'
+                request = urllib.request.Request(url+'/api/workspace/archive', method='POST')
+                with http.open(request) as response: archive.write_bytes(response.read())
             subprocess.run([str(dest/'runtime'/exe),'--stop','--root',str(dest)],check=True)
             assert proc.wait(timeout=15)==0
             with contextlib.closing(sqlite3.connect(dest/'data/planner.db')) as db:
@@ -38,4 +42,37 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
         finally:
             if proc.poll() is None: proc.terminate();proc.wait(timeout=15)
     assert not (dest/'runtime/service.json').exists()
+    container = dest/'restored container'
+    command = [str(dest/'runtime'/exe), '--restore-workspace', str(archive), '--to', str(container)]
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    restored = pathlib.Path(json.loads(result.stdout)['root'])
+    assert restored == container/'workspace'
+    # Existing destinations are refused without replacing the valid recovered data.
+    assert subprocess.run(command, capture_output=True).returncode != 0
+    for cycle in range(2):
+        proc = subprocess.Popen([str(dest/'runtime'/exe), '--root', str(restored)], cwd=tempfile.gettempdir())
+        try:
+            for attempt in range(100):
+                if proc.poll() is not None: raise RuntimeError('restored service exited early')
+                try:
+                    with http.open(url+'/api/workspace', timeout=1) as response:
+                        assert pathlib.Path(json.load(response)['root']) == restored
+                    break
+                except OSError: time.sleep(.1)
+            else: raise RuntimeError('restored service did not become ready')
+            # Restored roots reuse only static assets from the existing package.
+            with http.open(url+'/') as response: assert b'<div id="root">' in response.read()
+            with http.open(url+'/api/ai/providers') as response: assert json.load(response) == []
+            subprocess.run([str(dest/'runtime'/exe), '--stop', '--root', str(restored)], check=True)
+            assert proc.wait(timeout=15) == 0
+            with contextlib.closing(sqlite3.connect(restored/'data/planner.db')) as db:
+                expected = 'preserved' if cycle == 0 else 'restored-only'
+                assert db.execute('SELECT value FROM portable_marker').fetchone() == (expected,)
+                if cycle == 0: db.execute("UPDATE portable_marker SET value='restored-only'")
+                db.commit()
+        finally:
+            if proc.poll() is None: proc.terminate(); proc.wait(timeout=15)
+    with contextlib.closing(sqlite3.connect(dest/'data/planner.db')) as db:
+        assert db.execute('SELECT value FROM portable_marker').fetchone() == ('preserved',)
+    print('Native workspace archive/CLI restore/restart passed')
 print('Native portable lifecycle/restart passed')

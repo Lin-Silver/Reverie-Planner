@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -145,6 +146,7 @@ type ToolResult struct {
 }
 
 type AppContext struct {
+	WorkspaceMu   sync.RWMutex
 	DB            *sql.DB
 	RootPath      string
 	Config        AppConfig
@@ -158,6 +160,12 @@ type serviceMetadata struct {
 }
 
 func main() {
+	if handled, err := runWorkspaceRestoreCLI(os.Args[1:]); handled {
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	rootPath, err := resolveRootPath()
 	if err != nil {
 		log.Fatalf("resolve root: %v", err)
@@ -179,6 +187,15 @@ func main() {
 		log.Fatal("app host must be loopback and port must be between 1 and 65535")
 	}
 	staticRoot := filepath.Join(rootPath, "src", "frontend", "dist")
+	// An isolated restored data root can reuse assets from this portable binary's package.
+	if _, err := os.Stat(staticRoot); errors.Is(err, os.ErrNotExist) {
+		if executable, execErr := os.Executable(); execErr == nil {
+			packaged := filepath.Join(filepath.Dir(filepath.Dir(executable)), "src", "frontend", "dist")
+			if info, statErr := os.Stat(packaged); statErr == nil && info.IsDir() {
+				staticRoot = packaged
+			}
+		}
+	}
 	if _, err := os.Stat(staticRoot); errors.Is(err, os.ErrNotExist) {
 		cfg.DevelopmentMode = true
 	} else if err != nil {
@@ -214,6 +231,9 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", ctx.handleHealth)
 	mux.HandleFunc("/api/workspace", ctx.handleWorkspace)
+	mux.HandleFunc("/api/workspace/archive", ctx.handleWorkspaceArchive)
+	mux.HandleFunc("/api/workspace/restore-preview", ctx.handleWorkspaceRestore)
+	mux.HandleFunc("/api/workspace/restore", ctx.handleWorkspaceRestore)
 	mux.HandleFunc("/api/overview", ctx.handleOverview)
 	mux.HandleFunc("/api/projects", ctx.handleProjects)
 	mux.HandleFunc("/api/tasks", ctx.handleTasks)
@@ -301,7 +321,7 @@ func main() {
 		_ = listener.Close()
 		log.Fatalf("write service metadata: %v", err)
 	}
-	server := &http.Server{Addr: addr, Handler: localSecurityMiddleware(cfg, mux)}
+	server := &http.Server{Addr: addr, Handler: localSecurityMiddleware(cfg, ctx.workspaceMutationGate(mux))}
 	serveResult := make(chan error, 1)
 	go func() { serveResult <- server.Serve(listener) }()
 	log.Printf("Reverie Planner listening on %s", addr)

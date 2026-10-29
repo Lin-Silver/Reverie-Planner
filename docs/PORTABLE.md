@@ -11,7 +11,7 @@ Extract a package for your operating system and CPU to a writable folder. Keep t
 - data/provider.key: non-Windows encryption key; keep with encrypted provider config and never share it.
 - runtime/service.json: temporary ownership and shutdown credential. Do not edit or share while running.
 
-Settings shows the exact paths and can create a database snapshot. A database snapshot alone does **not** include attachment bytes or provider configuration. For complete portable backups, stop the app and copy the entire folder. Restore into a separate folder first. Never copy a live SQLite database without its WAL or use a database snapshot as a full workspace backup.
+Settings shows the exact paths and can create a database snapshot. A database snapshot alone does **not** include attachment bytes or provider configuration. For complete portable folder backups, stop the app and copy the entire folder. On dev, Settings can also create a validated data-and-attachment archive and restore it to a separate directory; see [WORKSPACE_ARCHIVES.md](WORKSPACE_ARCHIVES.md) for exclusions, bounds and launch commands. Restore into a separate folder first. Never copy a live SQLite database without its WAL or use a database snapshot as a full workspace backup.
 
 Windows credentials use DPAPI and are bound to the Windows account. Moving documents across platforms works by copying the stopped workspace, but credentials are not interchangeable across operating systems/accounts; preserve your original folder and reconfigure provider credentials in a new workspace. Never delete keys to force decryption.
 

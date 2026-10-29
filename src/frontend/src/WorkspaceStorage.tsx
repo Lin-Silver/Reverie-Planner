@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import WorkspaceArchive from './WorkspaceArchive'
 
 type Workspace = {version:string;root:string;database:string;attachments:string;backups:string}
 export default function WorkspaceStorage() {
@@ -27,5 +28,6 @@ export default function WorkspaceStorage() {
       }catch(e){setError((e as Error).message)}finally{setBusy(false)}
     }}>{busy?'Creating snapshot…':'Create database snapshot'}</button>
     <p role="status">{notice}</p>{error && <p role="alert">{error}</p>}
+    <WorkspaceArchive />
   </section>
 }

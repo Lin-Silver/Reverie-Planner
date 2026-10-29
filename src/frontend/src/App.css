@@ -100,3 +100,9 @@ button:active:not(:disabled) { transform:scale(.98); }
 .navigation-close { position:absolute; right:var(--space-2); top:max(var(--space-2),env(safe-area-inset-top)); }
 @starting-style { .navigation-dialog:not([data-instant]) { transform:translateX(-100%); opacity:1; } }
 @media (prefers-reduced-motion:reduce) { .navigation-dialog { transform:none; } }
+
+.archive-panel { margin-top: var(--space-8); padding-top: var(--space-6); border-top: 1px solid var(--border); }
+.archive-panel .section-heading { margin-top: 0; }.archive-panel h3 { font-size: 1.125rem; }.archive-panel h4 { margin: var(--space-8) 0 var(--space-2); font-size: .9375rem; }
+.archive-file-label { display: grid; gap: var(--space-2); font-size: .8125rem; }.archive-file-label input { width: 100%; max-width: 100%; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+.archive-actions { flex-wrap: wrap; margin-top: var(--space-4); }.archive-preview { background: var(--muted-bg); border-radius: var(--radius-card); padding: var(--space-4); margin-top: var(--space-4); }
+.archive-preview dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-4); }.archive-preview dd { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }.archive-preview code { display: inline-block; max-width: 100%; overflow-wrap: anywhere; user-select: text; }
