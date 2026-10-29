@@ -13,7 +13,7 @@ import { sortDatabaseRecords, type DatabaseSortRule } from './databaseSorting'
 
 type ViewType = 'table' | 'board' | 'calendar' | 'list' | 'gallery'
 const VIEW_TYPES: ViewType[] = ['table', 'board', 'calendar', 'list', 'gallery']
-type ViewConfig = { filter?: string; sort?: string; sortRules?: DatabaseSortRule[]; groupBy?: string; dateProperty?: string; filterTree?: FilterGroup; columnOrder?: string[]; hiddenColumns?: string[]; columnWidths?: Record<string, number> }
+type ViewConfig = { filter?: string; sort?: string; sortRules?: DatabaseSortRule[]; groupBy?: string; dateProperty?: string; filterTree?: FilterGroup; columnOrder?: string[]; hiddenColumns?: string[]; columnWidths?: Record<string, number>; galleryProperties?: string[]; galleryCoverProperty?: string }
 
 export type DBProperty = { id: string; databaseId: string; name: string; type: string; config: string; position: number; visible: boolean; version: number }
 type DBView = { id: string; databaseId: string; name: string; type: string; config: string; position: number; version: number }
@@ -51,6 +51,8 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [bulkDraft,setBulkDraft] = useState('')
   const [bulkStartProperty,setBulkStartProperty] = useState('')
   const [dateProperty, setDateProperty] = useState('')
+  const [galleryProperties, setGalleryProperties] = useState<string[] | null>(null)
+  const [galleryCoverProperty, setGalleryCoverProperty] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [failedEdit, setFailedEdit] = useState<{recordId: string; patch: {title?: string; values?: Record<string, any>}} | null>(null)
@@ -98,6 +100,8 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     setHiddenColumns(Array.isArray(cfg.hiddenColumns)?cfg.hiddenColumns:[])
     setColumnWidths(cfg.columnWidths && typeof cfg.columnWidths==='object'?cfg.columnWidths:{})
     setDateProperty(cfg.dateProperty || '')
+    setGalleryProperties(Array.isArray(cfg.galleryProperties) ? cfg.galleryProperties : null)
+    setGalleryCoverProperty(cfg.galleryCoverProperty || '')
   }, [view?.id, view?.config])
 
   const sortRules: DatabaseSortRule[] = [
@@ -110,7 +114,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     // unknown keys when saving filters or column presentation.
     let previous: ViewConfig = {}
     try { previous = JSON.parse(view.config || '{}') as ViewConfig } catch { /* legacy config */ }
-    const config = JSON.stringify({ ...previous, filter: filterText, filterTree, sort: sortProp, sortRules, groupBy, dateProperty, columnOrder, hiddenColumns, columnWidths })
+    const config = JSON.stringify({ ...previous, filter: filterText, filterTree, sort: sortProp, sortRules, groupBy, dateProperty, columnOrder, hiddenColumns, columnWidths, ...(galleryProperties === null ? {} : { galleryProperties }), galleryCoverProperty })
     setSavingView(true)
     try {
       const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...view, config }) }) as DBView
@@ -325,11 +329,22 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         <button disabled={!!bulkDraft} onClick={() => void saveViewSettings()}>Save view settings</button>
       </div>
       <details style={{ marginBottom: 10 }}><summary>Advanced filters (AND / OR)</summary><fieldset disabled={!!bulkDraft} style={{border:0,padding:0}}><DatabaseFilterBuilder group={filterTree} properties={props} onChange={setFilterTree} /></fieldset></details>
+      {view?.type === 'gallery' && <details style={{marginBottom:12}}><summary>Gallery presentation</summary>
+        <label>Cover attachment <select aria-label="Gallery cover property" value={galleryCoverProperty} onChange={e=>setGalleryCoverProperty(e.target.value)}>
+          <option value="">No cover</option>{props.filter(p=>p.type==='file').map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+        </select></label>
+        <div role="group" aria-label="Gallery visible properties">{props.filter(p=>p.type!=='title').map(p=><label key={p.id} style={{display:'inline-flex',gap:4,margin:6}}>
+          <input type="checkbox" aria-label={'Show gallery '+p.name} checked={(galleryProperties ?? props.filter(field=>field.type!=='title').slice(0,3).map(field=>field.id)).includes(p.id)} onChange={e=>{
+            const selected=galleryProperties ?? props.filter(field=>field.type!=='title').slice(0,3).map(field=>field.id)
+            setGalleryProperties(e.target.checked ? [...selected,p.id] : selected.filter(id=>id!==p.id))
+          }}/>{p.name}</label>)}</div>
+        <small>Choose an image attachment property for card covers. Save view settings to keep this layout.</small>
+      </details>}
       {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} deleteRecord={deleteRecord} onOpenRecord={guardedOpen} columnOrder={columnOrder} setColumnOrder={setColumnOrder} hiddenColumns={hiddenColumns} setHiddenColumns={setHiddenColumns} columnWidths={columnWidths} setColumnWidths={setColumnWidths} selectedRecords={selectedRecords} setSelectedRecords={setSelectedRecords} bulkDraft={bulkDraft} setBulkDraft={setBulkDraft} bulkStartProperty={bulkStartProperty} setBulkStartProperty={setBulkStartProperty} applyBulkEdit={applyBulkEdit} refreshBulkVersions={refreshBulkVersions} bulkDisabled={!!failedEdit} />}
       {view?.type === 'board' && <DatabaseBoard records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={guardedOpen} />}
       {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={guardedOpen} />}
-      {view?.type === 'list' && <ListView records={visibleRecords} onOpenRecord={guardedOpen} />}
-      {view?.type === 'gallery' && <GalleryView records={visibleRecords} onOpenRecord={guardedOpen} />}
+      {view?.type === 'list' && <ListView records={visibleRecords} onOpenRecord={guardedOpen} deleteRecord={deleteRecord} />}
+      {view?.type === 'gallery' && <GalleryView records={visibleRecords} props={props} propertyIds={galleryProperties} coverProperty={galleryCoverProperty} onOpenRecord={guardedOpen} deleteRecord={deleteRecord} />}
       {!['table', 'board', 'calendar', 'list', 'gallery'].includes(view?.type || '') && <div>Unknown view</div>}</fieldset>
     </div>
   )
@@ -708,16 +723,32 @@ function CalendarView({ records, props, updateRecord, dateProperty, onOpenRecord
     </section>
   </div>
 }
-function ListView({ records, onOpenRecord }: { records: DBRecord[]; onOpenRecord?: OpenRecord }) {
+function ListView({ records, onOpenRecord, deleteRecord }: { records: DBRecord[]; onOpenRecord?: OpenRecord; deleteRecord: (id:string) => Promise<boolean> }) {
   return <div style={{ display: 'grid', gap: 8 }}>{records.map(rec => <div data-testid="list-record" key={rec.id} style={{ borderBottom: '1px solid var(--border)', padding: 8 }}>
     <strong>{rec.title}</strong> <button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>Open page</button>
+    <button aria-label={'Delete record '+rec.title} onClick={()=>void deleteRecord(rec.id)}>Move to Trash</button>
   </div>)}</div>
 }
-function GalleryView({ records, onOpenRecord }: { records: DBRecord[]; onOpenRecord?: OpenRecord }) {
+function GalleryView({ records, props, propertyIds, coverProperty, onOpenRecord, deleteRecord }: {
+  records: DBRecord[]; props: DBProperty[]; propertyIds: string[] | null; coverProperty: string; onOpenRecord?: OpenRecord; deleteRecord: (id:string) => Promise<boolean>
+}) {
+  const fields=props.filter(p=>p.type!=='title')
+  const visible=propertyIds===null ? fields.slice(0,3) : fields.filter(p=>propertyIds.includes(p.id))
+  const cover=props.find(p=>p.id===coverProperty && p.type==='file')
   return <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-    {records.map(rec => <div data-testid="gallery-record" key={rec.id} style={{ border: '1px solid var(--border)', background: 'var(--card)', padding: 12, borderRadius: 8 }}>
-      <strong>{rec.title}</strong><div>{Object.values(rec.values || {}).slice(0,3).map((value,index) => <span key={index}>{String(value ?? '')} </span>)}</div>
-      <button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>Open page</button>
-    </div>)}
+    {records.map(rec => {
+      const files=cover ? rec.values?.[cover.id] : null
+      const coverId=Array.isArray(files) && typeof files[0]==='string' ? files[0] : ''
+      return <article data-testid="gallery-record" key={rec.id} style={{ border: '1px solid var(--border)', background: 'var(--card)', padding: 12, borderRadius: 8 }}>
+        {coverId && <img src={'/api/db/files?id='+encodeURIComponent(coverId)} alt={'Cover for '+rec.title} loading="lazy" style={{width:'100%',height:130,objectFit:'cover',borderRadius:6}} />}
+        <strong>{rec.title}</strong><dl>{visible.map(property=>{
+          const value=rec.values?.[property.id]
+          const text=value==null ? '—' : Array.isArray(value) ? value.join(', ') : String(value)
+          return <div key={property.id}><dt>{property.name}</dt><dd style={{marginLeft:0,overflowWrap:'anywhere'}}>{text}</dd></div>
+        })}</dl>
+        <button onClick={() => rec.pageId && onOpenRecord?.(rec.pageId)}>Open page</button>
+        <button aria-label={'Delete record '+rec.title} onClick={()=>void deleteRecord(rec.id)}>Move to Trash</button>
+      </article>
+    })}
   </div>
 }

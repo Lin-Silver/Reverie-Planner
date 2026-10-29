@@ -13,7 +13,7 @@ func TestDBViewPresentationValidationPreservesData(t *testing.T) {
 	providerPath, providerBefore := viewIntegrityProviders(t, app)
 	original := database.Views[0]
 	configs := []string{
-		`{"filter":{}}`, `{"filter":null}`, `{"sort":[]}`, `{"groupBy":true}`,
+		`{"galleryProperties":null}`, `{"galleryCoverProperty":[]}`, `{"filter":{}}`, `{"filter":null}`, `{"sort":[]}`, `{"groupBy":true}`,
 		`{"dateProperty":2}`, `{"columnOrder":null}`, `{"columnOrder":["a","a"]}`,
 		`{"hiddenColumns":[{}]}`, `{"columnWidths":[]}`, `{"columnWidths":{"a":"wide"}}`,
 		`{"columnWidths":{"a":99}}`, `{"columnWidths":{"a":701}}`,

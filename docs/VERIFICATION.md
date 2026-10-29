@@ -1,5 +1,13 @@
 # PR #2 Database Verification
 
+## Owner-requested integration audit — 2026-10-29
+
+Local environment: Go 1.26.0, Node 24.22.1, Linux. Go tests, go vet, frontend TypeScript/production build and lint passed after the initial audit fixes; existing lint warnings remain. Browser and Windows integration results must be checked at their exact tested commit in PR #2. New regressions cover special Board names, keyboard moves, settings conflicts/in-flight locks, create errors, Gallery property/cover persistence and List Trash/Restore.
+
+PageEditor is lazy-loaded: the measured entry JS decreased from approximately 1,274 KB to 313 KB minified (gzip approximately 380 KB to 91 KB). The editor chunk remains approximately 961 KB; this is not a 10k-record performance result.
+
+See [PROJECT_AUDIT.md](PROJECT_AUDIT.md) for scope and [PROJECT_DIRECTION.md](PROJECT_DIRECTION.md) for remaining release gates. Earlier entries below are historical and prove only their cited heads.
+
 This file records concrete, SHA-specific evidence. A successful CI run proves the code tested at **that** commit only; it does not certify full Notion parity or local-machine usability.
 
 ## Repository and merge boundaries

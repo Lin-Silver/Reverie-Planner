@@ -64,7 +64,7 @@ func validateDBFilterTree(raw json.RawMessage, depth int) error {
 // prevent persisted objects/nulls from crashing text inputs and table layouts.
 // Unknown fields remain allowed for forward-compatible layout extensions.
 func validateDBPresentationConfig(body map[string]json.RawMessage) error {
-	for _, key := range []string{"filter", "sort", "groupBy", "dateProperty"} {
+	for _, key := range []string{"filter", "sort", "groupBy", "dateProperty", "galleryCoverProperty"} {
 		if raw, exists := body[key]; exists {
 			var value *string
 			if err := json.Unmarshal(raw, &value); err != nil || value == nil {
@@ -72,7 +72,7 @@ func validateDBPresentationConfig(body map[string]json.RawMessage) error {
 			}
 		}
 	}
-	for _, key := range []string{"columnOrder", "hiddenColumns"} {
+	for _, key := range []string{"columnOrder", "hiddenColumns", "galleryProperties"} {
 		if raw, exists := body[key]; exists {
 			var ids []string
 			if err := json.Unmarshal(raw, &ids); err != nil || ids == nil || len(ids) > 200 {

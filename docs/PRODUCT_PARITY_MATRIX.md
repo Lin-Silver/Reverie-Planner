@@ -15,7 +15,7 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: inte
 | Page icon & cover | Partial | Implemented | icon editable; cover field exists, UI pending |
 | Auto-save | Implemented | Verified | 1s debounce + status indicator |
 | Databases/multi-view | Partial | E2E verified | Persistent SQLite records/properties/views, five working layouts, typed filters, two-key sorts, independent view configuration, linked pages and Trash/Restore |
-| Table/Board/Calendar/List/Gallery | Partial | E2E verified | Board and Calendar drag/drop persist data; table column sizing/reordering/hiding, keyboard cell editing; List/Gallery record links. No timeline view or Gallery cover editor |
+| Table/Board/Calendar/List/Gallery | Partial | E2E verified | Board and Calendar drag/drop persist data; table column sizing/reordering/hiding, keyboard cell editing; List/Gallery record links. Gallery property selection and local attachment cover selection; no timeline view |
 | Properties/filter/sort/relations | Partial | Partially verified | Typed field schema, nested AND/OR filters, configurable select/date/number, formulas and relation rollups, scoped file attachment and version validation; more complex relation/formula behaviors and spreadsheet editing remain |
 | Search | Partial | Implemented | Global search across projects/tasks/pages |
 | Shortcuts & templates | Partial | Verified | Ctrl+K command palette works; templates remain unavailable |
@@ -39,7 +39,7 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: inte
 
 ## Known gaps
 - Basic formula, rollup, relation, file, people and AND/OR filter implementations exist, but advanced lifecycle, bidirectional links, dependency handling and large-scale performance are not fully proven.
-- Table column sizing/reordering/hiding now works; reviewed TSV copy/paste and rectangular selection exist; still missing native spreadsheet shortcuts/undo and richer property management, gallery covers and a timeline view.
+- Table column sizing/reordering/hiding now works; reviewed TSV copy/paste and rectangular selection exist; still missing native spreadsheet shortcuts/undo and richer property management, richer gallery cover handling and a timeline view.
 - Database record conflicts have Retry/Reload tests, but full multi-client schema and linked-view conflict UX needs further validation.
 - The database feature is not yet at full Notion parity; track the remaining release gates in PROJECT_DIRECTION.md and DATABASE_COMPLETION_PLAN.md.
 - No real-time collaboration

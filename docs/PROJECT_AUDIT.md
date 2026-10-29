@@ -33,11 +33,12 @@ No branches are deleted. Re-merging ancestor branches would add no unique implem
 | Medium | Board had drag-only group moves | Add labelled native select controls, serialize moves and retain server-confirmed state on failure |
 | Medium | Record creation and database rename rejected promises escaped without visible errors | Show API error details, guard repeated creation and allow deliberate retry; browser failure/retry regression |
 | Medium | Initial database fetch hid errors behind “Not found” | Display error and retry/back controls |
+| Medium | Gallery had no persisted field/cover presentation and List lacked a delete action | Add per-view property selection and owned attachment covers; add reversible List/Gallery Trash actions and browser persistence/restore regressions |
 | Medium | CI/documentation requested Go 1.24 while go.mod requires 1.26 | Merge reviewed PR #3; retain database branch evidence during documentation conflict resolution |
 
 ## Remaining work
 
-See PROJECT_DIRECTION.md for ordered priorities and DATABASE_COMPLETION_PLAN.md for detailed unchecked release conditions. In particular: historical user-backup acceptance, full relation/file/schema lifecycle, complete view/property UX, 10k performance proof, import/export, templates, accessibility and manual platform acceptance remain unfinished. Existing lint warnings and the large BlockNote bundle also remain engineering debt unless a later verification entry records a fix.
+See PROJECT_DIRECTION.md for ordered priorities and DATABASE_COMPLETION_PLAN.md for detailed unchecked release conditions. In particular: historical user-backup acceptance, full relation/file/schema lifecycle, complete view/property UX, 10k performance proof, import/export, templates, accessibility and manual platform acceptance remain unfinished. Existing lint warnings and the large editor chunk remain engineering debt. Lazy loading reduces the measured entry bundle from about 1,274 KB to 313 KB minified; it does not prove large-data performance.
 
 ## Verification provenance
 
