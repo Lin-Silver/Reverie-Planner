@@ -42,12 +42,20 @@ func TestDBBulkEditAtomicRollbackAndPageVersions(t *testing.T) {
  assertOriginal()
  if r:=call(editA(first.Version,"Rollback"),editB(second.Version+1,7));r.Code!=409{t.Fatalf("stale version: %+v",r)}
  assertOriginal()
- trigger:=fmt.Sprintf(`CREATE TRIGGER reject_bulk_second BEFORE UPDATE ON db_records WHEN NEW.id=%q BEGIN SELECT RAISE(ABORT,'fault'); END`,second.ID)
+ trigger:=fmt.Sprintf(`CREATE TRIGGER reject_bulk_second BEFORE UPDATE ON db_records WHEN NEW.id='%s' BEGIN SELECT RAISE(ABORT,'fault'); END`,second.ID)
  if _,err:=app.DB.Exec(trigger);err!=nil{t.Fatal(err)}
  if r:=call(editA(first.Version,"Rollback"),editB(second.Version,7));r.Code!=500{t.Fatalf("SQLite failure: %+v",r)}
  if _,err:=app.DB.Exec("DROP TRIGGER reject_bulk_second");err!=nil{t.Fatal(err)}
  assertOriginal()
- if r:=call(editA(first.Version,"Bulk renamed"),editB(second.Version,7));r.Code!=200{t.Fatalf("valid bulk edit: %+v",r)}
+ success:=call(editA(first.Version,"Bulk renamed"),editB(second.Version,7))
+ if success.Code!=200{t.Fatalf("valid bulk edit: %+v",success)}
+ var resultRecords []DBRecord
+ if err:=json.Unmarshal([]byte(success.Body),&resultRecords);err!=nil{t.Fatal(err)}
+ if len(resultRecords)!=2 || resultRecords[0].Title!="Bulk renamed" ||
+    resultRecords[0].Version!=first.Version+1 || resultRecords[1].Version!=second.Version+1 ||
+    resultRecords[1].Values[prop.ID]!=float64(7) {
+  t.Fatalf("bulk response does not reflect committed values: %+v",resultRecords)
+ }
  a,err:=app.getDBRecord(first.ID);if err!=nil{t.Fatal(err)}
  b,err:=app.getDBRecord(second.ID);if err!=nil{t.Fatal(err)}
  if a.Title!="Bulk renamed" || a.Version!=first.Version+1 || b.Version!=second.Version+1 || b.Values[prop.ID]!=float64(7) {
