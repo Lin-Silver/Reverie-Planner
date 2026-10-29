@@ -63,6 +63,8 @@ test('database board dragging updates the same SQLite record and survives reopen
   const source=page.locator('[data-testid="board-group"][data-group="Todo"] [data-testid="board-card"]').filter({hasText:'Drag me'})
   const target=page.locator('[data-testid="board-group"][data-group="Done"]')
   await expect(source).toBeVisible()
+  // Native form controls must remain outside the draggable header.
+  await expect(source.locator('select,input')).toHaveCount(0)
   await source.dragTo(target)
   await expect.poll(async()=> (await rows(page,host.databaseId)).find(r=>r.id===item.id)?.values[status.id],{timeout:15000}).toBe('Done')
   const after=(await rows(page,host.databaseId)).find(r=>r.id===item.id)!

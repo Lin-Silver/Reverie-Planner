@@ -30,6 +30,7 @@ No branches are deleted. Re-merging ancestor branches would add no unique implem
 | High | View config validation accepted object/null text fields and malformed layout/filter structures consumed by React | Validate known presentation settings on POST/PUT; reject before writes; test unchanged view/record/provider state |
 | High | Failed/stale view settings saves lacked explicit draft retry and navigation protection | Retain the exact attempted config, lock navigation/settings while unresolved, explicit Retry using a fresh version and remote metadata; browser conflict regression |
 | Medium | Ordinary object keys used for Board groups collide with special names; literal `(empty)` aliases unassigned | Extract Board component, use Map with null sentinel; browser regression for special names and persisted moves |
+| Medium | Adding a native group selector inside the drag target made Windows drag initiation unreliable | Keep native controls outside the draggable header and carry stable record IDs in DataTransfer; preserve and strengthen the existing native-drag regression |
 | Medium | Board had drag-only group moves | Add labelled native select controls, serialize moves and retain server-confirmed state on failure |
 | Medium | Record creation and database rename rejected promises escaped without visible errors | Show API error details, guard repeated creation and allow deliberate retry; browser failure/retry regression |
 | Medium | Initial database fetch hid errors behind “Not found” | Display error and retry/back controls |
