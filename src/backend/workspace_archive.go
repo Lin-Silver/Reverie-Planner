@@ -579,8 +579,17 @@ func (a *AppContext) handleWorkspaceRestore(w http.ResponseWriter, r *http.Reque
 	}
 	n, err := io.Copy(file, io.LimitReader(archiveContextReader{r.Context(), r.Body}, maxWorkspaceArchiveBytes+1))
 	closeErr := file.Close()
-	if err != nil || closeErr != nil || n > maxWorkspaceArchiveBytes {
+	var limitError *http.MaxBytesError
+	if n > maxWorkspaceArchiveBytes || errors.As(err, &limitError) {
 		writeJSONError(w, 413, "Upload a workspace ZIP smaller than 512 MiB")
+		return
+	}
+	if err != nil || closeErr != nil {
+		if r.Context().Err() != nil {
+			writeJSONError(w, 408, "Archive upload was cancelled")
+		} else {
+			writeJSONError(w, 500, "Archive upload could not be staged; retry or check available storage")
+		}
 		return
 	}
 	var preview workspaceArchivePreview

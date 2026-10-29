@@ -370,3 +370,24 @@ func TestWorkspaceLazyReadInitializersParticipateInArchiveGate(t *testing.T) {
 		}
 	}
 }
+
+type archiveFailedReader struct{}
+
+func (archiveFailedReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+func TestWorkspaceRestoreUploadErrorsAreNotMisreportedAsSizeLimits(t *testing.T) {
+	app := setupTestContext(t)
+	defer app.DB.Close()
+	request := httptest.NewRequest("POST", "/api/workspace/restore-preview", archiveFailedReader{})
+	response := httptest.NewRecorder()
+	app.handleWorkspaceRestore(response, request)
+	if response.Code != 500 || !strings.Contains(response.Body.String(), "could not be staged") {
+		t.Fatalf("read failure misreported: %d %s", response.Code, response.Body.String())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	response = httptest.NewRecorder()
+	app.handleWorkspaceRestore(response, httptest.NewRequest("POST", "/api/workspace/restore-preview", strings.NewReader("test")).WithContext(ctx))
+	if response.Code != 408 {
+		t.Fatalf("cancelled upload status: %d", response.Code)
+	}
+}
