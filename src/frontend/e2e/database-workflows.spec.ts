@@ -987,6 +987,31 @@ test('table Shift+Arrow keyboard selection follows visible rows without writing 
   await expect(checks.nth(3)).not.toBeChecked()
   await expect(checks.nth(2)).toBeFocused()
 
+  // Reversing Shift+Arrow must shrink the owned range, not retain a stale
+  // union of previously selected rows.
+  await page.keyboard.press('Shift+ArrowUp')
+  await expect(checks.nth(2)).not.toBeChecked()
+  await expect(checks.nth(1)).toBeChecked()
+  await expect(checks.nth(1)).toBeFocused()
+  await page.keyboard.press('Shift+ArrowUp')
+  await expect(checks.nth(1)).not.toBeChecked()
+  await expect(checks.nth(0)).toBeChecked()
+  await expect(checks.nth(0)).toBeFocused()
+
+  // A separate manually selected row is not part of the keyboard-owned
+  // range and must survive expansion and contraction.
+  await page.getByRole('button', {name: 'Clear selected rows'}).click()
+  await checks.nth(3).check()
+  await checks.nth(0).check()
+  await checks.nth(0).focus()
+  await page.keyboard.press('Shift+ArrowDown')
+  await expect(checks.nth(1)).toBeChecked()
+  await expect(checks.nth(3)).toBeChecked()
+  await page.keyboard.press('Shift+ArrowUp')
+  await expect(checks.nth(1)).not.toBeChecked()
+  await expect(checks.nth(0)).toBeChecked()
+  await expect(checks.nth(3)).toBeChecked()
+
   await page.getByRole('button', {name: 'Clear selected rows'}).click()
   await checks.nth(3).focus()
   await page.keyboard.press('Shift+ArrowUp')
