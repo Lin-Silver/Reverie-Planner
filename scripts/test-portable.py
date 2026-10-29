@@ -1,5 +1,5 @@
 """Native platform lifecycle, ownership, portable paths and restart test."""
-import json, pathlib, shutil, socket, sqlite3, subprocess, sys, tempfile, time, urllib.request
+import contextlib, json, pathlib, shutil, socket, sqlite3, subprocess, sys, tempfile, time, urllib.request
 root=pathlib.Path(__file__).resolve().parents[1]
 exe='ReveriePlanner.exe' if sys.platform=='win32' else 'ReveriePlanner'
 http=urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -31,9 +31,10 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             except urllib.error.HTTPError as err: assert err.code in (401,403)
             subprocess.run([str(dest/'runtime'/exe),'--stop','--root',str(dest)],check=True)
             assert proc.wait(timeout=15)==0
-            with sqlite3.connect(dest/'data/planner.db') as db:
+            with contextlib.closing(sqlite3.connect(dest/'data/planner.db')) as db:
                 if cycle==0: db.execute('CREATE TABLE portable_marker (value TEXT)');db.execute("INSERT INTO portable_marker VALUES ('preserved')")
                 else: assert db.execute('SELECT value FROM portable_marker').fetchone()==('preserved',)
+                db.commit()
         finally:
             if proc.poll() is None: proc.terminate();proc.wait(timeout=15)
     assert not (dest/'runtime/service.json').exists()

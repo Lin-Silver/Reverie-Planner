@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, dev ]
   pull_request:
 
 jobs:
@@ -169,3 +169,25 @@ jobs:
             exit 1
           fi
           gh release create v0.0.1 "${files[@]}" --target "$GITHUB_SHA" --title 'Reverie Planner V0.0.1' --notes-file docs/RELEASE_V0.0.1.md
+      - name: Keep only main and dev after verified integration
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/dev" >/dev/null 2>&1; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/heads/dev -f sha="$GITHUB_SHA"
+          fi
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --unshallow origin
+          fi
+          while IFS= read -r branch; do
+            case "$branch" in main|dev) continue ;; esac
+            if git merge-base --is-ancestor "refs/remotes/origin/$branch" refs/remotes/origin/main || git merge-base --is-ancestor "refs/remotes/origin/$branch" refs/remotes/origin/dev; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch"
+              echo "Removed integrated branch: $branch"
+            else
+              echo "Unique commits remain on $branch; refusing deletion." >&2
+              exit 1
+            fi
+          done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/branches?per_page=100" --jq '.[].name')
