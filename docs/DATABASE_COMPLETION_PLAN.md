@@ -1,12 +1,12 @@
 # Reverie Planner — Database Completion Plan
 
-**Mode:** execution plan / living checklist. **Branch:** `feature/notion-database-system`, **PR:** [#2](https://github.com/Lin-Silver/Reverie-Planner/pull/2). **Baseline:** `966e478b53298d65dd6f01227c10e7aff375b696` (Windows Actions `40257255601`, 19/19 E2E). **Merge policy:** no direct writes to `main`, do not merge without independent approval.
+**Mode:** execution plan / living checklist. **Branch:** `feature/notion-database-system`, **PR:** [#2](https://github.com/Lin-Silver/Reverie-Planner/pull/2). **Baseline:** `966e478b53298d65dd6f01227c10e7aff375b696` (Windows Actions `40257255601`, 19/19 E2E). **Integration policy:** owner requested branch audit and merge on 2026-10-29; see PROJECT_AUDIT.md. Reviewed integration may land through PR #2 after successful checks. Unchecked release acceptance items remain binding for product-completion claims.
 
 ## Objective and definition of done
 
 Ship a trustworthy, locally stored, long-lived Notion-style database subsystem with reliable records, pages, linked views, five functional layouts, typed properties, relations, formulas/rollups, editable presentation, backups and proven conflict/lifecycle behavior. Do not claim perfect Notion/Plane parity, cloud sync or real-time multi-user collaboration. Scope includes working APIs, UI, migration, documentation and tests; a rendered mock or CI-only happy path does not satisfy acceptance. Protect existing pages, project/task entities, AI providers and their keys.
 
-**Global exit conditions:** every checkbox below is checked with code, regression evidence and a SHA-matched successful Windows CI; no skipped or weakened previous assertions; data survives restart, SQLite migration is forward-only, errors never silently discard drafts; PR stays Open pending independent review.
+**Global exit conditions:** every checkbox below is checked with code, regression evidence and a SHA-matched successful Windows CI; no skipped or weakened previous assertions; data survives restart, SQLite migration is forward-only, errors never silently discard drafts; Integration review and merge status are recorded in PR #2; the checklist remains the release acceptance gate.
 
 ## Phase 0 — Baseline, invariants and safety
 
@@ -59,7 +59,7 @@ Ship a trustworthy, locally stored, long-lived Notion-style database subsystem w
 - [ ] New Playwright tests for filters, properties, relation editing, formulas, rollups, view layout, Calendar date changes, Linked View config, backups, 409 and keyboard access. Keep existing 19 E2E.
 - [ ] Confirm `go test ./...`, `npm run build` (tsc), `npm run lint`, full Playwright, Windows start/stop and package using GitHub Actions. For each final claim capture exact head SHA and CI run.
 - [ ] Update `docs/PRODUCT_PARITY_MATRIX.md` and `docs/VERIFICATION.md` to distinguish verified, partial and unavailable behavior; add migration/backup/API design.
-- [ ] Independent review: inspect Git diff, schema and actual browser behavior, check no unexpected dependency/config/secret/user-data edits; **leave PR #2 Open**.
+- [ ] Independent review: inspect Git diff, schema and actual browser behavior, check no unexpected dependency/config/secret/user-data edits; **record the review and exact-head checks in PR #2**.
 
 ## Execution and progress discipline
 

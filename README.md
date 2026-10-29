@@ -1,6 +1,10 @@
 # Reverie Planner
 
-Reverie Planner is a local-first project planner. Its Go service stores projects, tasks, AI sessions, approvals, and audit events in SQLite; the React interface talks to that service over a loopback-only HTTP API.
+Reverie Planner aims to replace Notion for a personal, local-first workspace: nested documents, a block editor, structured databases, multiple views, search and project planning in one app. Core workflows must work offline without an AI provider or a cloud account. The Go service persists data in SQLite; the React interface uses a loopback-only HTTP API.
+
+**Status: development preview, not complete Notion parity.** Pages, project/task planning and a substantial database subsystem are implemented. Import/export, templates, full property/view management, advanced relations, large-data performance and accessibility acceptance remain unfinished. Do not treat a green build as completion of the product.
+
+See [product direction and release gates](docs/PROJECT_DIRECTION.md), [branch audit and fixes](docs/PROJECT_AUDIT.md), [feature matrix](docs/PRODUCT_PARITY_MATRIX.md) and [database completion checklist](docs/DATABASE_COMPLETION_PLAN.md).
 
 ## Windows quick start
 
@@ -20,7 +24,7 @@ The AI Agent uses registered project/task tools rather than SQL. Write operation
 
 ## Development and tests
 
-Development builds require Go 1.24 and Node.js 22:
+Development builds require Go 1.26 and Node.js 22:
 
 ```powershell
 build.bat

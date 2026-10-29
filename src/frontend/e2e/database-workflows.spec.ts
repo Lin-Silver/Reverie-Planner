@@ -1166,3 +1166,91 @@ test('bulk paste freezes the draft and start column while an atomic save is pend
   await expect.poll(async () => (await rows(page, host.databaseId)).find(row => row.id === item.id)?.values?.[note.id]).toBe('persist this draft')
   await page.unroute('**/api/db/records/bulk')
 })
+
+test('board handles prototype-like options and separates a literal empty label from unassigned', async ({page}) => {
+  const host = await makeDatabase(page)
+  const status = await property(page, host.databaseId, 'Status', 'select', JSON.stringify({options:['__proto__','constructor','(empty)','Done']}))
+  const item = await record(page, host.databaseId, 'Keyboard card')
+  const board = await makeView(page, host.databaseId, 'board')
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await reopen(page, host)
+  await page.getByLabel('Active database view').selectOption(board)
+  for (const value of ['__proto__', 'constructor', '(empty)', 'Done']) {
+    await page.getByLabel('Move Keyboard card to group', {exact:true}).selectOption('option:' + value)
+    await expect.poll(async () => (await rows(page, host.databaseId)).find(r => r.id === item.id)?.values?.[status.id]).toBe(value)
+    await expect(page.getByRole('region', {name:'Group ' + value, exact:true})).toContainText('Keyboard card')
+  }
+  await page.getByLabel('Move Keyboard card to group', {exact:true}).selectOption('')
+  await expect.poll(async () => (await rows(page, host.databaseId)).find(r => r.id === item.id)?.values?.[status.id] ?? null).toBe(null)
+  await expect(page.getByRole('region', {name:'Unassigned group',exact:true})).toContainText('Keyboard card')
+  await reopen(page, host)
+  await page.getByLabel('Active database view').selectOption(board)
+  await expect(page.getByRole('region', {name:'Unassigned group',exact:true})).toContainText('Keyboard card')
+  expect(errors).toEqual([])
+})
+
+test('view settings conflict retains draft and explicit retry preserves a remote rename', async ({page}) => {
+  const host = await makeDatabase(page)
+  await record(page, host.databaseId, 'Visible item')
+  await reopen(page, host)
+  const viewId = await page.getByLabel('Active database view').inputValue()
+  const current = await (await page.request.get(API + '/databases?id=' + host.databaseId)).json() as {views:{id:string;name:string;type:string;config:string;version:number}[]}
+  const view = current.views.find(v => v.id === viewId)!
+  const remote = await page.request.put(API + '/db/views', {data:{...view, name:'Renamed remotely', config:JSON.stringify({filter:'Remote filter'})}})
+  expect(remote.status()).toBe(200)
+  await page.getByLabel('Database filter', {exact:true}).fill('Visible')
+  await page.getByRole('button', {name:'Save view settings',exact:true}).click()
+  await expect(page.getByRole('alert')).toContainText('View settings save failed')
+  await expect(page.getByLabel('Database filter', {exact:true})).toHaveValue('Visible')
+  await expect(page.getByLabel('Active database view')).toBeDisabled()
+  await page.getByRole('button', {name:'Retry my view settings',exact:true}).click()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  const saved = await (await page.request.get(API + '/databases?id=' + host.databaseId)).json() as typeof current
+  expect(saved.views.find(v => v.id === viewId)?.name).toBe('Renamed remotely')
+  expect(JSON.parse(saved.views.find(v => v.id === viewId)!.config).filter).toBe('Visible')
+  await reopen(page, host)
+  await expect(page.getByLabel('Database filter', {exact:true})).toHaveValue('Visible')
+})
+
+test('failed database record creation reports the API error and permits retry', async ({page}) => {
+  const host = await makeDatabase(page)
+  const before = await rows(page, host.databaseId)
+  await page.route('**/api/db/records', async route => {
+    if (route.request().method() === 'POST') await route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'Simulated storage failure'})})
+    else await route.continue()
+  })
+  await page.getByRole('button', {name:'+ New',exact:true}).click()
+  await expect(page.getByRole('alert')).toContainText('Simulated storage failure')
+  expect(await rows(page, host.databaseId)).toEqual(before)
+  await page.unroute('**/api/db/records')
+  await page.getByRole('button', {name:'+ New',exact:true}).click()
+  await expect.poll(async () => (await rows(page, host.databaseId)).length).toBe(before.length + 1)
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('view settings remain locked during an in-flight save and preserve extension fields', async ({page}) => {
+  const host = await makeDatabase(page)
+  const current = await (await page.request.get(API + '/databases?id=' + host.databaseId)).json() as {views:{id:string;name:string;type:string;config:string;version:number}[]}
+  const view = current.views[0]
+  expect((await page.request.put(API + '/db/views', {data:{...view,config:JSON.stringify({extension:{future:true}})}})).status()).toBe(200)
+  await reopen(page, host)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let started!: () => void
+  const waiting = new Promise<void>(resolve => { started = resolve })
+  await page.route('**/api/db/views', async route => {
+    if (route.request().method() === 'PUT') { started(); await gate }
+    await route.continue()
+  })
+  await page.getByLabel('Database filter', {exact:true}).fill('My filter')
+  await page.getByRole('button', {name:'Save view settings',exact:true}).click()
+  await waiting
+  try {
+    await expect(page.getByLabel('Database filter', {exact:true})).toBeDisabled()
+    await expect(page.getByLabel('Active database view')).toBeDisabled()
+  } finally { release() }
+  await expect(page.getByLabel('Database filter', {exact:true})).toBeEnabled()
+  const saved = await (await page.request.get(API + '/databases?id=' + host.databaseId)).json() as typeof current
+  expect(JSON.parse(saved.views.find(v => v.id === view.id)!.config)).toMatchObject({filter:'My filter',extension:{future:true}})
+})

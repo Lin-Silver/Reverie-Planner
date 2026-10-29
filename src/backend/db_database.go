@@ -1482,6 +1482,7 @@ func validateDBViewConfig(kind,config string) error {
     var body map[string]json.RawMessage
     if err:=json.Unmarshal([]byte(config),&body);err!=nil{return fmt.Errorf("view config must be a JSON object: %w",err)}
     if body==nil{return fmt.Errorf("view config must be an object")}
+    if err := validateDBPresentationConfig(body); err != nil { return err }
     if raw,ok:=body["sortRules"];ok{
         var rules []struct {
             PropertyID string `json:"propertyId"`

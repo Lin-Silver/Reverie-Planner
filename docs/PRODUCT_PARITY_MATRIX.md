@@ -1,6 +1,6 @@
 # Product Parity Matrix
 
-Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: merged PR #1 (`f462423`) plus the open PR #2 feature branch. This matrix describes implemented, tested behavior rather than promised parity.
+Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: integrated page-tree and database feature work. See PROJECT_AUDIT.md for reviewed branch heads. This matrix describes implemented, tested behavior rather than promised parity.
 
 ## Notion
 
@@ -19,6 +19,7 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: merg
 | Properties/filter/sort/relations | Partial | Partially verified | Typed field schema, nested AND/OR filters, configurable select/date/number, formulas and relation rollups, scoped file attachment and version validation; more complex relation/formula behaviors and spreadsheet editing remain |
 | Search | Partial | Implemented | Global search across projects/tasks/pages |
 | Shortcuts & templates | Partial | Verified | Ctrl+K command palette works; templates remain unavailable |
+| Import/export & portability | Missing | Planned | Notion/Markdown import/export and macOS packaging need implementation and acceptance |
 
 ## Plane
 
@@ -38,13 +39,12 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: merg
 
 ## Known gaps
 - Basic formula, rollup, relation, file, people and AND/OR filter implementations exist, but advanced lifecycle, bidirectional links, dependency handling and large-scale performance are not fully proven.
-- Table column sizing/reordering/hiding now works; still missing multi-cell clipboard/range editing, richer property management, gallery covers and a timeline view.
+- Table column sizing/reordering/hiding now works; reviewed TSV copy/paste and rectangular selection exist; still missing native spreadsheet shortcuts/undo and richer property management, gallery covers and a timeline view.
 - Database record conflicts have Retry/Reload tests, but full multi-client schema and linked-view conflict UX needs further validation.
-- The database feature is not yet at full Notion parity; keep PR #2 open until separate acceptance review.
+- The database feature is not yet at full Notion parity; track the remaining release gates in PROJECT_DIRECTION.md and DATABASE_COMPLETION_PLAN.md.
 - No real-time collaboration
 - No templates, favorites, recent pages
 - Page cover image upload pending
 - Mobile responsive polish pending
-`
 
 Verified database interaction baseline: [Windows CI 40266607916](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266607916), commit `b0d34c68c4bc27cafa2389234d189819fc062814`, **27/27 Chromium E2E**. Newer commits require their own SHA-matched verification.

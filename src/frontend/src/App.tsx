@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import PageEditor from './PageEditor'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DatabaseView from './DatabaseView'
 import type { FormEvent } from 'react'
 import './App.css'
+
+const PageEditor = lazy(() => import('./PageEditor'))
 
 type ProjectStatus = 'active' | 'planning' | 'paused' | 'archived'
 type TaskStatus = 'todo' | 'in_progress' | 'done' | 'blocked'
@@ -516,7 +517,7 @@ export default function App() {
         <div className="page-icon" onClick={() => { if (!pageEditor) return; setIconDraft(pageEditor.icon || ''); setIconTarget(pageEditor) }}>{pageDraft.icon || '📄'}</div>
         <input className="page-title" value={pageDraft.title} onChange={(e) => { pageTitleDirtyRef.current = true; setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor && pageTitleDirtyRef.current && !pageLeaveError) void savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch((e) => { if ((e as Error).message.includes('version conflict')) setPageLeaveError(true); else setError(`Title save failed: ${(e as Error).message}`) }) }} placeholder="Untitled" />
   {pageEditor && (
-    <PageEditor
+    <Suspense fallback={<p role="status">Loading editor…</p>}><PageEditor
       key={`${pageEditor.id}-${reloadToken}`}
       pageId={pageEditor.id}
       initialContent={pageEditor.content}
@@ -572,7 +573,7 @@ export default function App() {
         } catch (e) { setError((e as Error).message); throw e }
       }}
       onStatus={handlePageSaveStatus}
-    />
+    /></Suspense>
   )}
       </div>
     )

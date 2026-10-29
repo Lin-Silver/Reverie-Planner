@@ -4,6 +4,7 @@ import DatabaseFilterBuilder from './DatabaseFilterBuilder'
 import DatabasePropertyDialog from './DatabasePropertyDialog'
 import DatabaseTrash from './DatabaseTrash'
 import DatabaseFileCell from './DatabaseFileCell'
+import DatabaseBoard from './DatabaseBoard'
 import DatabaseBulkPaste, { type BulkRecordEdit } from './DatabaseBulkPaste'
 import { selectedCellsTSV } from './databaseClipboard'
 import { sortDatabaseRecords, type DatabaseSortRule } from './databaseSorting'
@@ -21,7 +22,10 @@ export type DBRecord = { id: string; databaseId: string; title: string; pageId: 
 
 async function api(path: string, opts?: RequestInit) {
   const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts })
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null) as { error?: string } | null
+    throw new Error(`${res.status} ${detail?.error || res.statusText}`)
+  }
   if (res.status === 204) return null
   return res.json()
 }
@@ -50,7 +54,12 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [failedEdit, setFailedEdit] = useState<{recordId: string; patch: {title?: string; values?: Record<string, any>}} | null>(null)
-  useEffect(() => { onPendingEditChange?.(!!failedEdit || !!bulkDraft) }, [failedEdit, bulkDraft, onPendingEditChange])
+  const [failedViewConfig, setFailedViewConfig] = useState<{ id: string; config: string } | null>(null)
+  const [savingView, setSavingView] = useState(false)
+  const [creatingRecord, setCreatingRecord] = useState(false)
+  const pendingView = savingView || !!failedViewConfig
+  const hasPendingEdit = !!failedEdit || !!bulkDraft || pendingView
+  useEffect(() => { onPendingEditChange?.(hasPendingEdit) }, [hasPendingEdit, onPendingEditChange])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -64,6 +73,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
       // A reload or database switch must not retain selection from old rows.
       setSelectedRecords([])
       setFailedEdit(null)
+      setFailedViewConfig(null)
       setError('')
     } catch (e) { setError((e as Error).message) }
     setLoading(false)
@@ -95,12 +105,35 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     ...(secondarySortProp && secondarySortProp !== sortProp ? [{ propertyId: secondarySortProp, direction: secondarySortDirection }] : [])
   ]
   const saveViewSettings = async () => {
-    if (!view) return
+    if (!view || hasPendingEdit) return
+    // Preserve extension settings written by other layouts rather than dropping
+    // unknown keys when saving filters or column presentation.
+    let previous: ViewConfig = {}
+    try { previous = JSON.parse(view.config || '{}') as ViewConfig } catch { /* legacy config */ }
+    const config = JSON.stringify({ ...previous, filter: filterText, filterTree, sort: sortProp, sortRules, groupBy, dateProperty, columnOrder, hiddenColumns, columnWidths })
+    setSavingView(true)
     try {
-      const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...view, config: JSON.stringify({ filter: filterText, filterTree, sort: sortProp, sortRules, groupBy, dateProperty, columnOrder, hiddenColumns, columnWidths }) }) }) as DBView
+      const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...view, config }) }) as DBView
       setDb(current => current && ({ ...current, views: current.views.map(v => v.id === updated.id ? updated : v) }))
       setError('')
-    } catch (e) { setError((e as Error).message) }
+    } catch (e) {
+      setFailedViewConfig({ id: view.id, config })
+      setError('View settings save failed: ' + (e as Error).message + '. Your settings are retained. Retry explicitly or reload latest to discard them.')
+    } finally { setSavingView(false) }
+  }
+  const retryViewSettings = async () => {
+    if (!failedViewConfig || savingView) return
+    setSavingView(true)
+    try {
+      const latest = await api(`/api/databases?id=${encodeURIComponent(databaseId)}`) as Database
+      const remote = latest.views.find(v => v.id === failedViewConfig.id)
+      if (!remote) throw new Error('This view no longer exists. Reload latest to discard the draft.')
+      const updated = await api('/api/db/views', { method: 'PUT', body: JSON.stringify({ ...remote, config: failedViewConfig.config }) }) as DBView
+      setDb(current => current && ({ ...current, views: current.views.map(v => v.id === updated.id ? updated : v) }))
+      setFailedViewConfig(null)
+      setError('')
+    } catch (e) { setError('View settings retry failed; draft retained: ' + (e as Error).message) }
+    finally { setSavingView(false) }
   }
   const matchingRecords = records.filter(rec => matchesFilters(rec, props, filterTree) && (!filterText || (rec.title + ' ' + Object.values(rec.values || {}).join(' ')).toLowerCase().includes(filterText.toLowerCase())))
   const visibleRecords = sortDatabaseRecords(matchingRecords, props, sortRules)
@@ -113,7 +146,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   }
 
   const safelyUpdateRecord = async (rec: DBRecord, patch: { title?: string; values?: Record<string, any> }) => {
-    if (failedEdit || bulkDraft) { setError('Resolve the outstanding edit or discard the bulk paste draft first.'); return }
+    if (hasPendingEdit) { setError('Resolve the outstanding edit or discard the bulk paste draft first.'); return }
     try { await updateRecord(rec, patch) }
     catch (e) {
       setFailedEdit({recordId: rec.id, patch})
@@ -134,21 +167,26 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     } catch (e) { setError('Retry failed; your draft remains available: ' + (e as Error).message) }
   }
   const guardedBack = () => {
-    if (failedEdit || bulkDraft) { setError('Unsaved database edit: resolve it with Retry or Reload latest before leaving.'); return }
+    if (hasPendingEdit) { setError('Unsaved database edit: resolve it with Retry or Reload latest before leaving.'); return }
     onBack()
   }
   const guardedOpen = (pageId: string) => {
-    if (failedEdit || bulkDraft) { setError('Unsaved database edit: resolve it before opening another page.'); return }
+    if (hasPendingEdit) { setError('Unsaved database edit: resolve it before opening another page.'); return }
     onOpenRecord?.(pageId)
   }
   const addRecord = async () => {
-    if (failedEdit || bulkDraft) { setError('Resolve pending edits before adding records.'); return }
-    const rec = await api('/api/db/records', { method: 'POST', body: JSON.stringify({ databaseId, title: 'Untitled' }) }) as DBRecord
-    setRecords(rs => [...rs, rec])
+    if (hasPendingEdit || creatingRecord) { setError('Resolve pending edits before adding records.'); return }
+    setCreatingRecord(true)
+    try {
+      const rec = await api('/api/db/records', { method: 'POST', body: JSON.stringify({ databaseId, title: 'Untitled' }) }) as DBRecord
+      setRecords(rs => [...rs, rec])
+      setError('')
+    } catch (e) { setError('Could not create record: ' + (e as Error).message) }
+    finally { setCreatingRecord(false) }
   }
 
   const deleteRecord = async (id:string, skipConfirmation = false): Promise<boolean> => {
-    if(failedEdit || bulkDraft){setError('Resolve the unsaved edit or bulk draft before deleting a record');return false}
+    if(hasPendingEdit){setError('Resolve the unsaved edit or bulk draft before deleting a record');return false}
     const rec = records.find(row => row.id === id && row.databaseId === databaseId)
     if (!rec) { setError('Record is no longer in this database; reload latest before deleting.'); return false }
     if(!skipConfirmation && !confirm('Move this record to Trash? Its data can be restored.'))return false
@@ -162,7 +200,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     }catch(e){setError('Could not delete record: '+(e as Error).message);return false}
   }
   const deleteProperty = async (pid: string) => {
-    if (failedEdit || bulkDraft) { setError('Resolve the unsaved edit or bulk draft before deleting a property.'); return }
+    if (hasPendingEdit) { setError('Resolve the unsaved edit or bulk draft before deleting a property.'); return }
     const property = props.find(p => p.id === pid)
     if (!property) { setError('Property is no longer available; reload latest before deleting.'); return }
     try {
@@ -198,34 +236,38 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
 
   const renameDb = async () => {
     if (!db) return
-    if (failedEdit || bulkDraft) { setError('Resolve pending edits before renaming.'); return }
-    const title = prompt('Database name?', db.title) || db.title
-    const updated = await api('/api/databases', { method: 'PUT', body: JSON.stringify({ id: db.id, title, icon: db.icon, version: db.version }) }) as Database
-    setDb(updated)
+    if (hasPendingEdit) { setError('Resolve pending edits before renaming.'); return }
+    const title = prompt('Database name?', db.title)
+    if (!title?.trim() || title.trim() === db.title) return
+    try {
+      const updated = await api('/api/databases', { method: 'PUT', body: JSON.stringify({ id: db.id, title: title.trim(), icon: db.icon, version: db.version }) }) as Database
+      setDb(updated)
+      setError('')
+    } catch (e) { setError('Could not rename database: ' + (e as Error).message) }
   }
 
   if (loading) return <div style={{ padding: 24 }}>Loading database…</div>
   // Save errors remain visible without hiding the editor or unsaved input.
-  if (!db) return <div style={{ padding: 24 }}>Not found</div>
+  if (!db) return <div style={{ padding: 24 }}><p role="alert">{error || 'Database not found'}</p><button onClick={() => void load()}>Retry loading database</button><button onClick={onBack}>Back</button></div>
 
   return (
     <div style={{ padding: 16 }}>
       {trashOpen && <DatabaseTrash databaseId={databaseId} onClose={()=>setTrashOpen(false)} onRestored={()=>{void load()}} />}
       {propertyDialogOpen && <DatabasePropertyDialog databaseId={databaseId} properties={props} onClose={() => setPropertyDialogOpen(false)} onCreated={() => {setPropertyDialogOpen(false);void load()}} />}
-      {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} {failedEdit && <button onClick={() => void retryFailedEdit()}>Retry my changes</button>} <button disabled={!!bulkDraft} onClick={() => { void load() }}>Reload latest</button></div>}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+      {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} {failedViewConfig && <button disabled={savingView} onClick={() => void retryViewSettings()}>Retry my view settings</button>} {failedEdit && <button onClick={() => void retryFailedEdit()}>Retry my changes</button>} <button disabled={!!bulkDraft || savingView} onClick={() => { void load() }}>Reload latest</button></div>}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <button className="btn" onClick={guardedBack}>← Back</button>
         <h2 style={{ margin: 0 }}>{db.icon} {db.title}</h2>
         <button className="btn" onClick={renameDb}>Rename</button>
-        <button className="btn" onClick={() => {if(failedEdit || bulkDraft) {setError("Resolve unsaved edit or bulk draft before changing schema");return};setPropertyDialogOpen(true)}}>+ Property</button>
-        <button className="btn primary" onClick={addRecord}>+ New</button>
-        <button className="btn" aria-label="Open database trash" disabled={!!bulkDraft} onClick={()=>setTrashOpen(true)}>Trash</button>
+        <button className="btn" onClick={() => {if(hasPendingEdit) {setError("Resolve unsaved edit or bulk draft before changing schema");return};setPropertyDialogOpen(true)}}>+ Property</button>
+        <button className="btn primary" disabled={hasPendingEdit || creatingRecord} onClick={() => void addRecord()}>+ New</button>
+        <button className="btn" aria-label="Open database trash" disabled={hasPendingEdit} onClick={()=>setTrashOpen(true)}>Trash</button>
         <div style={{ flex: 1 }} />
-        <select aria-label="Active database view" disabled={!!bulkDraft || !!failedEdit} value={viewId} onChange={e => { if (bulkDraft || failedEdit) { setError('Discard or resolve pending edits before switching views.'); return }; setViewId(e.target.value) }}>
+        <select aria-label="Active database view" disabled={hasPendingEdit} value={viewId} onChange={e => { if (hasPendingEdit) { setError('Discard or resolve pending edits before switching views.'); return }; setViewId(e.target.value) }}>
           {db.views.map(v => <option key={v.id} value={v.id}>{v.name} ({v.type})</option>)}
         </select>
         <select aria-label="New view type" value={newViewType} onChange={e => setNewViewType(e.target.value as ViewType)}>{VIEW_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
-        <button className="btn" disabled={!!bulkDraft || !!failedEdit} onClick={async () => {
+        <button className="btn" disabled={hasPendingEdit} onClick={async () => {
           try {
             const v = await api('/api/db/views', { method: 'POST', body: JSON.stringify({ databaseId, name: newViewType[0].toUpperCase()+newViewType.slice(1), type: newViewType }) }) as DBView
             setDb(current => current && ({ ...current, views: [...current.views, v] }))
@@ -233,7 +275,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
             setError('')
           } catch (e) { setError((e as Error).message) }
         }}>+ View</button>
-        <button className="btn" aria-label="Rename database view" disabled={!view || !!bulkDraft || !!failedEdit} onClick={async () => {
+        <button className="btn" aria-label="Rename database view" disabled={!view || hasPendingEdit} onClick={async () => {
           if (!view) return
           const name=prompt('New view name',view.name)
           if (!name?.trim() || name.trim()===view.name) return
@@ -242,7 +284,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
             setDb(current=>current&&({...current,views:current.views.map(v=>v.id===updated.id?updated:v)}))
           } catch(e){setError((e as Error).message)}
         }}>Rename view</button>
-        <button className="btn" aria-label="Duplicate database view" disabled={!view || !!bulkDraft || !!failedEdit} onClick={async () => {
+        <button className="btn" aria-label="Duplicate database view" disabled={!view || hasPendingEdit} onClick={async () => {
           if (!view) return
           try {
             const copy=await api('/api/db/views',{method:'POST',body:JSON.stringify({databaseId,name:view.name+' copy',type:view.type,config:view.config})}) as DBView
@@ -250,7 +292,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
             setViewId(copy.id)
           } catch(e){setError((e as Error).message)}
         }}>Duplicate</button>
-        <button className="btn" aria-label="Delete database view" disabled={!view || db.views.length<=1 || !!bulkDraft || !!failedEdit} onClick={async () => {
+        <button className="btn" aria-label="Delete database view" disabled={!view || db.views.length<=1 || hasPendingEdit} onClick={async () => {
           if (!view || !confirm('Delete this view? Records will be kept.')) return
           try {
             await api('/api/db/views?id='+encodeURIComponent(view.id)+'&version='+encodeURIComponent(String(view.version)),{method:'DELETE'})
@@ -259,7 +301,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
             setViewId(remaining[0]?.id||'')
           } catch(e){setError((e as Error).message)}
         }}>Delete view</button>
-        <button className="btn" disabled={!!bulkDraft || !!failedEdit} onClick={async () => {
+        <button className="btn" disabled={hasPendingEdit} onClick={async () => {
           try {
             const pg = await api('/api/pages', { method: 'POST', body: JSON.stringify({ title: `${db.title} (linked)`, workspace: true, createdBy: 'You' }) }) as any
             await api('/api/db/linked-view', { method: 'POST', body: JSON.stringify({ databaseId, pageId: pg.id, name: 'Linked view' }) })
@@ -268,7 +310,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
           } catch (e) { setError((e as Error).message) }
         }}>+ Linked view page</button>
       </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+      <fieldset disabled={pendingView} style={{border:0,padding:0,margin:0,minWidth:0}}><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
         <input aria-label="Database filter" disabled={!!bulkDraft} placeholder="Filter records" value={filterText} onChange={e => setFilterText(e.target.value)} />
         <select aria-label="Database sort" disabled={!!bulkDraft} value={sortProp} onChange={e => {
           const next=e.target.value
@@ -284,11 +326,11 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
       </div>
       <details style={{ marginBottom: 10 }}><summary>Advanced filters (AND / OR)</summary><fieldset disabled={!!bulkDraft} style={{border:0,padding:0}}><DatabaseFilterBuilder group={filterTree} properties={props} onChange={setFilterTree} /></fieldset></details>
       {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} deleteRecord={deleteRecord} onOpenRecord={guardedOpen} columnOrder={columnOrder} setColumnOrder={setColumnOrder} hiddenColumns={hiddenColumns} setHiddenColumns={setHiddenColumns} columnWidths={columnWidths} setColumnWidths={setColumnWidths} selectedRecords={selectedRecords} setSelectedRecords={setSelectedRecords} bulkDraft={bulkDraft} setBulkDraft={setBulkDraft} bulkStartProperty={bulkStartProperty} setBulkStartProperty={setBulkStartProperty} applyBulkEdit={applyBulkEdit} refreshBulkVersions={refreshBulkVersions} bulkDisabled={!!failedEdit} />}
-      {view?.type === 'board' && <BoardView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={guardedOpen} />}
+      {view?.type === 'board' && <DatabaseBoard records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={guardedOpen} />}
       {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={guardedOpen} />}
       {view?.type === 'list' && <ListView records={visibleRecords} onOpenRecord={guardedOpen} />}
       {view?.type === 'gallery' && <GalleryView records={visibleRecords} onOpenRecord={guardedOpen} />}
-      {!['table', 'board', 'calendar', 'list', 'gallery'].includes(view?.type || '') && <div>Unknown view</div>}
+      {!['table', 'board', 'calendar', 'list', 'gallery'].includes(view?.type || '') && <div>Unknown view</div>}</fieldset>
     </div>
   )
 }
@@ -609,41 +651,6 @@ function PersonCell({prop,value,onChange}:{prop:DBProperty;value:unknown;onChang
   return <select aria-label={prop.name} value={String(value??'')} onChange={e=>onChange(e.target.value||null)}>
     <option value="">Unassigned</option>{members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
   </select>
-}
-function BoardView({ records, props, updateRecord, groupBy, onOpenRecord }: {
-  records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; groupBy: string; onOpenRecord?: OpenRecord
-}) {
-  const [dragId, setDragId] = useState<string | null>(null)
-  const groupProp = props.find(p => p.id === groupBy && p.type === 'select') || props.find(p => p.type === 'select')
-  if (!groupProp) return <p>Add a Select property to use Board view.</p>
-  const groups: Record<string, DBRecord[]> = { '(empty)': [] }
-  let options: string[] = []
-  try { options = JSON.parse(groupProp.config || '{}').options || [] } catch { /* legacy config */ }
-  for (const option of options) groups[option] = []
-  for (const rec of records) {
-    const key = String(rec.values?.[groupProp.id] ?? '(empty)')
-    if (!groups[key]) groups[key] = []
-    groups[key].push(rec)
-  }
-  const move = async (key: string) => {
-    const record = records.find(rec => rec.id === dragId)
-    setDragId(null)
-    if (record && String(record.values?.[groupProp.id] ?? '(empty)') !== key) {
-      await updateRecord(record, { values: { [groupProp.id]: key === '(empty)' ? null : key } })
-    }
-  }
-  return <div style={{ display: 'flex', gap: 12, overflowX: 'auto' }}>
-    {Object.entries(groups).map(([group, items]) => <div key={group} data-testid="board-group" data-group={group}
-      onDragOver={event => event.preventDefault()} onDrop={() => { void move(group) }}
-      style={{ minWidth: 220, padding: 8, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}>
-      <strong>{group} ({items.length})</strong>
-      {items.map(item => <div data-testid="board-card" key={item.id} draggable
-        onDragStart={() => setDragId(item.id)} onDragEnd={() => setDragId(null)}
-        style={{ padding: 8, marginTop: 8, cursor: 'grab', border: '1px solid var(--border)', borderRadius: 6 }}>
-        {item.title} <button onClick={() => item.pageId && onOpenRecord?.(item.pageId)}>Open</button>
-      </div>)}
-    </div>)}
-  </div>
 }
 function calendarDay(year: number, month: number, day: number): string {
   return [year, String(month + 1).padStart(2, '0'), String(day).padStart(2, '0')].join('-')
