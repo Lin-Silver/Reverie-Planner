@@ -35,7 +35,7 @@ function parseCell(property: DBProperty, raw: string): unknown {
 
 // A TSV rectangle is mapped onto explicitly selected visible rows, in their
 // current display order. Never silently truncate cells, rows or unsupported types.
-export function buildBulkPasteEdits(
+function buildBulkPasteEdits(
   draft: string, startPropertyId: string, properties: DBProperty[],
   records: DBRecord[], selectedIds: string[]
 ): BulkRecordEdit[] {
