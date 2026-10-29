@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { DBProperty, DBRecord } from './DatabaseView'
 
 export type BulkRecordEdit = { id: string; version: number; title?: string; values?: Record<string, unknown> }
@@ -88,9 +88,11 @@ export default function DatabaseBulkPaste({
   // row/column selection if the user edits the table while permission is pending.
   const latestDraft = useRef(draft)
   const draftRevision = useRef(0)
-  latestDraft.current = draft
   const latestSource = useRef({ start, selectedIds, records, properties })
-  latestSource.current = { start, selectedIds, records, properties }
+  useEffect(() => {
+    latestDraft.current = draft
+    latestSource.current = { start, selectedIds, records, properties }
+  }, [draft, start, selectedIds, records, properties])
   const changeDraft = (next: string) => {
     draftRevision.current += 1
     latestDraft.current = next
