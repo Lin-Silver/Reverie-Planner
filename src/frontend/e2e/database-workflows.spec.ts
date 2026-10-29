@@ -802,14 +802,20 @@ test('database TSV paste commits selected rows atomically and retains conflict d
     })
   }).toEqual([['alpha note', 12], ['beta note', 24]])
 
+  // A remote score change will re-sort the table during conflict refresh.
+  // Each pending TSV line must still target its original selected record.
+  await page.getByLabel('Database sort').selectOption(score.id)
   const current = await rows(page, host.databaseId)
   const beta = current.find(r => r.id === displayed[1])!
   const remote = await page.request.put(API + '/db/records', {data: {
-    id: beta.id, title: beta.title, version: beta.version, values: {[note.id]: 'remote note'}
+    id: beta.id, title: beta.title, version: beta.version, values: {[note.id]: 'remote note', [score.id]: -10}
   }})
   expect(remote.status()).toBe(200)
   const draft = 'retry alpha\t33\nretry beta\t44'
   await page.getByLabel('Bulk paste TSV').fill(draft)
+  await expect(page.getByLabel('Database sort')).toBeDisabled()
+  await expect(page.getByLabel('Database filter')).toBeDisabled()
+  await expect(page.getByLabel('Move Paste note right')).toBeDisabled()
   page.once('dialog', dialog => dialog.accept())
   await page.getByLabel('Apply bulk paste').click()
   await expect(page.getByRole('alert').filter({hasText:'Bulk paste failed'})).toBeVisible()
@@ -821,6 +827,7 @@ test('database TSV paste commits selected rows atomically and retains conflict d
 
   await page.getByLabel('Refresh bulk record versions').click()
   await expect(page.getByLabel('Bulk paste TSV')).toHaveValue(draft)
+  await expect(page.locator('[data-testid="database-record-row"]').first()).toHaveAttribute('data-record-id', displayed[1])
   page.once('dialog', dialog => dialog.accept())
   await page.getByLabel('Apply bulk paste').click()
   await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
