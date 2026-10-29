@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import PageEditor from './PageEditor'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import DatabaseView from './DatabaseView'
 import type { FormEvent } from 'react'
 import './App.css'
+
+const PageEditor = lazy(() => import('./PageEditor'))
 
 type ProjectStatus = 'active' | 'planning' | 'paused' | 'archived'
 type TaskStatus = 'todo' | 'in_progress' | 'done' | 'blocked'
@@ -12,7 +14,7 @@ type Overview = { projectCount: number; taskCount: number; completedCount: numbe
 type Provider = { id: string; label: string; provider: string; baseURL: string; model: string; temperature: number; maxTokens: number; enabled: boolean; streaming: boolean; toolCalling: boolean; apiKeyConfigured: boolean }
 type TaskDraft = { projectId: string; title: string; description: string; status: TaskStatus; priority: Priority; dueDate: string; assignee: string }
 type ChatMessage = { role: 'user' | 'assistant'; content: string; id: string }
-type Page = { id: string; projectId?: string; workspace: boolean; parentId?: string; title: string; icon?: string; cover?: string; content: string; version?: number; createdBy: string; createdAt: string; updatedAt: string }
+type Page = { id: string; projectId?: string; workspace: boolean; parentId?: string; linkedDatabaseId?: string; linkedViewId?: string; title: string; icon?: string; cover?: string; content: string; version?: number; createdBy: string; createdAt: string; updatedAt: string }
 type Cycle = { id: string; projectId: string; name: string; description?: string; startDate?: string; endDate?: string; status: string; createdAt: string }
 type Module = { id: string; projectId: string; name: string; description?: string; status: string; lead?: string; startDate?: string; endDate?: string; createdAt: string }
 type Notification = { id: string; title: string; body?: string; type: string; read: boolean; createdAt: string }
@@ -68,8 +70,17 @@ export default function App() {
   const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [projectDraft, setProjectDraft] = useState({ name: '', description: '', status: 'planning' as ProjectStatus, owner: 'You', color: 'cyan' })
   const [pageEditor, setPageEditor] = useState<Page | null>(null)
+  const [pageDatabaseId, setPageDatabaseId] = useState<string>('')
+  const [pageDatabaseViewId, setPageDatabaseViewId] = useState<string>('')
+  const databasePendingEditRef = useRef(false)
   const [pageDraft, setPageDraft] = useState({ title: 'Untitled', icon: '', content: '' })
   const [pageLeaveError, setPageLeaveError] = useState(false)
+  // Keep the callback stable: PageEditor must not re-lock an in-flight Retry
+  // merely because the parent rerenders with the conflict banner visible.
+  const handlePageSaveStatus = useCallback((status: string) => {
+    if (status === 'saved') setPageLeaveError(false)
+    else if (status === 'conflict') setPageLeaveError(true)
+  }, [])
   const [selectedProvider, setSelectedProvider] = useState('')
   const [sessionId, setSessionId] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -79,6 +90,8 @@ export default function App() {
   const draggedTaskId = useRef('')
   const pageEditorRef = useRef<Page | null>(null)
   const pageTitleRef = useRef('')
+  // A local title draft must survive a stale-version response until the user resolves it.
+  const pageTitleDirtyRef = useRef(false)
   useEffect(() => { pageEditorRef.current = pageEditor; pageTitleRef.current = pageDraft.title }, [pageEditor, pageDraft.title])
   const pageVersions = useRef<Map<string, number>>(new Map())
   const pageSnapshots = useRef<Map<string, Page>>(new Map())
@@ -110,6 +123,7 @@ export default function App() {
           pageVersions.current.set(pageId, res.version)
           pageSnapshots.current.set(pageId, res)
           if (pageEditorRef.current?.id === pageId) {
+            if (pageTitleRef.current === res.title) pageTitleDirtyRef.current = false
             pageEditorRef.current.version = res.version
             pageEditorRef.current.title = res.title
             pageEditorRef.current.icon = res.icon
@@ -131,7 +145,10 @@ export default function App() {
               pageEditorRef.current.cover = latest.cover
               pageEditorRef.current.parentId = latest.parentId
               pageEditorRef.current.content = latest.content
-              pageTitleRef.current = latest.title
+              if (!pageTitleDirtyRef.current) {
+                pageTitleRef.current = latest.title
+                setPageDraft(d => ({ ...d, title: latest.title }))
+              }
             }
             // keep local content; throw conflict for UI
           } catch {}
@@ -144,6 +161,8 @@ export default function App() {
   }
 
   const setView = useCallback((next: string) => {
+    if (view === 'page' && next !== 'page' && pageLeaveError) { setError('Resolve the page conflict with Retry or Reload latest before leaving.'); return }
+    if (view === 'page' && next !== 'page' && databasePendingEditRef.current) { setError('Resolve the unsaved database edit with Retry or Reload latest before leaving.'); return }
     if (view === 'page' && next !== 'page' && pageEditor) {
       void (async () => {
         try {
@@ -160,7 +179,7 @@ export default function App() {
     }
     setPageLeaveError(false)
     _setView(next)
-  }, [view, pageEditor, pageDraft.content])
+  }, [view, pageEditor, pageDraft.content, pageLeaveError])
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme) }, [theme])
   useEffect(() => { localStorage.setItem('reverie.sidebar.collapsed', sidebarCollapsed ? '1' : '0') }, [sidebarCollapsed])
@@ -240,6 +259,8 @@ export default function App() {
   }
 
   const openPageEditor = async (page?: Page) => {
+      if (view === 'page' && pageLeaveError && pageEditor && (!page || page.id !== pageEditor.id)) { setError('Resolve the page conflict with Retry or Reload latest before opening another page.'); return }
+      if (databasePendingEditRef.current && (!page || page.id !== pageEditor?.id)) { setError('Resolve the unsaved database edit before opening another page.'); return }
       if (view === 'page' && pageEditor && (!page || page.id !== pageEditor.id)) {
         try {
           await savePageContent(pageEditor.id, pageDraft.content)
@@ -250,22 +271,39 @@ export default function App() {
           return
         }
       }
+      let openedId = page?.id
+      let openedFull: Page | undefined = page
       if (page) {
         let full = page
-        if (page.content === undefined || page.content === '') {
+        if (page.content === undefined || page.content === '' || page.linkedDatabaseId === undefined) {
           try { full = await apiFetch<Page>(`/api/pages?id=${page.id}`) } catch {}
         }
         pageVersions.current.set(full.id, full.version || 1)
         pageSnapshots.current.set(full.id, full)
+        pageTitleDirtyRef.current = false
         setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
+        openedId = full.id
+        openedFull = full
     }
-    else {
-      try {
-        const created = await apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title: 'Untitled', workspace: true, createdBy: 'You' }) })
-        setPageEditor(created); setPageDraft({ title: created.title, icon: created.icon ?? '', content: created.content })
-        await refresh()
-      } catch (e) { setError((e as Error).message) }
-    }
+      else {
+        try {
+          const created = await apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title: 'Untitled', workspace: true, createdBy: 'You' }) })
+          pageTitleDirtyRef.current = false
+          setPageEditor(created); setPageDraft({ title: created.title, icon: created.icon ?? '', content: created.content })
+          openedId = created.id
+          await refresh()
+        } catch (e) { setError((e as Error).message) }
+      }
+    // check if this page hosts a database
+    try {
+      const dbs = await apiFetch<any[]>('/api/databases')
+      let found = (dbs || []).find((d: any) => d.pageId === openedId)
+      if (!found && openedFull?.linkedDatabaseId) {
+        found = (dbs || []).find((d: any) => d.id === openedFull!.linkedDatabaseId)
+      }
+      setPageDatabaseId(found ? found.id : '')
+      setPageDatabaseViewId(openedFull?.linkedViewId || '')
+    } catch {}
     setView('page')
   }
   const deletePage = async (id: string) => {
@@ -451,7 +489,11 @@ export default function App() {
       </div>
     )
 
-  if (view === 'page') return (
+  if (view === 'page') {
+    if (pageDatabaseId) {
+      return <DatabaseView databaseId={pageDatabaseId} viewId={pageDatabaseViewId || undefined} onBack={() => { setPageDatabaseId(''); setPageDatabaseViewId(''); setView('home') }} onLinkedPageCreated={() => { void refresh() }} onPendingEditChange={pending => { databasePendingEditRef.current = pending }} onOpenRecord={pageId => { void (async () => { try { const full = await apiFetch<Page>(`/api/pages?id=${encodeURIComponent(pageId)}`); setSelectedPage(pageId); await openPageEditor(full) } catch (e) { setError((e as Error).message) } })() }} />
+    }
+    return (
       <div className="page-wrap">
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
           <div className="breadcrumb" style={{ color: 'var(--muted)', fontSize: 13 }}>
@@ -464,12 +506,18 @@ export default function App() {
           </div>
           <div className="row">
             {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
+            {pageEditor && <button className="btn" onClick={async () => {
+              try {
+                const db = await apiFetch<any>('/api/databases', { method: 'POST', body: JSON.stringify({ title: pageEditor.title || 'Untitled database', pageId: pageEditor.id }) })
+                setPageDatabaseId(db.id)
+              } catch (e) { setError((e as Error).message) }
+            }}>Create database</button>}
           </div>
         </div>
         <div className="page-icon" onClick={() => { if (!pageEditor) return; setIconDraft(pageEditor.icon || ''); setIconTarget(pageEditor) }}>{pageDraft.icon || '📄'}</div>
-        <input className="page-title" value={pageDraft.title} onChange={(e) => { setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor) savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch(() => {}) }} placeholder="Untitled" />
+        <input className="page-title" value={pageDraft.title} onChange={(e) => { pageTitleDirtyRef.current = true; setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor && pageTitleDirtyRef.current && !pageLeaveError) void savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch((e) => { if ((e as Error).message.includes('version conflict')) setPageLeaveError(true); else setError(`Title save failed: ${(e as Error).message}`) }) }} placeholder="Untitled" />
   {pageEditor && (
-    <PageEditor
+    <Suspense fallback={<p role="status">Loading editor…</p>}><PageEditor
       key={`${pageEditor.id}-${reloadToken}`}
       pageId={pageEditor.id}
       initialContent={pageEditor.content}
@@ -486,39 +534,52 @@ export default function App() {
           const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
           pageVersions.current.set(pageEditor.id, latest.version || 1)
           pageSnapshots.current.set(pageEditor.id, latest)
+          pageTitleDirtyRef.current = false
           pageEditorRef.current = latest
           pageTitleRef.current = latest.title
           setPageEditor(latest)
           setPageDraft({ title: latest.title, icon: latest.icon ?? '', content: latest.content })
+          setPageLeaveError(false)
           setReloadToken((t) => t + 1)
         } catch (e) { pageDiscardRef.current = false; setError((e as Error).message) }
       }}
-      onRetry={async (content) => {
+      onRetry={async (content, retryBody) => {
         try {
           const latest = await apiFetch<Page>(`/api/pages?id=${pageEditor.id}`)
           pageSnapshots.current.set(pageEditor.id, latest)
-          await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...latest, content, version: latest.version }) })
-          const newVersion = (latest.version || 0) + 1
-          pageVersions.current.set(pageEditor.id, newVersion)
-          pageSnapshots.current.set(pageEditor.id, { ...latest, content, version: newVersion })
+          // Retry the local title only if it was edited here; a body-only retry
+          // must retain a newer title written by another browser.
+          const retryTitle = pageTitleDirtyRef.current ? pageTitleRef.current : latest.title
+          const retryContent = retryBody ? content : latest.content
+          const updated = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...latest, title: retryTitle, content: retryContent, version: latest.version }) })
+          if (typeof updated.version !== 'number' || updated.version <= (latest.version || 0)) {
+            throw new Error('Page retry returned an invalid version')
+          }
+          pageVersions.current.set(pageEditor.id, updated.version)
+          pageSnapshots.current.set(pageEditor.id, updated)
           if (pageEditorRef.current?.id === pageEditor.id) {
-            pageEditorRef.current.version = newVersion
-            pageEditorRef.current.title = latest.title
-            pageEditorRef.current.icon = latest.icon
-            pageEditorRef.current.cover = latest.cover
-            pageEditorRef.current.parentId = latest.parentId
-            pageEditorRef.current.content = content
-            pageTitleRef.current = latest.title
+            pageEditorRef.current.version = updated.version
+            pageEditorRef.current.title = updated.title
+            pageEditorRef.current.icon = updated.icon
+            pageEditorRef.current.cover = updated.cover
+            pageEditorRef.current.parentId = updated.parentId
+            pageEditorRef.current.content = updated.content
+            if (pageTitleRef.current === retryTitle) {
+              pageTitleRef.current = updated.title
+              pageTitleDirtyRef.current = false
+              setPageDraft(d => ({ ...d, title: updated.title }))
+            }
           }
         } catch (e) { setError((e as Error).message); throw e }
       }}
-      onStatus={(s) => { if (s === 'saved') setPageLeaveError(false) }}
-    />
+      onStatus={handlePageSaveStatus}
+    /></Suspense>
   )}
       </div>
     )
+  }
 
-    if (view === 'issues') return (
+  if (view === 'issues') return (
       <div style={{ padding: 16 }}>
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
           <h2>Issues</h2>

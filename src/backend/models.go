@@ -64,6 +64,8 @@ type Page struct {
 	ProjectID string    `json:"projectId,omitempty"`
 	Workspace bool      `json:"workspace"`
 	ParentID  string    `json:"parentId,omitempty"`
+	LinkedDatabaseID string `json:"linkedDatabaseId,omitempty"`
+	LinkedViewID     string `json:"linkedViewId,omitempty"`
 	Title     string    `json:"title"`
 	Icon      string    `json:"icon,omitempty"`
 	Cover     string    `json:"cover,omitempty"`

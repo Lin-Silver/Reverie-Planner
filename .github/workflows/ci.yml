@@ -29,6 +29,13 @@ jobs:
       - name: Run browser end-to-end tests
         run: npm run test:e2e
         working-directory: src/frontend
+      - name: Upload database UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reverie-Database-UI-Evidence
+          path: src/frontend/test-results/database-evidence/
+          if-no-files-found: warn
       - name: Verify launcher rejects unrelated healthy services
         shell: pwsh
         run: .\scripts\test-start-conflict.ps1

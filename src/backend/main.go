@@ -236,7 +236,14 @@ func main() {
 	mux.HandleFunc("/api/analytics", ctx.handleAnalytics)
 	mux.HandleFunc("/api/workspaces", ctx.handleWorkspaces)
 	mux.HandleFunc("/api/members", ctx.handleMembers)
-	mux.HandleFunc("/api/echo", ctx.handleEcho)
+	mux.HandleFunc("/api/databases", ctx.handleDatabases)
+	mux.HandleFunc("/api/db/properties", ctx.handleDBProperties)
+	mux.HandleFunc("/api/db/records", ctx.handleDBRecords)
+	mux.HandleFunc("/api/db/records/bulk", ctx.handleDBBulkEdit)
+	mux.HandleFunc("/api/db/views", ctx.handleDBViews)
+	mux.HandleFunc("/api/db/linked-view", ctx.handleDBLinkedView)
+	mux.HandleFunc("/api/db/trash", ctx.handleDBTrash)
+	mux.HandleFunc("/api/db/files", ctx.handleDBFiles)
 
 	if _, err := os.Stat(staticRoot); err == nil {
 		fileServer := http.FileServer(http.Dir(staticRoot))
@@ -397,12 +404,50 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	// WAL allows readers to observe committed snapshots while the writer is
+	// active. Verify the actual journal mode: SQLite may refuse a transition
+	// (for example, when another process holds an incompatible lock).
+	var journalMode string
+	if err := db.QueryRow(`PRAGMA journal_mode = WAL`).Scan(&journalMode); err != nil || !strings.EqualFold(journalMode, "wal") {
+		_ = db.Close()
+		return nil, fmt.Errorf("SQLite WAL journal mode unavailable (mode=%q): %v", journalMode, err)
+	}
+	// FULL synchronizes WAL commits for durability across power loss. Like
+	// foreign_keys, this setting is per connection, not a schema migration.
+	if _, err := db.Exec(`PRAGMA synchronous = FULL`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure SQLite synchronous mode: %w", err)
+	}
+	var synchronous int
+	if err := db.QueryRow(`PRAGMA synchronous`).Scan(&synchronous); err != nil || synchronous != 2 {
+		_ = db.Close()
+		return nil, fmt.Errorf("SQLite FULL synchronous mode unavailable (value=%d): %v", synchronous, err)
+	}
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+	// PRAGMA assignments can succeed without enabling enforcement (for example
+	// inside a transaction). Verify the connection state explicitly.
+	var foreignKeysEnabled int
+	if err := db.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeysEnabled); err != nil || foreignKeysEnabled != 1 {
+		_ = db.Close()
+		return nil, fmt.Errorf("SQLite foreign-key enforcement unavailable (enabled=%d): %v", foreignKeysEnabled, err)
+	}
 
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL)`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	// Reject databases written by newer versions before any known migration runs.
+	// Opening them with an older binary could silently damage user data.
+	if err := rejectUnsupportedSchemaMigrations(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	// An applied migration must have its required schema. Reject inconsistent
+	// historical databases before attempting any subsequent migration.
+	if err := verifyAppliedMigrationSchema(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -481,6 +526,64 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 			`CREATE TABLE IF NOT EXISTS intake (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(project_id) REFERENCES projects(id));`,
 		}},
 		{version: 6, statements: []string{`ALTER TABLE pages ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`}},
+		{version: 7, statements: []string{
+			`CREATE TABLE IF NOT EXISTS databases (
+				id TEXT PRIMARY KEY,
+				page_id TEXT NOT NULL,
+				title TEXT NOT NULL DEFAULT 'Untitled database',
+				icon TEXT,
+				version INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY(page_id) REFERENCES pages(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS db_properties (
+				id TEXT PRIMARY KEY,
+				database_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				type TEXT NOT NULL DEFAULT 'text',
+				config TEXT NOT NULL DEFAULT '{}',
+				position INTEGER NOT NULL DEFAULT 0,
+				visible INTEGER NOT NULL DEFAULT 1,
+				version INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY(database_id) REFERENCES databases(id) ON DELETE CASCADE
+			);`,
+			`CREATE TABLE IF NOT EXISTS db_records (
+				id TEXT PRIMARY KEY,
+				database_id TEXT NOT NULL,
+				title TEXT NOT NULL DEFAULT '',
+				page_id TEXT,
+				version INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY(database_id) REFERENCES databases(id) ON DELETE CASCADE,
+				FOREIGN KEY(page_id) REFERENCES pages(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS db_values (
+				record_id TEXT NOT NULL,
+				property_id TEXT NOT NULL,
+				value TEXT NOT NULL DEFAULT 'null',
+				version INTEGER NOT NULL DEFAULT 1,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY(record_id, property_id),
+				FOREIGN KEY(record_id) REFERENCES db_records(id) ON DELETE CASCADE,
+				FOREIGN KEY(property_id) REFERENCES db_properties(id) ON DELETE CASCADE
+			);`,
+			`CREATE TABLE IF NOT EXISTS db_views (
+				id TEXT PRIMARY KEY,
+				database_id TEXT NOT NULL,
+				name TEXT NOT NULL DEFAULT 'View',
+				type TEXT NOT NULL DEFAULT 'table',
+				config TEXT NOT NULL DEFAULT '{}',
+				position INTEGER NOT NULL DEFAULT 0,
+				version INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY(database_id) REFERENCES databases(id) ON DELETE CASCADE
+			);`,
+		}},
 	}
 	for _, migration := range migrations {
 		var exists int
@@ -513,20 +616,154 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 			return nil, err
 		}
 	}
-	// Ensure extended task columns exist (idempotent).
-	for _, stmt := range []string{
-		`ALTER TABLE tasks ADD COLUMN state_id TEXT`,
-		`ALTER TABLE tasks ADD COLUMN cycle_id TEXT`,
-		`ALTER TABLE tasks ADD COLUMN module_id TEXT`,
-		`ALTER TABLE tasks ADD COLUMN estimate TEXT`,
-		`ALTER TABLE tasks ADD COLUMN parent_id TEXT`,
-		`ALTER TABLE tasks ADD COLUMN sequence_no INTEGER DEFAULT 0`,
-		`ALTER TABLE tasks ADD COLUMN labels_json TEXT`,
-		`ALTER TABLE tasks ADD COLUMN deleted_at TEXT`,
-	} {
-		_, _ = db.Exec(stmt)
+	// Database migration 8 is conditional because older releases added linked columns
+	// outside schema_migrations. It must preserve both legacy and fresh databases.
+	if err := migrateDatabaseLinkedColumns(db); err != nil { _ = db.Close(); return nil, err }
+	if err := migrateDatabaseTrash(db); err != nil { _ = db.Close(); return nil, err }
+	if err := migrateDatabaseFiles(db); err != nil { _ = db.Close(); return nil, err }
+	// Upgrade legacy task columns atomically; never ignore schema failures.
+	if err := ensureTaskColumns(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	// Detect pre-existing orphaned references instead of silently accepting a
+	// damaged workspace. This is read-only; do not attempt destructive repairs.
+	if err := verifyDatabaseForeignKeys(db); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	return db, nil
+}
+
+// verifyDatabaseForeignKeys reports the first broken SQLite reference without
+// deleting or rewriting any user records. SQLite does not automatically check
+// existing rows when foreign_keys is switched on.
+func verifyDatabaseForeignKeys(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		return fmt.Errorf("check SQLite foreign keys: %w", err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var table, parent string
+		var rowID sql.NullInt64
+		var constraint int
+		if err := rows.Scan(&table, &rowID, &parent, &constraint); err != nil {
+			return fmt.Errorf("read SQLite foreign-key violation: %w", err)
+		}
+		return fmt.Errorf("SQLite foreign-key violation in table %q (rowid=%v, referenced table=%q, constraint=%d); inspect and back up the database before repair", table, rowID, parent, constraint)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("scan SQLite foreign-key check: %w", err)
+	}
+	return nil
+}
+
+
+func migrateDatabaseLinkedColumns(db *sql.DB) error {
+    var applied int
+    if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=8").Scan(&applied); err != nil { return err }
+    if applied > 0 { return nil }
+    rows, err := db.Query("PRAGMA table_info(pages)")
+    if err != nil { return err }
+    columns := map[string]bool{}
+    for rows.Next() {
+        var cid, notnull, pk int
+        var name, typ string
+        var def sql.NullString
+        if err := rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil { rows.Close(); return err }
+        columns[name] = true
+    }
+    if err := rows.Err(); err != nil { rows.Close(); return err }
+    if err := rows.Close(); err != nil { return err }
+    tx, err := db.Begin()
+    if err != nil { return err }
+    defer tx.Rollback()
+    for _, name := range []string{"linked_database_id", "linked_view_id"} {
+        if !columns[name] {
+            // Only known constant identifiers enter this SQL statement.
+            if _, err := tx.Exec("ALTER TABLE pages ADD COLUMN "+name+" TEXT"); err != nil { return err }
+        }
+    }
+    indexes := []string{
+        "CREATE INDEX IF NOT EXISTS idx_db_records_database_created ON db_records(database_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_db_values_property ON db_values(property_id)",
+        "CREATE INDEX IF NOT EXISTS idx_db_properties_order ON db_properties(database_id, position)",
+        "CREATE INDEX IF NOT EXISTS idx_db_views_order ON db_views(database_id, position)",
+    }
+    for _, stmt := range indexes { if _, err := tx.Exec(stmt); err != nil { return err } }
+    if _, err := tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES (8,?)", time.Now().UTC().Format(time.RFC3339Nano)); err != nil { return err }
+    return tx.Commit()
+}
+
+
+func migrateDatabaseTrash(db *sql.DB) error {
+    var exists int
+    if err:=db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=9").Scan(&exists);err!=nil{return err}
+    if exists!=0{return nil}
+    tables:=[]string{"databases","db_records","db_properties","db_views"}
+    // Inspect each table before opening a write transaction: the application
+    // has a one-connection SQLite pool and must not nest live row iterators.
+    missing:=[]string{}
+    for _,table:=range tables{
+        rows,err:=db.Query("PRAGMA table_info("+table+")")
+        if err!=nil{return err}
+        found:=false
+        for rows.Next(){
+            var cid,notnull,pk int
+            var name,kind string
+            var value sql.NullString
+            if err:=rows.Scan(&cid,&name,&kind,&notnull,&value,&pk);err!=nil{rows.Close();return err}
+            if name=="deleted_at"{found=true}
+        }
+        if err:=rows.Err();err!=nil{rows.Close();return err}
+        if err:=rows.Close();err!=nil{return err}
+        if !found{missing=append(missing,table)}
+    }
+    tx,err:=db.Begin()
+    if err!=nil{return err}
+    defer tx.Rollback()
+    for _,table:=range missing{
+        // Identifiers come only from the fixed constant list above.
+        if _,err:=tx.Exec("ALTER TABLE "+table+" ADD COLUMN deleted_at TEXT");err!=nil{return err}
+    }
+    for _,sqlText:=range []string{
+        "CREATE INDEX IF NOT EXISTS idx_db_records_live ON db_records(database_id, deleted_at, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_db_properties_live ON db_properties(database_id, deleted_at, position)",
+        "CREATE INDEX IF NOT EXISTS idx_db_views_live ON db_views(database_id, deleted_at, position)",
+    }{if _,err:=tx.Exec(sqlText);err!=nil{return err}}
+    if _,err:=tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES (9,?)",time.Now().UTC().Format(time.RFC3339Nano));err!=nil{return err}
+    return tx.Commit()
+}
+
+
+func migrateDatabaseFiles(db *sql.DB) error {
+    var applied int
+    if err:=db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=10").Scan(&applied);err!=nil{return err}
+    if applied>0{return nil}
+    tx,err:=db.Begin()
+    if err!=nil{return err}
+    defer tx.Rollback()
+    stmts:=[]string{
+        `CREATE TABLE IF NOT EXISTS db_files (
+            id TEXT PRIMARY KEY,
+            database_id TEXT NOT NULL,
+            record_id TEXT NOT NULL,
+            original_name TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            sha256 TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            deleted_at TEXT,
+            FOREIGN KEY(database_id) REFERENCES databases(id),
+            FOREIGN KEY(record_id) REFERENCES db_records(id)
+        )`,
+        "CREATE INDEX IF NOT EXISTS idx_db_files_record ON db_files(record_id, deleted_at)",
+        "CREATE INDEX IF NOT EXISTS idx_db_files_database ON db_files(database_id)",
+    }
+    for _,stmt:=range stmts{if _,err:=tx.Exec(stmt);err!=nil{return err}}
+    if _,err:=tx.Exec("INSERT INTO schema_migrations(version,applied_at) VALUES (10,?)",time.Now().UTC().Format(time.RFC3339Nano));err!=nil{return err}
+    return tx.Commit()
 }
 
 func demoModeRequested() bool {
@@ -568,14 +805,72 @@ func (a *AppContext) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// createDatabaseBackup publishes only verified, self-contained SQLite snapshots.
+// No incomplete snapshot is ever exposed as a finished backup in data/backups.
 func createDatabaseBackup(ctx context.Context, db *sql.DB, rootPath string) (string, error) {
 	directory := filepath.Join(rootPath, "data", "backups")
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(directory, "planner-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".sqlite")
-	if _, err := db.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
+	pendingDir, err := os.MkdirTemp(directory, ".pending-")
+	if err != nil {
 		return "", err
+	}
+	defer os.RemoveAll(pendingDir) // remove partial SQLite files even when VACUUM fails
+	pendingPath := filepath.Join(pendingDir, "snapshot.sqlite")
+	if _, err := db.ExecContext(ctx, `VACUUM INTO ?`, pendingPath); err != nil {
+		return "", fmt.Errorf("create SQLite snapshot: %w", err)
+	}
+	snapshot, err := sql.Open("sqlite", pendingPath)
+	if err != nil {
+		return "", fmt.Errorf("open SQLite snapshot: %w", err)
+	}
+	snapshot.SetMaxOpenConns(1)
+	var integrity string
+	err = snapshot.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&integrity)
+	if err == nil && integrity != "ok" {
+		err = fmt.Errorf("SQLite snapshot failed integrity_check: %s", integrity)
+	}
+	if err == nil {
+		var violations *sql.Rows
+		violations, err = snapshot.QueryContext(ctx, `PRAGMA foreign_key_check`)
+		if err == nil {
+			if violations.Next() {
+				err = errors.New("SQLite snapshot contains foreign-key violations")
+			} else {
+				err = violations.Err()
+			}
+			if closeErr := violations.Close(); err == nil {
+				err = closeErr
+			}
+		}
+	}
+	if closeErr := snapshot.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", fmt.Errorf("verify SQLite snapshot: %w", err)
+	}
+	if err := os.Chmod(pendingPath, 0o600); err != nil {
+		return "", fmt.Errorf("protect SQLite snapshot: %w", err)
+	}
+	snapshotFile, err := os.OpenFile(pendingPath, os.O_RDWR, 0)
+	if err != nil {
+		return "", err
+	}
+	syncErr := snapshotFile.Sync()
+	closeErr := snapshotFile.Close()
+	if syncErr != nil {
+		return "", fmt.Errorf("sync SQLite snapshot: %w", syncErr)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("close SQLite snapshot: %w", closeErr)
+	}
+	// The temporary directory name is generated by the OS, preventing backups
+	// made at the same nanosecond from selecting the same final filename.
+	path := filepath.Join(directory, "planner-"+time.Now().UTC().Format("20060102T150405.000000000Z")+"-"+strings.TrimPrefix(filepath.Base(pendingDir), ".pending-")+".sqlite")
+	if err := os.Rename(pendingPath, path); err != nil {
+		return "", fmt.Errorf("publish verified SQLite snapshot: %w", err)
 	}
 	return path, nil
 }
@@ -657,7 +952,7 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
 		var project Project
-		if err := json.NewDecoder(r.Body).Decode(&project); err != nil {
+		if _, err := decodeJSONRequest(r, &project); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid project payload")
 			return
 		}
@@ -744,7 +1039,7 @@ func (a *AppContext) handleProjects(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
 			var payload map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			if _, err := decodeJSONRequest(r, &payload); err != nil {
 				writeJSONError(w, http.StatusBadRequest, "project id is required")
 				return
 			}
@@ -821,7 +1116,7 @@ func (a *AppContext) handleTasks(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
 		var task Task
-		if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+		if _, err := decodeJSONRequest(r, &task); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid task payload")
 			return
 		}
@@ -918,7 +1213,7 @@ func (a *AppContext) handleTasks(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
 			var payload map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			if _, err := decodeJSONRequest(r, &payload); err != nil {
 				writeJSONError(w, http.StatusBadRequest, "task id is required")
 				return
 			}
@@ -1507,6 +1802,9 @@ func decodeJSONRequest(r *http.Request, target any) (map[string]json.RawMessage,
 	fields := make(map[string]json.RawMessage)
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
 		return nil, errors.New("request payload must be an object")
+	}
+	if err := rejectDuplicateJSONKeys(body); err != nil {
+		return nil, err
 	}
 	if err := json.Unmarshal(body, target); err != nil {
 		return nil, err

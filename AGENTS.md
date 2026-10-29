@@ -2,7 +2,7 @@
 
 ## Project context
 
-Reverie Planner is a local-first Windows desktop planner for software teams and AI-assisted builders. The product is split into a Go backend and a Vite/React frontend, with both packaged for local deployment under one directory.
+Reverie Planner aims to replace Notion for personal local-first notes, structured databases and project planning. Windows currently has the portable delivery workflow; see docs/PROJECT_DIRECTION.md for priorities and release boundaries. The product is split into a Go backend and a Vite/React frontend, with both packaged for local deployment under one directory.
 
 ## Operating principles
 
