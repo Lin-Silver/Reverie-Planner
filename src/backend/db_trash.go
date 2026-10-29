@@ -95,6 +95,11 @@ func (a *AppContext) handleDBTrash(w http.ResponseWriter,r *http.Request) {
                 }
                 if propertyType=="relation" {
                     var definition struct{TargetDatabaseID string `json:"targetDatabaseId"`}
+                    // Legacy saved configurations must not resolve duplicate keys
+                    // using encoding/json's last-key-wins behavior on restore.
+                    if err:=rejectDuplicateJSONKeys([]byte(config));err!=nil {
+                        writeJSON(w,409,map[string]string{"error":"relation target configuration is invalid"});return
+                    }
                     if err:=json.Unmarshal([]byte(config),&definition);err!=nil || definition.TargetDatabaseID=="" {
                         writeJSON(w,409,map[string]string{"error":"relation target configuration is invalid"});return
                     }
