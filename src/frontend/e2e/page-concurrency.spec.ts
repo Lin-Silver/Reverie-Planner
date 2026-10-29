@@ -382,7 +382,7 @@ test('conflict lock survives parent rerender and keeps draft', async ({ browser 
     }, { timeout: 20000 }).toContain('more from A')
 
     // Trigger parent re-render by toggling theme
-    await pageB.locator('button').filter({ hasText: /🌙|☀️/ }).click()
+    await pageB.getByRole('button', {name: /Switch to .* theme/}).click()
 
     // Wait through debounce + retry
     await pageB.waitForTimeout(5000)

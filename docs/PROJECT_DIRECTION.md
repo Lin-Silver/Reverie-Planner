@@ -9,7 +9,7 @@ Replace Notion for personal notes, knowledge organization and project planning w
 - Portable Go + React + SQLite application with data owned by the user, explicit backups and forward-only migrations.
 - Nested pages, rich block editing, search, record pages and independent Table/Board/Calendar/List/Gallery views.
 - Typed properties, relations and computed fields with clear errors and explicit conflict resolution.
-- Preserve current Windows launchers and packaging. Linux automated tests do not establish macOS or Windows manual acceptance. macOS packaging is a tracked delivery gap.
+- Preserve current Windows launchers and packaging. Native Linux/Windows/macOS CI and portable packages shipped in V0.0.1. Automated checks do not establish full manual acceptance; macOS signing/notarization remains open.
 - Cloud sync, public publishing, real-time collaborative editing and a complete copy of Notion are outside the initial local release.
 
 ## Priorities and acceptance
@@ -28,4 +28,8 @@ Integrating an audited feature branch into the development main branch is not ce
 
 ## Working agreements
 
-Implement one complete user workflow at a time, with data/API/UI checks. Preserve existing regression assertions. Record exact commit/CI links for CI claims. Keep PR descriptions concise and place historical evidence in documentation rather than repeatedly appending it to PR bodies. Keep already integrated branches until the owner separately requests deletion.
+Implement one complete user workflow at a time, with data/API/UI checks. Preserve existing regression assertions. Record exact commit/CI links for CI claims. Keep PR descriptions concise and place historical evidence in documentation rather than repeatedly appending it to PR bodies. The owner requested only main/dev. Develop on dev; main holds reviewed releases. Do not create extra long-lived branches.
+
+## Next development increment
+
+See DESIGN_SYSTEM.md for the workspace redesign, portable favorites/recent pages, built-in templates and bounded single-page Markdown transfers. These advance daily use; complete workspace import/export and advanced database scale remain release gates.

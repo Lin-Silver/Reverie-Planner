@@ -7,6 +7,7 @@ import type { Block } from '@blocknote/core'
 type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error' | 'conflict'
 type Props = {
   pageId: string
+  title: string
   initialContent: string
   theme: 'light' | 'dark'
   reloadToken: number
@@ -29,7 +30,7 @@ function parseBlocks(content: string): Block[] | undefined {
   return [{ type: 'paragraph', content: [{ type: 'text', text: content, styles: {} }] } as Block]
 }
 
-export default function PageEditor({ pageId, initialContent, theme, reloadToken, discardRef, initialStatus, showConflict, onSave, onContentChange, onReload, onRetry, onStatus }: Props) {
+export default function PageEditor({ pageId, title, initialContent, theme, reloadToken, discardRef, initialStatus, showConflict, onSave, onContentChange, onReload, onRetry, onStatus }: Props) {
   const blocks = useMemo(() => parseBlocks(initialContent), [initialContent])
   const editor = useCreateBlockNote({ initialContent: blocks })
   const latestReq = useRef(0)
@@ -211,11 +212,49 @@ export default function PageEditor({ pageId, initialContent, theme, reloadToken,
     }
   }
 
+  const [transferError, setTransferError] = useState('')
+  const [importing, setImporting] = useState(false)
+  const importRef = useRef<HTMLInputElement>(null)
+  const download = (kind: 'markdown' | 'json') => {
+    try {
+      const content = kind === 'json' ? JSON.stringify(editor.document, null, 2) : editor.blocksToMarkdownLossy(editor.document)
+      const url = URL.createObjectURL(new Blob([content], {type: kind === 'json' ? 'application/json' : 'text/markdown;charset=utf-8'}))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = (Array.from(title, ch => ch.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(ch) ? '_' : ch).join('').slice(0, 100) || 'Untitled') + (kind === 'json' ? '.json' : '.md')
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setTransferError('')
+    } catch (e) { setTransferError(`Export failed: ${(e as Error).message}`) }
+  }
   return (
     <div>
-      <div data-testid="page-save-status" style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
+      <div className="editor-toolbar">
+        <div className="editor-file-actions" role="group" aria-label="Page files">
+          <button className="btn quiet" disabled={status === 'conflict' || retrying || importing} onClick={() => importRef.current?.click()}>{importing ? 'Importing…' : 'Import Markdown'}</button>
+          <button className="btn quiet" onClick={() => download('markdown')}>Export Markdown</button>
+          <button className="btn quiet" onClick={() => download('json')}>Export blocks</button>
+        </div>
+        <input ref={importRef} type="file" accept=".md,.markdown,text/markdown,text/plain" aria-label="Import Markdown file" hidden onChange={async e => {
+          const file = e.target.files?.[0]
+          e.target.value = ''
+          if (!file || conflictLocked.current || retrying) return
+          if (file.size > 2 * 1024 * 1024) { setTransferError('Choose a Markdown file smaller than 2 MB.'); return }
+          setImporting(true)
+          try {
+            const blocks = editor.tryParseMarkdownToBlocks(await file.text())
+            if (conflictLocked.current || isDiscarded.current) throw new Error('Resolve the page conflict before importing.')
+            if (blocks.length) editor.insertBlocks(blocks, editor.document[editor.document.length - 1], 'after')
+            setTransferError('')
+          } catch (e) { setTransferError(`Import failed: ${(e as Error).message}`) }
+          finally { setImporting(false) }
+        }} />
+      <div data-testid="page-save-status" role="status" style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
         Status: {status === 'error' ? 'Save failed (retrying…)' : status === 'conflict' ? 'Version conflict' : status}
       </div>
+      </div>
+      <p className="editor-file-hint">Import appends to this page. Markdown simplifies rich blocks; export blocks to preserve the editor structure. Attachments stay in your workspace.</p>
+      {transferError && <p role="alert">{transferError}</p>}
       {status === 'conflict' && (
         <div className="row" style={{ marginBottom: 8, gap: 8 }}>
           <button className="btn" onClick={async () => { await onReload(); }}>Reload latest</button>

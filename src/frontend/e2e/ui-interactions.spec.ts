@@ -6,9 +6,9 @@ test('collapsible sidebar and task dialog interactions work', async ({ page }) =
 
   const sidebar = page.locator('aside.sidebar')
   await expect(sidebar).not.toHaveClass(/collapsed/)
-  await page.getByRole('button', { name: '☰' }).click()
+  await page.getByRole('button', { name: 'Toggle sidebar' }).click()
   await expect(sidebar).toHaveClass(/collapsed/)
-  await page.getByRole('button', { name: '☰' }).click()
+  await page.getByRole('button', { name: 'Toggle sidebar' }).click()
   await expect(sidebar).not.toHaveClass(/collapsed/)
 
   await page.locator('.nav-item').filter({ hasText: 'Issues' }).click()

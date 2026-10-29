@@ -133,6 +133,13 @@ jobs:
         working-directory: src/frontend
       - run: npm run test:e2e
         working-directory: src/frontend
+      - name: Upload workspace and database UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reverie-UI-${{ matrix.os }}
+          path: src/frontend/test-results/database-evidence/
+          if-no-files-found: warn
       - run: python3 scripts/test-portable.py
       - name: Package native portable app
         shell: bash

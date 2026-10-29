@@ -18,8 +18,8 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: inte
 | Table/Board/Calendar/List/Gallery | Partial | E2E verified | Board and Calendar drag/drop persist data; table column sizing/reordering/hiding, keyboard cell editing; List/Gallery record links. Gallery property selection and local attachment cover selection; no timeline view |
 | Properties/filter/sort/relations | Partial | Partially verified | Typed field schema, nested AND/OR filters, configurable select/date/number, formulas and relation rollups, scoped file attachment and version validation; more complex relation/formula behaviors and spreadsheet editing remain |
 | Search | Partial | Implemented | Global search across projects/tasks/pages |
-| Shortcuts & templates | Partial | Verified | Ctrl+K command palette works; templates remain unavailable |
-| Import/export & portability | Missing | Planned | Notion/Markdown import/export and macOS packaging need implementation and acceptance |
+| Shortcuts & templates | Partial | In development | Ctrl/Cmd+K native focus-contained palette; five built-in editable page templates; custom templates pending |
+| Import/export & portability | Partial | In development | V0.0.1 native portable packages released. Single-page Markdown append/import and Markdown/block JSON export added on dev; complete Notion/workspace import/export remains open |
 
 ## Plane
 
@@ -43,8 +43,8 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: inte
 - Database record conflicts have Retry/Reload tests, but full multi-client schema and linked-view conflict UX needs further validation.
 - The database feature is not yet at full Notion parity; track the remaining release gates in PROJECT_DIRECTION.md and DATABASE_COMPLETION_PLAN.md.
 - No real-time collaboration
-- No templates, favorites, recent pages
+- Built-in templates, SQLite-backed favorites and recently visited pages are implemented on dev; custom templates remain open
 - Page cover image upload pending
-- Mobile responsive polish pending
+- Responsive shell, native mobile navigation and theme/material tokens added on dev; full mobile and accessibility acceptance remain open
 
 Verified database interaction baseline: [Windows CI 40266607916](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266607916), commit `b0d34c68c4bc27cafa2389234d189819fc062814`, **27/27 Chromium E2E**. Newer commits require their own SHA-matched verification.

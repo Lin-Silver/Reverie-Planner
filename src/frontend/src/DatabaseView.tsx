@@ -255,11 +255,11 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   if (!db) return <div style={{ padding: 24 }}><p role="alert">{error || 'Database not found'}</p><button onClick={() => void load()}>Retry loading database</button><button onClick={onBack}>Back</button></div>
 
   return (
-    <div style={{ padding: 16 }}>
+    <div className="database-workspace">
       {trashOpen && <DatabaseTrash databaseId={databaseId} onClose={()=>setTrashOpen(false)} onRestored={()=>{void load()}} />}
       {propertyDialogOpen && <DatabasePropertyDialog databaseId={databaseId} properties={props} onClose={() => setPropertyDialogOpen(false)} onCreated={() => {setPropertyDialogOpen(false);void load()}} />}
       {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} {failedViewConfig && <button disabled={savingView} onClick={() => void retryViewSettings()}>Retry my view settings</button>} {failedEdit && <button onClick={() => void retryFailedEdit()}>Retry my changes</button>} <button disabled={!!bulkDraft || savingView} onClick={() => { void load() }}>Reload latest</button></div>}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+      <div className="database-toolbar" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <button className="btn" onClick={guardedBack}>← Back</button>
         <h2 style={{ margin: 0 }}>{db.icon} {db.title}</h2>
         <button className="btn" onClick={renameDb}>Rename</button>

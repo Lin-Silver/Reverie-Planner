@@ -44,7 +44,7 @@ test('create child page persists after reload', async ({ page }) => {
   await page.getByText('New page').click()
   await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
   // create child via + button in sidebar
-  await page.locator('.tree-item').first().locator('button').click()
+  await page.locator('.tree-item').first().getByRole('button', {name: /Add child page/}).click()
   await page.waitForTimeout(1000)
   await page.reload()
   // should still have 2 pages

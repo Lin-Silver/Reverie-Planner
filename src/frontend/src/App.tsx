@@ -1,6 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DatabaseView from './DatabaseView'
 import WorkspaceStorage from './WorkspaceStorage'
+import Icon from './Icon'
+import Dialog from './Dialog'
+import { pageTemplates } from './pageTemplates'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -39,8 +42,13 @@ async function apiFetch<T>(input: string, init?: RequestInit): Promise<T> {
 const uid = () => Math.random().toString(36).slice(2, 10)
 
 export default function App() {
+  const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 768px)').matches)
+  useEffect(() => { const media = window.matchMedia('(max-width: 768px)'); const update = () => setNarrow(media.matches); media.addEventListener('change', update); return () => media.removeEventListener('change', update) }, [])
+  const [library, setLibrary] = useState<{favorites: string[]; recent: string[]}>({favorites: [], recent: []})
+  const [creatingTemplate, setCreatingTemplate] = useState(false)
+  const [fullWidth, setFullWidth] = useState(() => localStorage.getItem('reverie.fullWidth') === '1')
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('theme') as any) || 'light')
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('reverie.sidebar.collapsed') === '1')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('reverie.sidebar.collapsed') === '1' || (localStorage.getItem('reverie.sidebar.collapsed') === null && window.matchMedia('(max-width: 768px)').matches))
   const [view, _setView] = useState<string>('home')
   const [selectedPage, setSelectedPage] = useState<string>('')
   const [selectedProject, setSelectedProject] = useState<string>('all')
@@ -123,6 +131,7 @@ export default function App() {
         if (res.version) {
           pageVersions.current.set(pageId, res.version)
           pageSnapshots.current.set(pageId, res)
+          setPages(current => current.map(page => page.id === res.id ? res : page))
           if (pageEditorRef.current?.id === pageId) {
             if (pageTitleRef.current === res.title) pageTitleDirtyRef.current = false
             pageEditorRef.current.version = res.version
@@ -161,7 +170,7 @@ export default function App() {
     return next
   }
 
-  const setView = useCallback((next: string) => {
+  const setView = (next: string) => {
     if (view === 'page' && next !== 'page' && pageLeaveError) { setError('Resolve the page conflict with Retry or Reload latest before leaving.'); return }
     if (view === 'page' && next !== 'page' && databasePendingEditRef.current) { setError('Resolve the unsaved database edit with Retry or Reload latest before leaving.'); return }
     if (view === 'page' && next !== 'page' && pageEditor) {
@@ -180,7 +189,7 @@ export default function App() {
     }
     setPageLeaveError(false)
     _setView(next)
-  }, [view, pageEditor, pageDraft.content, pageLeaveError])
+  }
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('theme', theme) }, [theme])
   useEffect(() => { localStorage.setItem('reverie.sidebar.collapsed', sidebarCollapsed ? '1' : '0') }, [sidebarCollapsed])
@@ -214,7 +223,26 @@ export default function App() {
       setError('')
     } catch (e) { setError((e as Error).message) }
   }
-  useEffect(() => { void refresh() }, [])
+  const refreshLibrary = async () => setLibrary(await apiFetch('/api/page-library'))
+  useEffect(() => { void refresh(); void refreshLibrary().catch(e => setError((e as Error).message)) }, [])
+  useEffect(() => { localStorage.setItem('reverie.fullWidth', fullWidth ? '1' : '0') }, [fullWidth])
+  const toggleFavorite = async (id: string) => {
+    try {
+      await apiFetch('/api/page-library', {method: 'POST', body: JSON.stringify({id, favorite: !library.favorites.includes(id)})})
+      await refreshLibrary()
+    } catch (e) { setError((e as Error).message) }
+  }
+  const createFromTemplate = async (id: string) => {
+    const template = pageTemplates.find(t => t.id === id)
+    if (!template || creatingTemplate) return
+    setCreatingTemplate(true)
+    try {
+      const created = await apiFetch<Page>('/api/pages', {method: 'POST', body: JSON.stringify({title: template.title, content: JSON.stringify(template.blocks), workspace: true, createdBy: 'You'})})
+      await refresh()
+      await openPageEditor(created)
+    } catch (e) { setError((e as Error).message) }
+    finally { setCreatingTemplate(false) }
+  }
 
   const visibleTasks = useMemo(() => tasks.filter((t) => (selectedProject === 'all' || t.projectId === selectedProject)), [tasks, selectedProject])
 
@@ -292,8 +320,10 @@ export default function App() {
           pageTitleDirtyRef.current = false
           setPageEditor(created); setPageDraft({ title: created.title, icon: created.icon ?? '', content: created.content })
           openedId = created.id
+          pageVersions.current.set(created.id, created.version || 1)
+          pageSnapshots.current.set(created.id, created)
           await refresh()
-        } catch (e) { setError((e as Error).message) }
+        } catch (e) { setError((e as Error).message); return }
       }
     // check if this page hosts a database
     try {
@@ -305,6 +335,11 @@ export default function App() {
       setPageDatabaseId(found ? found.id : '')
       setPageDatabaseViewId(openedFull?.linkedViewId || '')
     } catch {}
+    if (openedId) {
+      setSelectedPage(openedId)
+      void apiFetch('/api/page-library', {method: 'POST', body: JSON.stringify({id: openedId, visit: true})}).then(refreshLibrary).catch(e => setError((e as Error).message))
+    }
+    if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true)
     setView('page')
   }
   const deletePage = async (id: string) => {
@@ -386,7 +421,7 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
-  const cmdResults = useMemo(() => {
+  const cmdResults = (() => {
     const q = cmdQuery.toLowerCase()
     const items: { label: string; action: () => void }[] = []
     pages.forEach((p) => { if (!q || p.title.toLowerCase().includes(q)) items.push({ label: `📄 ${p.title}`, action: () => { setSelectedPage(p.id); openPageEditor(p); setCmdOpen(false) } }) })
@@ -396,28 +431,34 @@ export default function App() {
       items.unshift({ label: `➕ Create page "${cmdQuery}"`, action: () => { apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title: cmdQuery, workspace: true, createdBy: 'You' }) }).then((p) => { refresh(); setSelectedPage(p.id); openPageEditor(p); setCmdOpen(false) }).catch((e) => setError((e as Error).message)) } })
     }
     return items.slice(0, 20)
-  }, [cmdQuery, pages, projects, tasks, openTaskEditor])
+  })()
 
+  const navigate = (next: string) => {
+    setView(next)
+    if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true)
+  }
+  const nav = (target: string, label: string, icon: string) => <button key={target} className={`nav-item ${view === target ? 'active' : ''}`} aria-current={view === target ? 'page' : undefined} onClick={() => navigate(target)}><Icon name={icon} /><span>{label}</span>{target === 'notifications' && unreadCount > 0 && <span className="nav-count">{unreadCount}</span>}</button>
+  const favoritePages = library.favorites.map(id => pages.find(p => p.id === id)).filter((p): p is Page => !!p)
+  const recentPages = library.recent.map(id => pages.find(p => p.id === id)).filter((p): p is Page => !!p)
+  const pageCard = (p: Page) => <button key={p.id} className="page-card" onClick={() => void openPageEditor(p)}><span className="page-card-icon">{p.icon || <Icon name="page" size={24} />}</span><strong>{p.title}</strong><span className="page-card-meta">{p.parentId ? 'Nested page' : 'Workspace page'}<Icon name="arrow" size={16} /></span></button>
   const sidebar = (
-    <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
-      <div className="workspace-name">🚀 {workspaces[0]?.name || 'Reverie'}</div>
-      <div style={{ padding: '4px 8px' }}>
-        <input className="search-box" placeholder="Search..." value={search} onChange={(e) => doSearch(e.target.value)} onFocus={() => setView('search')} />
-      </div>
+    <aside id="workspace-sidebar" aria-label="Workspace navigation" className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`} inert={sidebarCollapsed}>
+      <div className="workspace-name"><span className="brand-mark"><Icon name="spark" size={22} /></span><div><strong>{workspaces[0]?.name || 'Reverie'}</strong><small>Personal workspace</small></div></div>
+      <button className="command-trigger" onClick={() => setCmdOpen(true)}><Icon name="search" /><span>Quick find</span><kbd>⌘ / Ctrl K</kbd></button>
+      <input className="search-box" aria-label="Search workspace" placeholder="Search workspace…" value={search} onChange={e => doSearch(e.target.value)} onFocus={() => setView('search')} />
+      <div className="sidebar-scroll">
       <div className="nav-section">Workspace</div>
-      <div className={`nav-item ${view === 'home' ? 'active' : ''}`} onClick={() => setView('home')}>🏠 Home</div>
-      <div className={`nav-item ${view === 'page' && !pageEditor ? 'active' : ''}`} onClick={() => openPageEditor()}>📄 New page</div>
-      <div className={`nav-item ${view === 'notifications' ? 'active' : ''}`} onClick={() => setView('notifications')}>🔔 Notifications {unreadCount > 0 && <span className="notif-dot" />}</div>
+      {nav('home', 'Home', 'home')}
+      <button className="nav-item" onClick={() => void openPageEditor()}><Icon name="plus" /><span>New page</span></button>
+      {nav('templates', 'Templates', 'grid')}
+      {favoritePages.length > 0 && <><div className="nav-section">Favorites</div>{favoritePages.map(p => <button key={p.id} className="nav-item favorite-link" onClick={() => void openPageEditor(p)}><Icon name="star" /><span>{p.title}</span></button>)}</>}
       <div className="nav-section">Planning</div>
-      <div className={`nav-item ${view === 'issues' ? 'active' : ''}`} onClick={() => setView('issues')}>✅ Issues</div>
-      <div className={`nav-item ${view === 'projects' ? 'active' : ''}`} onClick={() => setView('projects')}>📁 Projects</div>
-      <div className={`nav-item ${view === 'cycles' ? 'active' : ''}`} onClick={() => setView('cycles')}>🔄 Cycles</div>
-      <div className={`nav-item ${view === 'modules' ? 'active' : ''}`} onClick={() => setView('modules')}>🧩 Modules</div>
-      <div className={`nav-item ${view === 'intake' ? 'active' : ''}`} onClick={() => setView('intake')}>📥 Intake</div>
-      <div className="nav-section">Knowledge</div>
-      <div className={`nav-item ${view === 'stickies' ? 'active' : ''}`} onClick={() => setView('stickies')}>📌 Stickies</div>
-      <div className={`nav-item ${view === 'drafts' ? 'active' : ''}`} onClick={() => setView('drafts')}>📝 Drafts</div>
-      <div className="nav-section">Pages</div>
+      {nav('issues', 'Issues', 'check')}{nav('projects', 'Projects', 'folder')}
+      <details className="nav-disclosure"><summary>More tools</summary>
+        {nav('cycles', 'Cycles', 'clock')}{nav('modules', 'Modules', 'grid')}{nav('intake', 'Intake', 'folder')}
+        {nav('stickies', 'Stickies', 'page')}{nav('drafts', 'Drafts', 'page')}{nav('analytics', 'Analytics', 'chart')}
+      </details>
+      <div className="nav-section page-section"><span>Pages</span><button className="icon-button" aria-label="Add page" onClick={() => void openPageEditor()}><Icon name="plus" size={16} /></button></div>
       {(() => {
         const roots = pages.filter((p) => p.workspace && !p.parentId)
         const childrenOf = (pid: string) => pages.filter((p) => p.parentId === pid)
@@ -443,11 +484,10 @@ export default function App() {
                   const dragged = pages.find((x) => x.id === draggedId)
                   apiFetch('/api/pages/move', { method: 'POST', body: JSON.stringify({ id: draggedId, parentId: p.id, version: dragged?.version }) }).then(() => refresh()).catch((err) => setError((err as Error).message))
                 }}
-                onClick={() => { setSelectedPage(p.id); openPageEditor(p) }}>
-                <span onClick={(e) => { e.stopPropagation(); toggleExpanded(p.id) }} style={{ cursor: 'pointer', width: 12, display: 'inline-block' }}>{kids.length > 0 ? (expanded ? '▾' : '▸') : '·'}</span>
-                <span style={{ marginRight: 4 }}>{p.icon || '📄'}</span>
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
-                <button className="btn" style={{ padding: '0 4px', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); apiFetch('/api/pages', { method: 'POST', body: JSON.stringify({ title: 'Untitled', parentId: p.id, workspace: true, createdBy: 'You' }) }).then(() => refresh()).catch((err) => setError((err as Error).message)) }}>+</button>
+                >
+                {kids.length > 0 ? <button className="tree-toggle" aria-label={`${expanded ? 'Collapse' : 'Expand'} ${p.title}`} aria-expanded={expanded} onClick={() => toggleExpanded(p.id)}>{expanded ? '▾' : '▸'}</button> : <span className="tree-spacer" />}
+                <button className="tree-open" onClick={() => void openPageEditor(p)}><span>{p.icon || <Icon name="page" size={16} />}</span><span>{p.title}</span></button>
+                <button className="btn" aria-label={`Add child page to ${p.title}`} style={{ padding: '0 4px', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); apiFetch('/api/pages', { method: 'POST', body: JSON.stringify({ title: 'Untitled', parentId: p.id, workspace: true, createdBy: 'You' }) }).then(() => refresh()).catch((err) => setError((err as Error).message)) }}>+</button>
               </div>
               {expanded && kids.map((c) => renderNode(c, depth + 1))}
             </div>
@@ -455,38 +495,27 @@ export default function App() {
         }
         return roots.map((p) => renderNode(p, 0))
       })()}
-      <div className="nav-section">AI</div>
-      <div className={`nav-item ${view === 'assistant' ? 'active' : ''}`} onClick={() => setView('assistant')}>🤖 Assistant</div>
-      <div className={`nav-item ${view === 'settings' ? 'active' : ''}`} onClick={() => setView('settings')}>⚙️ Settings</div>
-      <div className="nav-section">Analytics</div>
-      <div className={`nav-item ${view === 'analytics' ? 'active' : ''}`} onClick={() => setView('analytics')}>📊 Analytics</div>
+      </div>
+      <div className="sidebar-footer">{nav('notifications', 'Notifications', 'bell')}{nav('assistant', 'Assistant', 'spark')}{nav('settings', 'Settings', 'settings')}<span className="local-status"><span />Stored on this device</span></div>
     </aside>
   )
 
   const renderContent = () => {
+    if (view === 'templates') return (
+      <div className="page-wrap dashboard">
+        <div className="eyebrow">A little structure, a clear start</div><h1>Make space for your ideas.</h1>
+        <p className="lead">Start with a template. Everything is editable and saved in your workspace.</p>
+        <div className="template-grid">{pageTemplates.map(t => <button className="template-card" key={t.id} disabled={creatingTemplate} onClick={() => void createFromTemplate(t.id)}><span className="template-icon"><Icon name={t.icon} size={26} /></span><strong>{t.title}</strong><span>{t.description}</span><span className="template-action">{creatingTemplate ? 'Creating…' : 'Use template'}<Icon name="arrow" size={16} /></span></button>)}</div>
+      </div>
+    )
     if (view === 'home') return (
-      <div className="page-wrap">
-        <h1 style={{ fontSize: 32 }}>Welcome back</h1>
-        <p className="empty">Overview of your workspace</p>
-        {overview && (
-          <div className="row" style={{ gap: 16, marginTop: 24, flexWrap: 'wrap' }}>
-            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{overview.projectCount}</div><div className="empty">Projects</div></div>
-            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{overview.taskCount}</div><div className="empty">Issues</div></div>
-            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{overview.completedCount}</div><div className="empty">Completed</div></div>
-            <div className="card"><div style={{ fontSize: 24, fontWeight: 700 }}>{overview.upcomingCount}</div><div className="empty">Upcoming</div></div>
-          </div>
-        )}
-        <h2 style={{ marginTop: 32 }}>Recent pages</h2>
-        {pages.slice(0, 6).map((p) => (
-          <div key={p.id} className="tree-item" onClick={() => { setSelectedPage(p.id); openPageEditor(p) }} style={{ padding: '8px 0' }}>
-            <span>{p.icon || '📄'}</span><span>{p.title}</span>
-          </div>
-        ))}
-        <h2 style={{ marginTop: 32 }}>Stickies</h2>
-        <div className="row" style={{ flexWrap: 'wrap', gap: 12 }}>
-          {stickies.map((s) => <div key={s.id} className="card" style={{ width: 200, background: s.color === 'yellow' ? '#fff9c4' : 'var(--card)' }}><b>{s.title}</b><div style={{ fontSize: 13 }}>{s.body}</div></div>)}
-          <button className="btn" onClick={createSticky}>+ Sticky</button>
-        </div>
+      <div className="page-wrap dashboard">
+        <div className="home-heading"><div><div className="eyebrow">Your personal workspace</div><h1>Welcome back</h1><p className="lead">A calm place to think, plan and make progress.</p></div><button className="btn primary" onClick={() => void openPageEditor()}><Icon name="plus" size={16} />Create a page</button></div>
+        <section className="quick-start"><div className="quick-start-copy"><span className="eyebrow">From a thought to a plan</span><h2>What’s on your mind?</h2><p>Capture an idea, plan a project, or start your next chapter.</p><button className="btn" onClick={() => navigate('templates')}>Explore templates<Icon name="arrow" size={16} /></button></div><div className="quick-start-art" aria-hidden="true"><span className="art-sheet"><Icon name="page" size={28} /><i /><i /><i /><span>Room for a new idea.</span></span></div></section>
+        <section aria-label="Workspace overview" className="overview-strip">{[[pages.length, 'Pages'], [overview?.projectCount ?? 0, 'Projects'], [overview?.taskCount ?? 0, 'Issues'], [overview?.completedCount ?? 0, 'Completed']].map(([value, label]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</section>
+        {favoritePages.length > 0 && <section><div className="section-heading"><h2><Icon name="star" />Favorites</h2><span>Pinned for easy access</span></div><div className="page-grid">{favoritePages.map(pageCard)}</div></section>}
+        <section><div className="section-heading"><h2><Icon name="clock" />Recent pages</h2><span>Pick up where you left off</span></div>{recentPages.length ? <div className="page-grid">{recentPages.slice(0, 6).map(pageCard)}</div> : <div className="empty-panel"><Icon name="page" size={24} /><p>Open a page to see it here.</p><button className="btn" onClick={() => void openPageEditor()}>Write your first page</button></div>}</section>
+        <section><div className="section-heading"><h2>All pages</h2><button className="btn quiet" onClick={() => navigate('templates')}>Start from a template<Icon name="arrow" size={16} /></button></div><div className="home-page-list">{pages.map(p => <button key={p.id} onClick={() => void openPageEditor(p)}><span>{p.icon || <Icon name="page" />}</span><strong>{p.title}</strong><span>Open page<Icon name="arrow" size={16} /></span></button>)}</div></section>
       </div>
     )
 
@@ -495,8 +524,8 @@ export default function App() {
       return <DatabaseView databaseId={pageDatabaseId} viewId={pageDatabaseViewId || undefined} onBack={() => { setPageDatabaseId(''); setPageDatabaseViewId(''); setView('home') }} onLinkedPageCreated={() => { void refresh() }} onPendingEditChange={pending => { databasePendingEditRef.current = pending }} onOpenRecord={pageId => { void (async () => { try { const full = await apiFetch<Page>(`/api/pages?id=${encodeURIComponent(pageId)}`); setSelectedPage(pageId); await openPageEditor(full) } catch (e) { setError((e as Error).message) } })() }} />
     }
     return (
-      <div className="page-wrap">
-        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
+      <div className={`page-wrap document-page ${fullWidth ? 'full-width' : ''}`}>
+        <div className="row page-actions" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
           <div className="breadcrumb" style={{ color: 'var(--muted)', fontSize: 13 }}>
             {(() => {
               const path: Page[] = []
@@ -506,7 +535,9 @@ export default function App() {
             })()}
           </div>
           <div className="row">
-            {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
+            {pageEditor && <button className="btn" aria-label={library.favorites.includes(pageEditor.id) ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={library.favorites.includes(pageEditor.id)} onClick={() => void toggleFavorite(pageEditor.id)}><Icon name="star" size={16} />{library.favorites.includes(pageEditor.id) ? 'Favorited' : 'Favorite'}</button>}
+            <button className="btn" aria-pressed={fullWidth} onClick={() => setFullWidth(v => !v)}>Full width</button>
+            {pageEditor && <button className="btn quiet" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
             {pageEditor && <button className="btn" onClick={async () => {
               try {
                 const db = await apiFetch<any>('/api/databases', { method: 'POST', body: JSON.stringify({ title: pageEditor.title || 'Untitled database', pageId: pageEditor.id }) })
@@ -515,12 +546,13 @@ export default function App() {
             }}>Create database</button>}
           </div>
         </div>
-        <div className="page-icon" onClick={() => { if (!pageEditor) return; setIconDraft(pageEditor.icon || ''); setIconTarget(pageEditor) }}>{pageDraft.icon || '📄'}</div>
-        <input className="page-title" value={pageDraft.title} onChange={(e) => { pageTitleDirtyRef.current = true; setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor && pageTitleDirtyRef.current && !pageLeaveError) void savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch((e) => { if ((e as Error).message.includes('version conflict')) setPageLeaveError(true); else setError(`Title save failed: ${(e as Error).message}`) }) }} placeholder="Untitled" />
+        <button className="page-icon" aria-label="Change page icon" onClick={() => { if (!pageEditor) return; setIconDraft(pageEditor.icon || ''); setIconTarget(pageEditor) }}>{pageDraft.icon || '📄'}</button>
+        <input className="page-title" aria-label="Page title" value={pageDraft.title} onChange={(e) => { pageTitleDirtyRef.current = true; setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor && pageTitleDirtyRef.current && !pageLeaveError) void savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch((e) => { if ((e as Error).message.includes('version conflict')) setPageLeaveError(true); else setError(`Title save failed: ${(e as Error).message}`) }) }} placeholder="Untitled" />
   {pageEditor && (
     <Suspense fallback={<p role="status">Loading editor…</p>}><PageEditor
       key={`${pageEditor.id}-${reloadToken}`}
       pageId={pageEditor.id}
+      title={pageDraft.title}
       initialContent={pageEditor.content}
       theme={theme}
       reloadToken={reloadToken}
@@ -762,22 +794,22 @@ export default function App() {
   }
 
   return (
-    <div className="app" data-theme={theme}>
-      <button className="btn" style={{ position: 'fixed', top: 8, left: 8, zIndex: 20 }} onClick={() => setSidebarCollapsed((c) => !c)}>☰</button>
-      {sidebar}
+    <div className="app" data-theme={theme} onPointerDown={() => document.documentElement.dataset.input = 'pointer'} onKeyDown={() => document.documentElement.dataset.input = 'keyboard'}>
+      <a className="skip-link" href="#main-content">Skip to content</a>
+      {narrow ? !sidebarCollapsed && <Dialog label="Workspace navigation" navigation onClose={() => setSidebarCollapsed(true)}>{sidebar}<button className="icon-button navigation-close" aria-label="Close navigation" onClick={() => setSidebarCollapsed(true)}><Icon name="close" /></button></Dialog> : sidebar}
       <main className="main">
-        <div className="topbar">
-          <span style={{ cursor: 'pointer' }} onClick={() => setView('home')}>Home</span>
-          <span>/</span>
-          <span>{view}</span>
-          <span style={{ flex: 1 }} />
-          <button className="btn" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? '🌙' : '☀️'}</button>
-        </div>
-        <div className="content">{renderContent()}</div>
+        <header className="topbar">
+          <button className="icon-button" aria-label="Toggle sidebar" aria-controls="workspace-sidebar" aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(c => !c)}><Icon name="sidebar" /></button>
+          <nav className="breadcrumb" aria-label="Breadcrumb"><button onClick={() => navigate('home')} aria-label="Go to Home">Workspace</button><span>/</span><strong>{view === 'page' ? pageDraft.title : view.charAt(0).toUpperCase() + view.slice(1)}</strong></nav>
+          <span className="topbar-spacer" />
+          <button className="icon-button" aria-label="Quick find" onClick={() => setCmdOpen(true)}><Icon name="search" /></button>
+          <button className="icon-button" aria-label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
+        </header>
+        <div id="main-content" className="content" tabIndex={-1}>{renderContent()}</div>
       </main>
 
       {taskEditorOpen && (
-        <div className="modal-backdrop" onClick={() => setTaskEditorOpen(false)}>
+        <Dialog label="Issue editor" onClose={() => setTaskEditorOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>{editingTask ? 'Edit issue' : 'New issue'}</h3>
             <form onSubmit={saveTask}>
@@ -811,11 +843,11 @@ export default function App() {
               </div>
             </form>
           </div>
-        </div>
+        </Dialog>
       )}
 
       {projectEditorOpen && (
-        <div className="modal-backdrop" onClick={() => setProjectEditorOpen(false)}>
+        <Dialog label="Project editor" onClose={() => setProjectEditorOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>{editingProject ? 'Edit project' : 'New project'}</h3>
             <form onSubmit={saveProject}>
@@ -835,11 +867,11 @@ export default function App() {
               </div>
             </form>
           </div>
-        </div>
+        </Dialog>
       )}
 
       {iconTarget && (
-        <div className="modal-backdrop" onClick={() => setIconTarget(null)}>
+        <Dialog label="Page icon" onClose={() => setIconTarget(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 320 }}>
             <h3>Page icon</h3>
             <input className="input" style={{ width: '100%', fontSize: 32, textAlign: 'center' }} value={iconDraft} onChange={(e) => setIconDraft(e.target.value)} autoFocus />
@@ -848,10 +880,10 @@ export default function App() {
               <button className="btn primary" onClick={async () => { if (!iconTarget) return; const ic = iconDraft; setPageDraft((d) => ({ ...d, icon: ic })); try { await apiFetch('/api/pages', { method: 'PUT', body: JSON.stringify({ ...iconTarget, icon: ic }) }); await refresh(); setIconTarget(null) } catch (e) { setError((e as Error).message) } }}>Save</button>
             </div>
           </div>
-        </div>
+        </Dialog>
       )}
       {cmdOpen && (
-        <div className="modal-backdrop" onClick={() => setCmdOpen(false)}>
+        <Dialog label="Quick find" onClose={() => setCmdOpen(false)} instant>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
             <input className="input" style={{ width: '100%', marginBottom: 8 }} autoFocus placeholder="Search pages, projects, issues..." value={cmdQuery} onChange={(e) => setCmdQuery(e.target.value)} onKeyDown={(e) => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setCmdIndex((i) => Math.min(i + 1, cmdResults.length - 1)) }
@@ -859,14 +891,14 @@ export default function App() {
               else if (e.key === 'Enter') { e.preventDefault(); cmdResults[cmdIndex]?.action() }
             }} />
             <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-              {cmdResults.map((r, i) => <div key={i} className="tree-item" style={{ background: i === cmdIndex ? 'var(--hover)' : 'transparent' }} onClick={r.action}>{r.label}</div>)}
+              {cmdResults.map((r, i) => <button key={i} className="tree-item" style={{ background: i === cmdIndex ? 'var(--hover)' : 'transparent' }} onClick={r.action}>{r.label}</button>)}
               {cmdResults.length === 0 && <div className="empty">No results</div>}
             </div>
           </div>
-        </div>
+        </Dialog>
       )}
 
-      {error && <div style={{ position: 'fixed', bottom: 16, right: 16, background: '#eb5757', color: 'white', padding: '8px 12px', borderRadius: 8 }}>{error}<button style={{ marginLeft: 8, background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }} onClick={() => setError('')}>×</button></div>}
+      {error && <div className="error-toast" role="alert">{error}<button style={{ marginLeft: 8, background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }} aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
 
     </div>
   )
