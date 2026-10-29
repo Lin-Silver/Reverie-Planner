@@ -57,6 +57,7 @@ func (a *AppContext) handleDBBulkEdit(w http.ResponseWriter, r *http.Request) {
  if err:=rows.Close();err!=nil {writeJSON(w,500,map[string]string{"error":"could not close properties"});return}
  now:=time.Now().UTC().Format(time.RFC3339)
  updated:=make([]DBRecord,0,len(req.Edits))
+ titleChangedByID:=make(map[string]bool,len(req.Edits))
  for _,e:=range req.Edits {
   owner,previousTitle,err:=readWritableDBRecordForUpdate(tx,e.ID)
   if err!=nil {
@@ -100,7 +101,12 @@ func (a *AppContext) handleDBBulkEdit(w http.ResponseWriter, r *http.Request) {
    changed,err:=pageRes.RowsAffected()
    if err!=nil || changed!=1 {writeJSON(w,409,map[string]string{"error":"backing page missing"});return}
   }
-  rec,err:=readDBRecordInTx(tx,e.ID,titleChanged)
+  titleChangedByID[e.ID]=titleChanged
+ }
+ // Materialize all responses only after the entire batch has been applied:
+ // a rollup on an earlier record may depend on a later record's new value.
+ for _,e:=range req.Edits {
+  rec,err:=readDBRecordInTx(tx,e.ID,titleChangedByID[e.ID])
   if err!=nil {writeJSON(w,500,map[string]string{"error":"could not read updated record"});return}
   updated=append(updated,rec)
  }
