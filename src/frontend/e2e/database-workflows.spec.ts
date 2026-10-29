@@ -782,6 +782,10 @@ test('database TSV paste commits selected rows atomically and retains conflict d
   await record(page, host.databaseId, 'Paste alpha')
   await record(page, host.databaseId, 'Paste beta')
   await reopen(page, host)
+  const displayed = await page.locator('[data-testid="database-record-row"]').evaluateAll(
+    rows => rows.map(row => row.getAttribute('data-record-id') || '')
+  )
+  expect(displayed).toHaveLength(2)
   await page.getByLabel('Select record Paste alpha').check()
   await page.getByLabel('Select record Paste beta').check()
   await page.getByLabel('Bulk paste start column').selectOption(note.id)
@@ -790,12 +794,16 @@ test('database TSV paste commits selected rows atomically and retains conflict d
   page.once('dialog', dialog => dialog.accept())
   await page.getByLabel('Apply bulk paste').click()
   await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
-  await expect.poll(async () => (await rows(page, host.databaseId)).map(r => [r.values[note.id], r.values[score.id]])).toEqual([
-    ['alpha note', 12], ['beta note', 24]
-  ])
+  await expect.poll(async () => {
+    const saved = await rows(page, host.databaseId)
+    return displayed.map(id => {
+      const row = saved.find(r => r.id === id)!
+      return [row.values[note.id], row.values[score.id]]
+    })
+  }).toEqual([['alpha note', 12], ['beta note', 24]])
 
   const current = await rows(page, host.databaseId)
-  const beta = current.find(r => r.title === 'Paste beta')!
+  const beta = current.find(r => r.id === displayed[1])!
   const remote = await page.request.put(API + '/db/records', {data: {
     id: beta.id, title: beta.title, version: beta.version, values: {[note.id]: 'remote note'}
   }})
@@ -807,16 +815,20 @@ test('database TSV paste commits selected rows atomically and retains conflict d
   await expect(page.getByRole('alert').filter({hasText:'Bulk paste failed'})).toBeVisible()
   await expect(page.getByLabel('Bulk paste TSV')).toHaveValue(draft)
   const rolledBack = await rows(page, host.databaseId)
-  expect(rolledBack.find(r => r.title === 'Paste alpha')?.values[note.id]).toBe('alpha note')
-  expect(rolledBack.find(r => r.title === 'Paste alpha')?.values[score.id]).toBe(12)
-  expect(rolledBack.find(r => r.title === 'Paste beta')?.values[note.id]).toBe('remote note')
+  expect(rolledBack.find(r => r.id === displayed[0])?.values[note.id]).toBe('alpha note')
+  expect(rolledBack.find(r => r.id === displayed[0])?.values[score.id]).toBe(12)
+  expect(rolledBack.find(r => r.id === displayed[1])?.values[note.id]).toBe('remote note')
 
   await page.getByLabel('Refresh bulk record versions').click()
   await expect(page.getByLabel('Bulk paste TSV')).toHaveValue(draft)
   page.once('dialog', dialog => dialog.accept())
   await page.getByLabel('Apply bulk paste').click()
   await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
-  await expect.poll(async () => (await rows(page, host.databaseId)).map(r => [r.values[note.id], r.values[score.id]])).toEqual([
-    ['retry alpha', 33], ['retry beta', 44]
-  ])
+  await expect.poll(async () => {
+    const saved = await rows(page, host.databaseId)
+    return displayed.map(id => {
+      const row = saved.find(r => r.id === id)!
+      return [row.values[note.id], row.values[score.id]]
+    })
+  }).toEqual([['retry alpha', 33], ['retry beta', 44]])
 })
