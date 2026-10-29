@@ -2,6 +2,7 @@ package main
 
 import (
     "database/sql"
+    "errors"
     "encoding/json"
     "fmt"
     "net/http"
@@ -84,4 +85,46 @@ func TestRecordPutRejectsTrashedParentAndPreservesRestoreData(t *testing.T) {
         t.Fatalf("write after restore did not persist expected values: %+v", actual)
     }
     assertViewIntegrityProviders(t, providerPath, providerBefore)
+}
+
+// The transaction-scoped lookup must observe even uncommitted tombstones.
+// This specifically exercises the snapshot used by record PUT, rather than
+// merely relying on the public API's already-trashed-parent behavior.
+func TestWritableRecordLookupObservesTransactionalTombstones(t *testing.T) {
+    app := setupTestContext(t)
+    defer app.DB.Close()
+    database, record := dbRegressionCreate(t, app)
+
+    for _, tc := range []struct { name, table, id string }{
+        {"parent database", "databases", database.ID},
+        {"record", "db_records", record.ID},
+    } {
+        t.Run(tc.name, func(t *testing.T) {
+            tx, err := app.DB.Begin()
+            if err != nil { t.Fatal(err) }
+            if _, err := tx.Exec("UPDATE "+tc.table+" SET deleted_at=? WHERE id=?",
+                "2026-10-29T00:00:00Z", tc.id); err != nil {
+                _ = tx.Rollback()
+                t.Fatal(err)
+            }
+            if _, _, err := readWritableDBRecordForUpdate(tx, record.ID); !errors.Is(err, sql.ErrNoRows) {
+                _ = tx.Rollback()
+                t.Fatalf("lookup accepted an uncommitted %s tombstone: %v", tc.name, err)
+            }
+            if err := tx.Rollback(); err != nil { t.Fatal(err) }
+
+            verifyTx, err := app.DB.Begin()
+            if err != nil { t.Fatal(err) }
+            databaseID, title, err := readWritableDBRecordForUpdate(verifyTx, record.ID)
+            if err != nil {
+                _ = verifyTx.Rollback()
+                t.Fatalf("rollback did not restore record visibility: %v", err)
+            }
+            if databaseID != database.ID || title != record.Title {
+                _ = verifyTx.Rollback()
+                t.Fatalf("lookup after rollback returned database=%q title=%q", databaseID, title)
+            }
+            if err := verifyTx.Rollback(); err != nil { t.Fatal(err) }
+        })
+    }
 }
