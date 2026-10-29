@@ -4,6 +4,7 @@ import DatabaseFilterBuilder from './DatabaseFilterBuilder'
 import DatabasePropertyDialog from './DatabasePropertyDialog'
 import DatabaseTrash from './DatabaseTrash'
 import DatabaseFileCell from './DatabaseFileCell'
+import DatabaseBulkPaste, { type BulkRecordEdit } from './DatabaseBulkPaste'
 import { sortDatabaseRecords, type DatabaseSortRule } from './databaseSorting'
 
 
@@ -12,10 +13,10 @@ type ViewType = 'table' | 'board' | 'calendar' | 'list' | 'gallery'
 const VIEW_TYPES: ViewType[] = ['table', 'board', 'calendar', 'list', 'gallery']
 type ViewConfig = { filter?: string; sort?: string; sortRules?: DatabaseSortRule[]; groupBy?: string; dateProperty?: string; filterTree?: FilterGroup; columnOrder?: string[]; hiddenColumns?: string[]; columnWidths?: Record<string, number> }
 
-type DBProperty = { id: string; databaseId: string; name: string; type: string; config: string; position: number; visible: boolean; version: number }
+export type DBProperty = { id: string; databaseId: string; name: string; type: string; config: string; position: number; visible: boolean; version: number }
 type DBView = { id: string; databaseId: string; name: string; type: string; config: string; position: number; version: number }
 type Database = { id: string; pageId: string; title: string; icon: string; properties: DBProperty[]; views: DBView[]; version: number }
-type DBRecord = { id: string; databaseId: string; title: string; pageId: string; values: Record<string, any>; version: number; createdAt: string; updatedAt: string }
+export type DBRecord = { id: string; databaseId: string; title: string; pageId: string; values: Record<string, any>; version: number; createdAt: string; updatedAt: string }
 
 async function api(path: string, opts?: RequestInit) {
   const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts })
@@ -42,11 +43,13 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [hiddenColumns,setHiddenColumns] = useState<string[]>([])
   const [columnWidths,setColumnWidths] = useState<Record<string,number>>({})
   const [selectedRecords,setSelectedRecords] = useState<string[]>([])
+  const [bulkDraft,setBulkDraft] = useState('')
+  const [bulkStartProperty,setBulkStartProperty] = useState('')
   const [dateProperty, setDateProperty] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [failedEdit, setFailedEdit] = useState<{recordId: string; patch: {title?: string; values?: Record<string, any>}} | null>(null)
-  useEffect(() => { onPendingEditChange?.(!!failedEdit) }, [failedEdit, onPendingEditChange])
+  useEffect(() => { onPendingEditChange?.(!!failedEdit || !!bulkDraft) }, [failedEdit, bulkDraft, onPendingEditChange])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -109,7 +112,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   }
 
   const safelyUpdateRecord = async (rec: DBRecord, patch: { title?: string; values?: Record<string, any> }) => {
-    if (failedEdit) { setError('Resolve the outstanding edit using Retry or Reload latest first.'); return }
+    if (failedEdit || bulkDraft) { setError('Resolve the outstanding edit or discard the bulk paste draft first.'); return }
     try { await updateRecord(rec, patch) }
     catch (e) {
       setFailedEdit({recordId: rec.id, patch})
@@ -130,20 +133,21 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     } catch (e) { setError('Retry failed; your draft remains available: ' + (e as Error).message) }
   }
   const guardedBack = () => {
-    if (failedEdit) { setError('Unsaved database edit: resolve it with Retry or Reload latest before leaving.'); return }
+    if (failedEdit || bulkDraft) { setError('Unsaved database edit: resolve it with Retry or Reload latest before leaving.'); return }
     onBack()
   }
   const guardedOpen = (pageId: string) => {
-    if (failedEdit) { setError('Unsaved database edit: resolve it before opening another page.'); return }
+    if (failedEdit || bulkDraft) { setError('Unsaved database edit: resolve it before opening another page.'); return }
     onOpenRecord?.(pageId)
   }
   const addRecord = async () => {
+    if (failedEdit || bulkDraft) { setError('Resolve pending edits before adding records.'); return }
     const rec = await api('/api/db/records', { method: 'POST', body: JSON.stringify({ databaseId, title: 'Untitled' }) }) as DBRecord
     setRecords(rs => [...rs, rec])
   }
 
   const deleteRecord = async (id:string, skipConfirmation = false): Promise<boolean> => {
-    if(failedEdit){setError('Resolve the unsaved edit before deleting a record');return false}
+    if(failedEdit || bulkDraft){setError('Resolve the unsaved edit or bulk draft before deleting a record');return false}
     const rec = records.find(row => row.id === id && row.databaseId === databaseId)
     if (!rec) { setError('Record is no longer in this database; reload latest before deleting.'); return false }
     if(!skipConfirmation && !confirm('Move this record to Trash? Its data can be restored.'))return false
@@ -157,7 +161,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     }catch(e){setError('Could not delete record: '+(e as Error).message);return false}
   }
   const deleteProperty = async (pid: string) => {
-    if (failedEdit) { setError('Resolve the unsaved edit before deleting a property.'); return }
+    if (failedEdit || bulkDraft) { setError('Resolve the unsaved edit or bulk draft before deleting a property.'); return }
     const property = props.find(p => p.id === pid)
     if (!property) { setError('Property is no longer available; reload latest before deleting.'); return }
     try {
@@ -169,8 +173,31 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     }
   }
 
+  const applyBulkEdit = async (edits: BulkRecordEdit[]): Promise<boolean> => {
+    if (failedEdit) { setError('Resolve the outstanding cell edit before applying a bulk paste.'); return false }
+    try {
+      const updated = await api('/api/db/records/bulk', { method: 'POST', body: JSON.stringify({ databaseId, edits }) }) as DBRecord[]
+      const byId = new Map(updated.map(record => [record.id, record]))
+      setRecords(current => current.map(record => byId.get(record.id) || record))
+      setError('')
+      return true
+    } catch (e) {
+      setError('Bulk paste failed: ' + (e as Error).message + '. No batch changes were saved; draft and selection retained. Refresh versions before retrying a conflict.')
+      return false
+    }
+  }
+  const refreshBulkVersions = async () => {
+    if (failedEdit) { setError('Resolve the outstanding cell edit before refreshing.'); return }
+    try {
+      const latest = await api('/api/db/records?databaseId=' + encodeURIComponent(databaseId)) as DBRecord[]
+      setRecords(latest)
+      setError('')
+    } catch (e) { setError('Could not refresh record versions; draft retained: ' + (e as Error).message) }
+  }
+
   const renameDb = async () => {
     if (!db) return
+    if (failedEdit || bulkDraft) { setError('Resolve pending edits before renaming.'); return }
     const title = prompt('Database name?', db.title) || db.title
     const updated = await api('/api/databases', { method: 'PUT', body: JSON.stringify({ id: db.id, title, icon: db.icon, version: db.version }) }) as Database
     setDb(updated)
@@ -189,11 +216,11 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         <button className="btn" onClick={guardedBack}>← Back</button>
         <h2 style={{ margin: 0 }}>{db.icon} {db.title}</h2>
         <button className="btn" onClick={renameDb}>Rename</button>
-        <button className="btn" onClick={() => {if(failedEdit) {setError("Resolve unsaved edit before changing schema");return};setPropertyDialogOpen(true)}}>+ Property</button>
+        <button className="btn" onClick={() => {if(failedEdit || bulkDraft) {setError("Resolve unsaved edit or bulk draft before changing schema");return};setPropertyDialogOpen(true)}}>+ Property</button>
         <button className="btn primary" onClick={addRecord}>+ New</button>
         <button className="btn" aria-label="Open database trash" onClick={()=>setTrashOpen(true)}>Trash</button>
         <div style={{ flex: 1 }} />
-        <select aria-label="Active database view" value={viewId} onChange={e => setViewId(e.target.value)}>
+        <select aria-label="Active database view" value={viewId} onChange={e => { if (bulkDraft || failedEdit) { setError('Discard or resolve pending edits before switching views.'); return }; setViewId(e.target.value) }}>
           {db.views.map(v => <option key={v.id} value={v.id}>{v.name} ({v.type})</option>)}
         </select>
         <select aria-label="New view type" value={newViewType} onChange={e => setNewViewType(e.target.value as ViewType)}>{VIEW_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
@@ -255,7 +282,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         <button onClick={() => void saveViewSettings()}>Save view settings</button>
       </div>
       <details style={{ marginBottom: 10 }}><summary>Advanced filters (AND / OR)</summary><DatabaseFilterBuilder group={filterTree} properties={props} onChange={setFilterTree} /></details>
-      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} deleteRecord={deleteRecord} onOpenRecord={guardedOpen} columnOrder={columnOrder} setColumnOrder={setColumnOrder} hiddenColumns={hiddenColumns} setHiddenColumns={setHiddenColumns} columnWidths={columnWidths} setColumnWidths={setColumnWidths} selectedRecords={selectedRecords} setSelectedRecords={setSelectedRecords} />}
+      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} deleteRecord={deleteRecord} onOpenRecord={guardedOpen} columnOrder={columnOrder} setColumnOrder={setColumnOrder} hiddenColumns={hiddenColumns} setHiddenColumns={setHiddenColumns} columnWidths={columnWidths} setColumnWidths={setColumnWidths} selectedRecords={selectedRecords} setSelectedRecords={setSelectedRecords} bulkDraft={bulkDraft} setBulkDraft={setBulkDraft} bulkStartProperty={bulkStartProperty} setBulkStartProperty={setBulkStartProperty} applyBulkEdit={applyBulkEdit} refreshBulkVersions={refreshBulkVersions} bulkDisabled={!!failedEdit} />}
       {view?.type === 'board' && <BoardView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={guardedOpen} />}
       {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={guardedOpen} />}
       {view?.type === 'list' && <ListView records={visibleRecords} onOpenRecord={guardedOpen} />}
@@ -288,13 +315,18 @@ function navigateTableCell(event: KeyboardEvent<HTMLTableCellElement>) {
   event.preventDefault()
   control.focus()
 }
-function TableView({ records, props, updateRecord, deleteProperty, deleteRecord, onOpenRecord, columnOrder, setColumnOrder, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidths, selectedRecords, setSelectedRecords }: {
+function TableView({ records, props, updateRecord, deleteProperty, deleteRecord, onOpenRecord, columnOrder, setColumnOrder, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidths, selectedRecords, setSelectedRecords, bulkDraft, setBulkDraft, bulkStartProperty, setBulkStartProperty, applyBulkEdit, refreshBulkVersions, bulkDisabled }: {
   records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; deleteProperty: (id: string) => Promise<void>;
   deleteRecord: (id: string, skipConfirmation?: boolean) => Promise<boolean>; onOpenRecord?: OpenRecord;
   columnOrder: string[]; setColumnOrder: (next: string[]) => void;
   hiddenColumns: string[]; setHiddenColumns: (next: string[]) => void;
   columnWidths: Record<string,number>; setColumnWidths: (next: Record<string,number>) => void;
   selectedRecords: string[]; setSelectedRecords: (next: string[]) => void;
+  bulkDraft: string; setBulkDraft: (next: string) => void;
+  bulkStartProperty: string; setBulkStartProperty: (next: string) => void;
+  applyBulkEdit: (edits: BulkRecordEdit[]) => Promise<boolean>;
+  refreshBulkVersions: () => Promise<void>;
+  bulkDisabled: boolean;
 }) {
   const visibleProps=props.filter(p=>p.visible && !hiddenColumns.includes(p.id)).sort((a,b)=>{
     const ai=columnOrder.indexOf(a.id),bi=columnOrder.indexOf(b.id)
@@ -333,6 +365,12 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
         setSelectedRecords([])
       }}>Move selected to Trash</button>
     </div>}
+    {(selectedRecords.length > 0 || bulkDraft) && <DatabaseBulkPaste
+      records={records} properties={visibleProps} selectedIds={selectedRecords}
+      draft={bulkDraft} onDraftChange={setBulkDraft}
+      startPropertyId={bulkStartProperty} onStartPropertyChange={setBulkStartProperty}
+      onApply={applyBulkEdit} onRefreshVersions={refreshBulkVersions} disabled={bulkDisabled}
+    />}
     <table style={{borderCollapse:'collapse',tableLayout:'fixed',width:tableWidth}}>
       <colgroup><col style={{width:42}}/><col style={{width:180}}/>{visibleProps.map(p=><col key={p.id} style={{width:columnWidths[p.id]||160}} />)}</colgroup>
       <thead><tr>
