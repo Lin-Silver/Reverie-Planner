@@ -894,3 +894,53 @@ test('database selected-cell copy uses visible column range and locks pending pa
   await expect(page.getByRole('alert').filter({hasText: 'Cannot copy cells containing tabs or line breaks'})).toBeVisible()
   expect((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n?/g, '\n')).toBe(expected)
 })
+
+
+test('database clipboard paste validates before creating a review draft and never auto-commits', async ({page}) => {
+  const host = await makeDatabase(page)
+  const note = await property(page, host.databaseId, 'Clipboard note', 'text')
+  const score = await property(page, host.databaseId, 'Clipboard score', 'number')
+  await record(page, host.databaseId, 'Clipboard alpha')
+  await record(page, host.databaseId, 'Clipboard beta')
+  await reopen(page, host)
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.getByLabel('Select record Clipboard alpha').check()
+  await page.getByLabel('Select record Clipboard beta').check()
+  await page.getByLabel('Bulk paste start column').selectOption(note.id)
+  const visibleIds = await page.locator('[data-testid="database-record-row"]').evaluateAll(
+    elements => elements.map(element => element.getAttribute('data-record-id') || '')
+  )
+  expect(visibleIds).toHaveLength(2)
+  const clipboardText = 'from clipboard one\\t7\\nfrom clipboard two\\t8'
+  await page.evaluate(text => navigator.clipboard.writeText(text), clipboardText)
+  await page.getByLabel('Read clipboard into bulk paste draft').click()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue(clipboardText)
+  await expect(page.getByLabel('Read clipboard into bulk paste draft')).toBeDisabled()
+  await expect(page.getByLabel('Select record Clipboard alpha')).toBeDisabled()
+  const beforeApply = await rows(page, host.databaseId)
+  for (const item of beforeApply) {
+    expect(item.values[note.id] ?? null).toBeNull()
+    expect(item.values[score.id] ?? null).toBeNull()
+  }
+
+  await page.getByLabel('Discard bulk paste draft').click()
+  await page.evaluate(() => navigator.clipboard.writeText('bad\\t3\\nmissing column'))
+  await page.getByLabel('Read clipboard into bulk paste draft').click()
+  await expect(page.getByRole('alert').filter({hasText: 'Clipboard paste failed: Every pasted row must have the same number of columns.'})).toBeVisible()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
+  expect((await rows(page, host.databaseId)).map(item => item.version)).toEqual(beforeApply.map(item => item.version))
+
+  await page.evaluate(text => navigator.clipboard.writeText(text), clipboardText)
+  await page.getByLabel('Read clipboard into bulk paste draft').click()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue(clipboardText)
+  page.once('dialog', dialog => dialog.accept())
+  await page.getByLabel('Apply bulk paste').click()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
+  await expect.poll(async () => {
+    const saved = await rows(page, host.databaseId)
+    return visibleIds.map(id => {
+      const item = saved.find(row => row.id === id)!
+      return [item.values[note.id], item.values[score.id]]
+    })
+  }).toEqual([['from clipboard one', 7], ['from clipboard two', 8]])
+})
