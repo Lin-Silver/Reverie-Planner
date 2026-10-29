@@ -804,7 +804,7 @@ test('database TSV paste commits selected rows atomically and retains conflict d
 
   // A remote score change will re-sort the table during conflict refresh.
   // Each pending TSV line must still target its original selected record.
-  await page.getByLabel('Database sort').selectOption(score.id)
+  await page.getByLabel('Database sort', {exact: true}).selectOption(score.id)
   const current = await rows(page, host.databaseId)
   const beta = current.find(r => r.id === displayed[1])!
   const remote = await page.request.put(API + '/db/records', {data: {
@@ -813,7 +813,7 @@ test('database TSV paste commits selected rows atomically and retains conflict d
   expect(remote.status()).toBe(200)
   const draft = 'retry alpha\t33\nretry beta\t44'
   await page.getByLabel('Bulk paste TSV').fill(draft)
-  await expect(page.getByLabel('Database sort')).toBeDisabled()
+  await expect(page.getByLabel('Database sort', {exact: true})).toBeDisabled()
   await expect(page.getByLabel('Database filter')).toBeDisabled()
   await expect(page.getByLabel('Move Paste note right')).toBeDisabled()
   page.once('dialog', dialog => dialog.accept())
