@@ -38,3 +38,13 @@ test('task drag and drop updates status', async ({ page }) => {
   await taskCard.dragTo(targetColumn)
   await expect(targetColumn.locator('.task-card').filter({ hasText: '拖拽任务' })).toBeVisible()
 })
+
+test('portable workspace settings shows local paths and creates a database snapshot', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('.nav-item').filter({hasText:'Settings'}).click()
+  const panel=page.getByRole('region',{name:'Portable workspace'})
+  await expect(panel).toContainText('v0.0.1')
+  await expect(panel).toContainText('planner.db')
+  await panel.getByRole('button',{name:'Create database snapshot',exact:true}).click()
+  await expect(panel.getByRole('status')).toContainText('Database snapshot created')
+})

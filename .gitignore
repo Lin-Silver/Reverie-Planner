@@ -41,3 +41,6 @@ Thumbs.db
 
 # GitHub workflow artifacts
 *.tmp
+
+release/
+runtime/ReveriePlanner

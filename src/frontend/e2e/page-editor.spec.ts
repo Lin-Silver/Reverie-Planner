@@ -54,7 +54,7 @@ test('create child page persists after reload', async ({ page }) => {
 test('Ctrl+K command palette navigates', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByText('Welcome back')).toBeVisible()
-  await page.keyboard.press('Control+k')
+  await page.keyboard.press('ControlOrMeta+k')
   await expect(page.locator('.modal')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.locator('.modal')).toHaveCount(0)
