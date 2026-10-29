@@ -1,6 +1,6 @@
 # V0.0.1 portable workspace
 
-Extract a package for your operating system and CPU to a writable folder. Keep the entire folder together. Windows: start.bat / stop.bat. macOS and Linux: ./start.sh / ./stop.sh. Open the loopback address printed in the terminal. Unix launchers keep the service attached to the terminal. Runtime packages need no Go, Node or Python.
+Extract a package for your operating system and CPU to a writable folder. Keep the entire folder together. Windows: start.bat / stop.bat. macOS and Linux: ./start.sh / ./stop.sh. macOS also includes start.command and stop.command for opening in Terminal. Open the loopback address printed in the terminal. Unix launchers keep the service attached to the terminal. Runtime packages need no Go, Node or Python.
 
 ## Your data
 

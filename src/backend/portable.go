@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -30,7 +32,7 @@ func stopPortableService(root string) error {
 	if err = json.Unmarshal(raw, &metadata); err != nil || len(metadata.Token) == 0 {
 		return fmt.Errorf("invalid service metadata")
 	}
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/api/shutdown", cfg.Port), nil)
+	req, err := http.NewRequest(http.MethodPost, "http://"+net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))+"/api/shutdown", nil)
 	if err != nil {
 		return err
 	}

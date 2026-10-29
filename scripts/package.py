@@ -7,6 +7,7 @@ root=pathlib.Path(__file__).resolve().parents[1]
 windows=a.target.startswith('windows')
 paths=['config/app.json','config/providers.example.json','README.md','docs/PORTABLE.md']
 paths+=['runtime/ReveriePlanner.exe','start.bat','stop.bat','scripts/start.ps1','scripts/stop.ps1'] if windows else ['runtime/ReveriePlanner','start.sh','stop.sh']
+if a.target.startswith('darwin'): paths += ['start.command','stop.command']
 paths += [str(f.relative_to(root)) for f in (root/'src/frontend/dist').rglob('*') if f.is_file()]
 for name in paths:
     if not (root/name).is_file(): raise SystemExit('Missing package input: '+name)
