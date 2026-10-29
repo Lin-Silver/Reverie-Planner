@@ -911,7 +911,7 @@ test('database clipboard paste validates before creating a review draft and neve
     elements => elements.map(element => element.getAttribute('data-record-id') || '')
   )
   expect(visibleIds).toHaveLength(2)
-  const clipboardText = 'from clipboard one\\t7\\nfrom clipboard two\\t8'
+  const clipboardText = 'from clipboard one\t7\nfrom clipboard two\t8'
   await page.evaluate(text => navigator.clipboard.writeText(text), clipboardText)
   await page.getByLabel('Read clipboard into bulk paste draft').click()
   await expect(page.getByLabel('Bulk paste TSV')).toHaveValue(clipboardText)
@@ -924,7 +924,7 @@ test('database clipboard paste validates before creating a review draft and neve
   }
 
   await page.getByLabel('Discard bulk paste draft').click()
-  await page.evaluate(() => navigator.clipboard.writeText('bad\\t3\\nmissing column'))
+  await page.evaluate(() => navigator.clipboard.writeText('bad\t3\nmissing column'))
   await page.getByLabel('Read clipboard into bulk paste draft').click()
   await expect(page.getByRole('alert').filter({hasText: 'Clipboard paste failed: Every pasted row must have the same number of columns.'})).toBeVisible()
   await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
