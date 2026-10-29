@@ -944,3 +944,65 @@ test('database clipboard paste validates before creating a review draft and neve
     })
   }).toEqual([['from clipboard one', 7], ['from clipboard two', 8]])
 })
+
+test('table shift-click selects and deselects a contiguous range in visible row order', async ({page}) => {
+  const host = await makeDatabase(page)
+  for (const title of ['Range alpha', 'Range beta', 'Range gamma', 'Range delta']) {
+    await record(page, host.databaseId, title)
+  }
+  await reopen(page, host)
+  const checks = page.locator('[data-testid="database-record-row"] td:first-child input[type="checkbox"]')
+  await expect(checks).toHaveCount(4)
+  await checks.nth(0).check()
+  await checks.nth(2).click({modifiers: ['Shift']})
+  for (const index of [0, 1, 2]) await expect(checks.nth(index)).toBeChecked()
+  await expect(checks.nth(3)).not.toBeChecked()
+  await expect(page.getByText('3 selected')).toBeVisible()
+
+  // Shift-clicking an already checked endpoint removes that same range.
+  await checks.nth(2).click({modifiers: ['Shift']})
+  for (const index of [0, 1, 2, 3]) await expect(checks.nth(index)).not.toBeChecked()
+  await expect(page.getByText('3 selected')).toHaveCount(0)
+  expect((await rows(page, host.databaseId))).toHaveLength(4)
+})
+
+test('late clipboard reads cannot replace a typed draft or changed row selection', async ({page}) => {
+  const host = await makeDatabase(page)
+  const note = await property(page, host.databaseId, 'Race note', 'text')
+  await record(page, host.databaseId, 'Race alpha')
+  await record(page, host.databaseId, 'Race beta')
+  await reopen(page, host)
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.getByLabel('Select record Race alpha').check()
+  await page.getByLabel('Select record Race beta').check()
+  await page.getByLabel('Bulk paste start column').selectOption(note.id)
+  await page.evaluate(() => {
+    let resolveRead: ((value: string) => void) | undefined
+    Object.defineProperty(navigator.clipboard, 'readText', {
+      configurable: true,
+      value: () => new Promise<string>(resolve => { resolveRead = resolve })
+    })
+    Object.defineProperty(window, 'finishDelayedClipboardRead', {
+      configurable: true,
+      value: (value: string) => resolveRead?.(value)
+    })
+  })
+  const finishRead = async (value: string) => page.evaluate(text => {
+    (window as unknown as {finishDelayedClipboardRead: (text: string) => void}).finishDelayedClipboardRead(text)
+  }, value)
+  const before = await rows(page, host.databaseId)
+
+  await page.getByLabel('Read clipboard into bulk paste draft').click()
+  await page.getByLabel('Bulk paste TSV').fill('typed alpha\\ntyped beta')
+  await finishRead('stale alpha\\nstale beta')
+  await expect(page.getByRole('alert').filter({hasText: 'A paste draft was entered while reading'})).toBeVisible()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('typed alpha\\ntyped beta')
+  await page.getByLabel('Discard bulk paste draft').click()
+
+  await page.getByLabel('Read clipboard into bulk paste draft').click()
+  await page.getByLabel('Select record Race beta').uncheck()
+  await finishRead('stale alpha\\nstale beta')
+  await expect(page.getByRole('alert').filter({hasText: 'Row or column selection changed while reading'})).toBeVisible()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
+  expect((await rows(page, host.databaseId)).map(item => item.version)).toEqual(before.map(item => item.version))
+})
