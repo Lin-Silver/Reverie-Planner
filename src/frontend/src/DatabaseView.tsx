@@ -335,6 +335,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
   const [copyStatus, setCopyStatus] = useState('')
   const [copyError, setCopyError] = useState('')
   const [selectionAnchor, setSelectionAnchor] = useState('')
+  const [cellAnchor, setCellAnchor] = useState<{ recordId: string; propertyId: string } | null>(null)
   // Shift-click selects a contiguous range in the current filtered/sorted table.
   // The anchor is an ID rather than a row index, so reordering cannot silently
   // select a different range; an invisible anchor falls back to a single row.
@@ -372,6 +373,50 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     const ai=columnOrder.indexOf(a.id),bi=columnOrder.indexOf(b.id)
     return (ai<0?props.indexOf(a)+columnOrder.length:ai)-(bi<0?props.indexOf(b)+columnOrder.length:bi)
   })
+  // Alt+click starts a cell selection; Alt+Shift+click or Alt+drag extends it.
+  // Anchor by stable IDs, not indices, and refuse selection while a paste draft
+  // is pending. This changes only local selection, never stored cell values.
+  const selectCellRectangle = (
+    recordId: string, propertyId: string, extend: boolean,
+    fallback?: { recordId: string; propertyId: string }
+  ) => {
+    if (bulkDraft) return
+    const endRow = records.findIndex(record => record.id === recordId)
+    const endCol = visibleProps.findIndex(property => property.id === propertyId)
+    if (endRow < 0 || endCol < 0) return
+    const candidate = extend ? (cellAnchor || fallback) : undefined
+    const startRow = candidate ? records.findIndex(record => record.id === candidate.recordId) : -1
+    const startCol = candidate ? visibleProps.findIndex(property => property.id === candidate.propertyId) : -1
+    const anchor = startRow >= 0 && startCol >= 0 ? candidate! : { recordId, propertyId }
+    if (!extend || startRow < 0 || startCol < 0) setCellAnchor(anchor)
+    const rowIndex = records.findIndex(record => record.id === anchor.recordId)
+    const colIndex = visibleProps.findIndex(property => property.id === anchor.propertyId)
+    const firstRow = Math.min(rowIndex, endRow), lastRow = Math.max(rowIndex, endRow)
+    const firstCol = Math.min(colIndex, endCol), lastCol = Math.max(colIndex, endCol)
+    setSelectedRecords(records.slice(firstRow, lastRow + 1).map(record => record.id))
+    setCopyStartId(visibleProps[firstCol].id)
+    setCopyEndId(visibleProps[lastCol].id)
+    setBulkStartProperty(visibleProps[firstCol].id)
+    setSelectionAnchor('')
+    setCopyError('')
+    setCopyStatus('')
+  }
+  const extendCellWithKeyboard = (event: KeyboardEvent<HTMLTableCellElement>, recordId: string, propertyId: string) => {
+    if (!event.altKey || !event.shiftKey || !['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key) || bulkDraft) return false
+    const rowIndex = records.findIndex(record => record.id === recordId)
+    const colIndex = visibleProps.findIndex(property => property.id === propertyId)
+    const nextRow = rowIndex + (event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0)
+    const nextCol = colIndex + (event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0)
+    if (nextRow < 0 || nextRow >= records.length || nextCol < 0 || nextCol >= visibleProps.length) return false
+    event.preventDefault()
+    event.stopPropagation()
+    selectCellRectangle(records[nextRow].id, visibleProps[nextCol].id, true, { recordId, propertyId })
+    const row = event.currentTarget.parentElement as HTMLTableRowElement | null
+    const target = row?.parentElement?.children[nextRow] as HTMLTableRowElement | undefined
+    target?.querySelector<HTMLTableCellElement>('td[data-column-id="' + visibleProps[nextCol].id + '"]')
+      ?.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input,select,textarea')?.focus()
+    return true
+  }
   const changeBulkDraft = (next: string) => {
     if (!bulkDraft && next) setDraftRowOrder(records.filter(record => selectedRecords.includes(record.id)).map(record => record.id))
     if (!next) setDraftRowOrder([])
@@ -411,7 +456,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
       <div role="group" aria-label="Column visibility" style={{display:'flex',gap:10,flexWrap:'wrap',padding:8}}>
         {props.map(p=><label key={p.id}><input type="checkbox" checked={!hiddenColumns.includes(p.id)} disabled={p.type==='title' || !!bulkDraft} onChange={()=>toggle(p.id)} />{p.name}</label>)}
       </div>
-      <small>Column order and widths are stored with this view when you click Save view settings. Use Alt+Arrow keys to move between editable cells; Shift+Up/Down on row checkboxes extends row selection; Enter saves, Escape cancels.</small>
+      <small>Column order and widths are stored with this view when you click Save view settings. Use Alt+Arrow keys to move between editable cells; Alt+click and Alt+Shift+click/drag select a rectangular cell range; Alt+Shift+Arrow extends a range from a focused cell; Shift+Up/Down on row checkboxes selects rows; Enter saves, Escape cancels.</small>
     </details>
     {selectedRecords.length>0&&<div style={{marginBottom:8}}>
       <strong>{selectedRecords.length} selected</strong>
@@ -463,7 +508,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
       <tbody>{records.map(rec=><tr key={rec.id} data-testid="database-record-row" data-record-id={rec.id}>
         <td><input aria-label={'Select record '+rec.title} type="checkbox" disabled={!!bulkDraft} checked={selectedRecords.includes(rec.id)} onChange={e=>selectVisibleRow(rec.id,e.target.checked,(e.nativeEvent as MouseEvent).shiftKey)} onKeyDown={e=>extendVisibleRowWithKeyboard(e,rec.id)}/></td>
         <td><button onClick={()=>rec.pageId&&onOpenRecord?.(rec.pageId)}>Open page</button><button aria-label={'Delete record '+rec.title} onClick={()=>{void deleteRecord(rec.id)}}>Delete</button></td>
-        {visibleProps.map(p=><td key={p.id} data-column-id={p.id} onKeyDown={navigateTableCell} style={{border:'1px solid var(--border)',padding:4,width:columnWidths[p.id]||160}}>
+        {visibleProps.map(p=><td key={p.id} data-column-id={p.id} onKeyDown={event=>{if(!extendCellWithKeyboard(event,rec.id,p.id))navigateTableCell(event)}} onPointerDownCapture={event=>{if(event.pointerType==='mouse' && event.button===0 && event.altKey && !bulkDraft){event.preventDefault();selectCellRectangle(rec.id,p.id,event.shiftKey)}}} onPointerEnter={event=>{if(event.pointerType==='mouse' && event.altKey && event.buttons===1 && !bulkDraft)selectCellRectangle(rec.id,p.id,true)}} onClickCapture={event=>{if(event.altKey){event.preventDefault();event.stopPropagation()}}} style={{border:'1px solid var(--border)',padding:4,width:columnWidths[p.id]||160,outline:selectedRecords.includes(rec.id) && visibleProps.findIndex(prop=>prop.id===p.id)>=visibleProps.findIndex(prop=>prop.id===copyStart) && visibleProps.findIndex(prop=>prop.id===p.id)<=visibleProps.findIndex(prop=>prop.id===copyEnd)?'1px solid var(--accent)':'none'}}>
           <Cell prop={p} recordId={rec.id} value={p.type==='title'?rec.title:rec.values?.[p.id]} onChange={value=>{
             void updateRecord(rec,p.type==='title'?{title:String(value)}:{values:{[p.id]:value}})
           }} />
