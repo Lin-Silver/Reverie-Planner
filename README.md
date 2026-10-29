@@ -20,7 +20,7 @@ The AI Agent uses registered project/task tools rather than SQL. Write operation
 
 ## Development and tests
 
-Development builds require Go 1.24 and Node.js 22:
+Development builds require Go 1.26 and Node.js 22:
 
 ```powershell
 build.bat

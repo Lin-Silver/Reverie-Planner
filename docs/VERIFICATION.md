@@ -1,43 +1,28 @@
 # Verification
 
-## Build
-- Backend: `go build -o runtime/ReveriePlanner.exe ./src/backend` OK
-- Frontend: `npm run build` OK
-- Lint: `npm run lint` (1 warning: setState in effect)
-- Tests: `go test ./...` OK
+Last checked: 2026-10-29 (Arena Linux workspace)
 
-## Browser E2E
-- Playwright page-editor.spec.ts: 1 passed
-- BlockNote editor renders, typing works, auto-save persists across reload
+## Environment
 
-## Health
-- `GET /api/health` returns ok
+- Node.js: `v22.22.3`
+- npm: `10.9.3`
+- Go: not installed in this workspace
 
-## Notes
-- E2E tests for old UI (workspace.spec.ts, ui-interactions.spec.ts) are outdated due to Notion-style redesign; need rewrite.
-- Bundle size large due to BlockNote; consider code-splitting.
-`
-## Update 463deb2
-- Backend: atomic page move endpoint /api/pages/move with cycle prevention and version check.
-- Tests: TestPageMoveAtomicAndCyclePrevention, TestPageUpdateConflict.
-- E2E: 6 tests passing (added child page + Ctrl+K).
-- CI: pass.
+## Checks run
 
-## Update 6001f8a
-- Atomic page move endpoint with cycle prevention.
-- Unified parent validation on POST/PUT/move.
-- Conflict retry with version refresh.
-- E2E 6 tests, backend 2 new tests.
-- CI: pass.
+- `npm ci` (in `src/frontend`): passed; 96 packages audited, 0 vulnerabilities.
+- `npm run lint` (in `src/frontend`): completed with 0 errors and 13 warnings. Warnings include unused variables in `e2e/page-concurrency.spec.ts`, React hook/dependency warnings, and ref access during render.
+- `npm run build` (in `src/frontend`): passed. Vite reports the main JavaScript chunk is approximately 1.22 MB minified and recommends code splitting.
+- `go test ./...`: not run; Go is unavailable (`go: command not found`).
+- `go vet ./...`: not run for the same reason.
+- `npm run test:e2e` (in `src/frontend`): could not start; the Playwright web server builds the Go backend and failed because the `go` executable is unavailable. This is an environment limitation, not a test assertion failure.
 
-## Update 837edf7
-- Recursive CTE page validation (no deadlock).
-- Atomic move in transaction.
-- Conflict UI with Reload/Retry.
-- E2E 6 tests, CI pass.
+## CI/toolchain alignment
 
-## Update bc8f8d0
-- True BlockNote reload via remount (key includes reloadToken).
-- Local draft discarded on reload (pendingContent cleared).
-- Retry preserves remote metadata (title/icon/parent).
-- E2E 6 tests, CI pass.
+`go.mod` requires Go 1.26.0. The GitHub Actions workflow and the development requirements in `README.md` now use Go 1.26 to match it. Backend tests, Windows packaging/start-stop checks, and browser E2E still need confirmation in GitHub Actions or another environment with Go 1.26 and Windows support.
+
+## Product verification notes
+
+- The existing page editor, page concurrency, workspace, and UI-interaction Playwright suites are present. They were not executed in this workspace because their isolated test server requires Go.
+- `docs/PRODUCT_PARITY_MATRIX.md` describes the remaining product gaps; the Ctrl+K command palette is implemented, while templates remain pending.
+- Prior verification notes in this file were historical and did not describe the current checked-out state; use the dated results above for this workspace run.
