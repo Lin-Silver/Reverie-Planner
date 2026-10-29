@@ -138,3 +138,84 @@ func TestTrashRestoreRejectsAmbiguousSavedRelationTargets(t *testing.T) {
 		})
 	}
 }
+
+
+func TestRecordUpdateRejectsAmbiguousSavedRelationTarget(t *testing.T) {
+	app := setupTestContext(t)
+	defer app.DB.Close()
+
+	source, from := dbRegressionCreate(t, app)
+	target, to := dbRegressionCreate(t, app)
+	providerPath, providerBefore := viewIntegrityProviders(t, app)
+	originalConfig := `{"targetDatabaseId":"` + target.ID + `"}`
+	ambiguousConfig := `{"targetDatabaseId":"` + target.ID + `","targetDatabaseId":"` + source.ID + `"}`
+	createBody, err := json.Marshal(DBProperty{
+		DatabaseID: source.ID, Name: "Related", Type: "relation", Config: originalConfig,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := dbRegressionCall(t, app, http.MethodPost, "/api/db/properties",
+		string(createBody), app.handleDBProperties)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create relation: %d %s", created.Code, created.Body.String())
+	}
+	var property DBProperty
+	if err := json.Unmarshal(created.Body.Bytes(), &property); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.DB.Exec("UPDATE db_properties SET config=? WHERE id=?",
+		ambiguousConfig, property.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A last-key-wins decoder would incorrectly accept this source-database
+	// record, even though the first target points at the other database.
+	write := func(targetID string, want int) {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{
+			"id": from.ID, "version": from.Version,
+			"values": map[string]any{property.ID: []string{targetID}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := dbRegressionCall(t, app, http.MethodPut, "/api/db/records",
+			string(body), app.handleDBRecords)
+		if res.Code != want {
+			t.Fatalf("record PUT: want %d got %d: %s", want, res.Code, res.Body.String())
+		}
+	}
+	write(from.ID, http.StatusBadRequest)
+	var version, valueCount int
+	if err := app.DB.QueryRow("SELECT version FROM db_records WHERE id=?", from.ID).
+		Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != from.Version {
+		t.Fatalf("rejected update changed record version: %d -> %d", from.Version, version)
+	}
+	if err := app.DB.QueryRow("SELECT COUNT(*) FROM db_values WHERE record_id=? AND property_id=?",
+		from.ID, property.ID).Scan(&valueCount); err != nil {
+		t.Fatal(err)
+	}
+	if valueCount != 0 {
+		t.Fatalf("rejected update inserted %d relation values", valueCount)
+	}
+	assertViewIntegrityProviders(t, providerPath, providerBefore)
+
+	if _, err := app.DB.Exec("UPDATE db_properties SET config=? WHERE id=?",
+		originalConfig, property.ID); err != nil {
+		t.Fatal(err)
+	}
+	write(to.ID, http.StatusOK)
+	record, err := app.getDBRecord(from.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, ok := record.Values[property.ID].([]any)
+	if !ok || len(ids) != 1 || ids[0] != to.ID {
+		t.Fatalf("repaired update lost relation target: %#v", record.Values[property.ID])
+	}
+	assertViewIntegrityProviders(t, providerPath, providerBefore)
+}
