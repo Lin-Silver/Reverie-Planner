@@ -1130,3 +1130,39 @@ test('table modifier mouse and keyboard cell rectangles copy exactly the selecte
   expect((await rows(page, host.databaseId)).map(item => [item.id, item.version, item.values]))
     .toEqual(before.map(item => [item.id, item.version, item.values]))
 })
+
+
+test('bulk paste freezes the draft and start column while an atomic save is pending', async ({page}) => {
+  const host = await makeDatabase(page)
+  const note = await property(page, host.databaseId, 'Pending paste note', 'text')
+  const item = await record(page, host.databaseId, 'Pending paste record')
+  await reopen(page, host)
+  await page.getByLabel('Select record Pending paste record').check()
+  await page.getByLabel('Bulk paste start column').selectOption(note.id)
+  await page.getByLabel('Bulk paste TSV').fill('persist this draft')
+
+  let releaseRequest!: () => void
+  let markIntercepted!: () => void
+  const held = new Promise<void>(resolve => { releaseRequest = resolve })
+  const intercepted = new Promise<void>(resolve => { markIntercepted = resolve })
+  await page.route('**/api/db/records/bulk', async route => {
+    markIntercepted()
+    await held
+    await route.continue()
+  })
+  try {
+    page.once('dialog', dialog => dialog.accept())
+    await page.getByLabel('Apply bulk paste').click()
+    await intercepted
+    await expect(page.getByLabel('Bulk paste TSV')).toBeDisabled()
+    await expect(page.getByLabel('Bulk paste start column')).toBeDisabled()
+    await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('persist this draft')
+    expect((await rows(page, host.databaseId)).find(row => row.id === item.id)?.values?.[note.id] ?? null).toBeNull()
+  } finally {
+    releaseRequest()
+  }
+  await expect(page.getByLabel('Bulk paste TSV')).toBeEnabled()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
+  await expect.poll(async () => (await rows(page, host.databaseId)).find(row => row.id === item.id)?.values?.[note.id]).toBe('persist this draft')
+  await page.unroute('**/api/db/records/bulk')
+})
