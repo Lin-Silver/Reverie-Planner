@@ -427,7 +427,8 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			p.Config = "{}"
 		}
 		if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
-		if err:=validateDBComputedDefinition(a.DB,p.DatabaseID,p.Type,p.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
+		// Computed references are validated inside the schema write transaction below.
+		// Pre-transaction checks could race with a property deletion or retarget.
 		// Owner/target validation, position reservation and insertion must be
 		// atomic. Otherwise concurrent creators can reuse MAX(position), or
 		// a property can be inserted after its owner is soft-deleted.
@@ -443,6 +444,10 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		}
 		if active != 1 {
 			writeJSON(w, 404, map[string]string{"error": "database not found"})
+			return
+		}
+		if err := validateDBComputedDefinition(tx, p.DatabaseID, p.Type, p.Config); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
 		if p.Type == "relation" {
@@ -535,7 +540,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
-		if err:=validateDBComputedDefinition(a.DB,actualDatabaseID,p.Type,p.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
+		// Validate computed references against the same transaction as the versioned update.
 		if currentType == "relation" {
 			var cfg struct { TargetDatabaseID string `json:"targetDatabaseId"` }
 			if err:=json.Unmarshal([]byte(p.Config), &cfg);err!=nil || cfg.TargetDatabaseID=="" {
@@ -558,6 +563,10 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		tx, err := a.DB.Begin()
 		if err != nil { writeJSON(w, 500, map[string]string{"error": "could not begin property update"}); return }
 		defer tx.Rollback()
+		if err := validateDBComputedDefinition(tx, actualDatabaseID, p.Type, p.Config); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
 		if (currentType == "select" || currentType == "multi_select") && p.Config != currentConfig {
 			compatible, err := validateSelectOptionChange(tx, p.ID, currentType, p.Config)
 			if err != nil { writeJSON(w, 500, map[string]string{"error": "could not inspect existing property values"}); return }

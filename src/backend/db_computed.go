@@ -49,7 +49,7 @@ func parseRollupDefinition(config string) (rollupDefinition,error) {
 }
 // Computed fields may only refer to persisted (noncomputed) properties; no code
 // evaluation, recursive formula execution, SQL snippets or cyclic dependencies.
-func validateDBComputedDefinition(db *sql.DB, databaseID, kind, config string) error {
+func validateDBComputedDefinition(db dbComputedQueryer, databaseID, kind, config string) error {
     switch kind {
     case "formula":
         def,err:=parseFormulaDefinition(config);if err!=nil{return err}
@@ -64,6 +64,9 @@ func validateDBComputedDefinition(db *sql.DB, databaseID, kind, config string) e
         var kind,relationConfig string
         if err:=db.QueryRow("SELECT type, config FROM db_properties WHERE id=? AND database_id=? AND deleted_at IS NULL",def.RelationPropertyID,databaseID).Scan(&kind,&relationConfig);err!=nil||kind!="relation"{return fmt.Errorf("rollup must reference relation property")}
         var relation struct{TargetDatabaseID string `json:"targetDatabaseId"`}
+        // A legacy or corrupted relation config must not be interpreted with
+        // encoding/json last-key-wins semantics when defining a rollup.
+        if err:=rejectDuplicateJSONKeys([]byte(relationConfig));err!=nil{return fmt.Errorf("invalid relation configuration: %w",err)}
         if err:=json.Unmarshal([]byte(relationConfig),&relation);err!=nil{return fmt.Errorf("invalid relation configuration")}
         var targetType string
         if err:=db.QueryRow("SELECT type FROM db_properties WHERE id=? AND database_id=? AND deleted_at IS NULL",def.TargetPropertyID,relation.TargetDatabaseID).Scan(&targetType);err!=nil{return fmt.Errorf("rollup target property not found")}
