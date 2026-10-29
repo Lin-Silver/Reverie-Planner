@@ -1392,10 +1392,24 @@ func validateConfiguredPropertyValue(kind, config string, val any) error {
     return nil
 }
 
+// Plain property types do not currently interpret their config, but they
+// must not persist malformed or ambiguous JSON that a future schema editor
+// could reinterpret. Keep valid object metadata intact for compatibility.
+func validatePlainPropertyConfig(config string) error {
+    if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+        return fmt.Errorf("invalid property configuration: %w", err)
+    }
+    var object map[string]json.RawMessage
+    if err := json.Unmarshal([]byte(config), &object); err != nil || object == nil {
+        return fmt.Errorf("property config must be a JSON object")
+    }
+    return nil
+}
+
 func validatePropertyDefinition(kind, config string) error {
     switch kind {
     case "text", "number", "checkbox", "date", "email", "url", "person", "file", "created_time", "last_edited_time":
-        return nil
+        return validatePlainPropertyConfig(config)
     case "formula":
         _,err:=parseFormulaDefinition(config);return err
     case "rollup":
