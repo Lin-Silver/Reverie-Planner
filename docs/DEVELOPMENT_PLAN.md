@@ -20,11 +20,11 @@ This is the durable checkpoint for human and scheduled development. The target i
 
 ## M1 — Data ownership and recovery (highest priority)
 
-- [ ] One portable archive contains a verified SQLite snapshot and all referenced attachment bytes, including recoverable trash; app settings are sanitized and provider files/keys/runtime tokens are excluded.
-- [ ] Manifest lists format/schema version, sizes and hashes; missing or changed attachments fail the archive instead of silently producing an incomplete backup.
-- [ ] Preview and restore validate archive limits, names, duplicates, checksums, database integrity, foreign keys and supported schema.
-- [ ] Restore publishes only to a new directory; failures/cancellation leave the current workspace unchanged. Reopen the restored workspace and verify contents and attachments.
-- [ ] Settings has download, preview, restore, status and error/retry controls; offline CLI restoration is documented and tested.
+- [x] One portable archive contains a verified SQLite snapshot and all referenced attachment bytes, including recoverable trash; app settings are sanitized and provider files/keys/runtime tokens are excluded.
+- [x] Manifest lists format/schema version, sizes and hashes; missing or changed attachments fail the archive instead of silently producing an incomplete backup.
+- [x] Preview and restore validate archive limits, names, duplicates, checksums, database integrity, foreign keys and supported schema.
+- [x] Restore publishes only to a new directory; failures/cancellation leave the current workspace unchanged. Reopen the restored workspace and verify contents and attachments.
+- [x] Settings has download, preview, restore, status and error/retry controls; offline CLI restoration is documented and tested.
 - [ ] Page revision history and restore preserve current/newer content through version checks; page delete/trash/restart matrix is tested.
 - [ ] Historical v6/v7 sample acceptance is recorded only when an authorized real sample exists; synthetic fixtures are labelled synthetic.
 
@@ -58,4 +58,8 @@ This is the durable checkpoint for human and scheduled development. The target i
 
 ## Current checkpoint
 
-M1 workspace archive/isolated restore implementation is complete: manifest and hash validation, secret-file exclusions, mutation gate, UI download/preview/separate restore and offline CLI. Synthetic backend roundtrip/negative tests, browser real-service restore, and local native CLI/restart have passed. Final full regression and native Linux/Windows/macOS CI must be recorded before closing the five archive items above. See WORKSPACE_ARCHIVES.md. Next item after archive acceptance: page history and trash recovery. The scheduled development task resumes this checkpoint hourly; a scheduled wake-up is not proof that new code was produced or tests passed.
+M1 workspace archive and isolated restore accepted on code commit `a6ab2efab816b38b303d44ba298d5e5326c67117`: [native CI 40969661631](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40969661631), all Linux/Windows/macOS jobs successful, **63/63 browser tests on each platform**, Go tests/build, lifecycle and offline CLI restore/restart checks passed. Local Go tests, go vet, production frontend build/lint and 63 browser tests also passed; existing lint warnings/editor chunk debt remain. Synthetic fixtures do not establish real historical backup acceptance.
+
+Next active item: **page revision history and trash recovery**. Add version-checked restore, preserve current/newer content, retain a recoverable copy of deletion, and test restart plus multi-window conflicts. Do not redo the accepted archive workflow unless a regression or new requirement justifies it.
+
+The hourly scheduled development task reads this plan and current dev/CI state to resume. A scheduled wake-up is not proof that new code was produced or tests passed. `main` remains V0.0.1; these changes are on `dev` pending a separately versioned release.
