@@ -87,10 +87,12 @@ export default function DatabaseBulkPaste({
   // Clipboard reads are asynchronous. Do not overwrite a draft or use a stale
   // row/column selection if the user edits the table while permission is pending.
   const latestDraft = useRef(draft)
+  const draftRevision = useRef(0)
   latestDraft.current = draft
   const latestSource = useRef({ start, selectedIds, records, properties })
   latestSource.current = { start, selectedIds, records, properties }
   const changeDraft = (next: string) => {
+    draftRevision.current += 1
     latestDraft.current = next
     onDraftChange(next)
   }
@@ -104,12 +106,15 @@ export default function DatabaseBulkPaste({
   // without the existing explicit review/confirmation and atomic API call.
   const readClipboard = async () => {
     if (busy || disabled || readingClipboard || draft) return
+    const readRevision = draftRevision.current
     setReadingClipboard(true)
     setLocalError('')
     try {
       if (!navigator.clipboard?.readText) throw new Error('Clipboard reading is unavailable in this browser.')
       const text = await navigator.clipboard.readText()
-      if (latestDraft.current) throw new Error('A paste draft was entered while reading; clipboard data was not loaded.')
+      if (latestDraft.current || draftRevision.current !== readRevision) {
+        throw new Error('Paste draft changed while reading; clipboard data was not loaded.')
+      }
       const source = latestSource.current
       if (source.start !== start || source.selectedIds.join('\\0') !== selectedIds.join('\\0')) {
         throw new Error('Row or column selection changed while reading; retry clipboard paste.')
