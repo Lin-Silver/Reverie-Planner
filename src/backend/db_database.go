@@ -845,12 +845,8 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "id and version required"})
 			return
 		}
-		// get db id for version check
-		var dbID string
-		if err := a.DB.QueryRow(`SELECT r.database_id FROM db_records r JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL WHERE r.id=? AND r.deleted_at IS NULL`, body.ID).Scan(&dbID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) { writeJSON(w, 404, map[string]string{"error": "record not found"}) } else { writeJSON(w, 500, map[string]string{"error": err.Error()}) }
-			return
-		}
+		// Check the record and its active parent within the write transaction.
+		// A separate pre-transaction lookup could become stale before mutation.
 		now := time.Now().UTC().Format(time.RFC3339)
 		tx, err := a.DB.Begin()
 		if err != nil {
@@ -858,8 +854,10 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Keep the backing page version stable during property-only edits.
-        var previousTitle string
-        if err:=tx.QueryRow("SELECT title FROM db_records WHERE id=?",body.ID).Scan(&previousTitle);err!=nil {
+		var dbID, previousTitle string
+		if err := tx.QueryRow(`SELECT r.database_id, r.title FROM db_records r
+			JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL
+			WHERE r.id=? AND r.deleted_at IS NULL`, body.ID).Scan(&dbID, &previousTitle); err != nil {
 			tx.Rollback()
 			if errors.Is(err, sql.ErrNoRows) { writeJSON(w,404,map[string]string{"error":"record not found"}) } else { writeJSON(w,500,map[string]string{"error":err.Error()}) }
 			return
