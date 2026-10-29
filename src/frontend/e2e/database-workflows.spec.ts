@@ -832,3 +832,58 @@ test('database TSV paste commits selected rows atomically and retains conflict d
     })
   }).toEqual([['retry alpha', 33], ['retry beta', 44]])
 })
+
+
+test('database selected-cell copy uses visible column range and locks pending paste selection', async ({page}) => {
+  const host = await makeDatabase(page)
+  const note = await property(page, host.databaseId, 'Copy note', 'text')
+  const score = await property(page, host.databaseId, 'Copy score', 'number')
+  const alpha = await record(page, host.databaseId, 'Copy alpha')
+  const beta = await record(page, host.databaseId, 'Copy beta')
+  for (const [item, value, number] of [[alpha, 'note alpha', 12], [beta, 'note beta', 24]] as const) {
+    const response = await page.request.put(API + '/db/records', {data: {
+      id: item.id, title: item.title, version: item.version, values: {[note.id]: value, [score.id]: number}
+    }})
+    expect(response.status()).toBe(200)
+  }
+  await reopen(page, host)
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.getByLabel('Select record Copy alpha').check()
+  await page.getByLabel('Select record Copy beta').check()
+  await page.getByLabel('Copy start column').selectOption(note.id)
+  await page.getByLabel('Copy end column').selectOption(score.id)
+  await page.getByRole('button', {name: 'Copy selected cells'}).click()
+  await expect(page.getByRole('status').filter({hasText: 'Copied 2 rows × 2 columns'})).toBeVisible()
+
+  const visibleIds = await page.locator('[data-testid="database-record-row"]').evaluateAll(
+    elements => elements.map(element => element.getAttribute('data-record-id') || '')
+  )
+  const saved = await rows(page, host.databaseId)
+  const expected = visibleIds.map(id => {
+    const item = saved.find(row => row.id === id)!
+    return item.values[note.id] + '\t' + item.values[score.id]
+  }).join('\n')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected)
+
+  await page.getByLabel('Bulk paste start column').selectOption(note.id)
+  await page.getByLabel('Bulk paste TSV').fill(expected)
+  await expect(page.getByLabel('Select record Copy alpha')).toBeDisabled()
+  await expect(page.getByLabel('Select all visible records')).toBeDisabled()
+  await expect(page.getByRole('button', {name: 'Clear selected rows'})).toBeDisabled()
+  await expect(page.getByRole('button', {name: 'Delete selected rows'})).toBeDisabled()
+  await page.getByRole('button', {name: 'Discard bulk paste draft'}).click()
+  await expect(page.getByLabel('Select record Copy alpha')).toBeEnabled()
+
+  const fresh = (await rows(page, host.databaseId)).find(row => row.id === alpha.id)!
+  const invalid = await page.request.put(API + '/db/records', {data: {
+    id: fresh.id, title: fresh.title, version: fresh.version, values: {[note.id]: 'tab\tinside'}
+  }})
+  expect(invalid.status()).toBe(200)
+  await reopen(page, host)
+  await page.getByLabel('Select record Copy alpha').check()
+  await page.getByLabel('Copy start column').selectOption(note.id)
+  await page.getByLabel('Copy end column').selectOption(note.id)
+  await page.getByRole('button', {name: 'Copy selected cells'}).click()
+  await expect(page.getByRole('alert').filter({hasText: 'Cannot copy cells containing tabs or line breaks'})).toBeVisible()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected)
+})
