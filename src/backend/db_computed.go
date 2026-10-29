@@ -24,6 +24,9 @@ type rollupDefinition struct {
 }
 func parseFormulaDefinition(config string) (formulaDefinition,error) {
     var def formulaDefinition
+    // Reject ambiguous saved definitions before Go's JSON decoder can apply
+    // last-key-wins semantics to formula operations or nested operands.
+    if err:=rejectDuplicateJSONKeys([]byte(config));err!=nil{return def,fmt.Errorf("invalid formula config: %w",err)}
     if err:=json.Unmarshal([]byte(config),&def);err!=nil{return def,fmt.Errorf("invalid formula config: %w",err)}
     allowed:=map[string]bool{"sum":true,"subtract":true,"multiply":true,"divide":true,"concat":true}
     if !allowed[def.Operation] || len(def.Args)==0 || len(def.Args)>20 {return def,fmt.Errorf("invalid formula operation or operand count")}
@@ -36,6 +39,9 @@ func parseFormulaDefinition(config string) (formulaDefinition,error) {
 }
 func parseRollupDefinition(config string) (rollupDefinition,error) {
     var def rollupDefinition
+    // A duplicate relation, target or aggregate key must not silently change
+    // which records a computed field reads.
+    if err:=rejectDuplicateJSONKeys([]byte(config));err!=nil{return def,fmt.Errorf("invalid rollup config: %w",err)}
     if err:=json.Unmarshal([]byte(config),&def);err!=nil{return def,fmt.Errorf("invalid rollup config: %w",err)}
     if def.RelationPropertyID=="" || def.TargetPropertyID=="" {return def,fmt.Errorf("rollup relation and target property required")}
     if !map[string]bool{"count":true,"sum":true,"average":true,"min":true,"max":true}[def.Aggregate] {return def,fmt.Errorf("unsupported rollup aggregate")}
