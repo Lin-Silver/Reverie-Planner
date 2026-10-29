@@ -139,5 +139,33 @@ jobs:
         run: python3 scripts/package.py --target "$(go env GOOS)-$(go env GOARCH)"
       - uses: actions/upload-artifact@v4
         with:
-          name: Reverie-Planner-${{ matrix.os }}
+          name: Reverie-Planner-0.0.1-${{ matrix.os }}
           path: release/*
+
+  release-v001:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, unix-portable]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Reverie-Planner-0.0.1-*
+          path: packages
+      - name: Publish verified portable version once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view v0.0.1 >/dev/null 2>&1; then
+            echo 'v0.0.1 already exists; published assets are immutable.'
+            exit 0
+          fi
+          mapfile -d '' files < <(find packages -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0)
+          if [ "${#files[@]}" -ne 3 ]; then
+            echo 'Expected exactly three native platform archives.' >&2
+            exit 1
+          fi
+          gh release create v0.0.1 "${files[@]}" --target "$GITHUB_SHA" --title 'Reverie Planner V0.0.1' --notes-file docs/RELEASE_V0.0.1.md
