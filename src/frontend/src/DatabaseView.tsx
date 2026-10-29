@@ -5,6 +5,7 @@ import DatabasePropertyDialog from './DatabasePropertyDialog'
 import DatabaseTrash from './DatabaseTrash'
 import DatabaseFileCell from './DatabaseFileCell'
 import DatabaseBulkPaste, { type BulkRecordEdit } from './DatabaseBulkPaste'
+import { selectedCellsTSV } from './databaseClipboard'
 import { sortDatabaseRecords, type DatabaseSortRule } from './databaseSorting'
 
 
@@ -328,10 +329,27 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
   refreshBulkVersions: () => Promise<void>;
   bulkDisabled: boolean;
 }) {
+  const [copyStartId, setCopyStartId] = useState('')
+  const [copyEndId, setCopyEndId] = useState('')
+  const [copyStatus, setCopyStatus] = useState('')
+  const [copyError, setCopyError] = useState('')
   const visibleProps=props.filter(p=>p.visible && !hiddenColumns.includes(p.id)).sort((a,b)=>{
     const ai=columnOrder.indexOf(a.id),bi=columnOrder.indexOf(b.id)
     return (ai<0?props.indexOf(a)+columnOrder.length:ai)-(bi<0?props.indexOf(b)+columnOrder.length:bi)
   })
+  const copyStart = visibleProps.some(property => property.id === copyStartId) ? copyStartId : (visibleProps[0]?.id || '')
+  const copyEnd = visibleProps.some(property => property.id === copyEndId) ? copyEndId : (visibleProps[visibleProps.length - 1]?.id || '')
+  const copyCells = async () => {
+    setCopyStatus('')
+    setCopyError('')
+    try {
+      const result = selectedCellsTSV(records, selectedRecords, visibleProps, copyStart, copyEnd)
+      await navigator.clipboard.writeText(result.text)
+      setCopyStatus('Copied ' + result.rows + ' rows × ' + result.columns + ' columns to clipboard.')
+    } catch (error) {
+      setCopyError('Copy failed: ' + (error as Error).message)
+    }
+  }
   const reorder=(id:string,offset:number)=>{
     const ids=visibleProps.map(p=>p.id),index=ids.indexOf(id),target=index+offset
     if(target<0 || target>=ids.length)return
@@ -351,8 +369,18 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     </details>
     {selectedRecords.length>0&&<div style={{marginBottom:8}}>
       <strong>{selectedRecords.length} selected</strong>
-      <button aria-label="Clear selected rows" onClick={()=>setSelectedRecords([])}>Clear selection</button>
-      <button aria-label="Delete selected rows" onClick={async()=>{
+      <button aria-label="Clear selected rows" disabled={!!bulkDraft} onClick={()=>setSelectedRecords([])}>Clear selection</button>
+      <label>Copy from <select aria-label="Copy start column" value={copyStart} onChange={event=>setCopyStartId(event.target.value)}>
+        {visibleProps.map(property=><option key={property.id} value={property.id}>{property.name}</option>)}
+      </select></label>
+      <label>through <select aria-label="Copy end column" value={copyEnd} onChange={event=>setCopyEndId(event.target.value)}>
+        {visibleProps.map(property=><option key={property.id} value={property.id}>{property.name}</option>)}
+      </select></label>
+      <button aria-label="Copy selected cells" onClick={()=>void copyCells()}>Copy selected cells</button>
+      {copyStatus && <small role="status">{copyStatus}</small>}
+      {copyError && <small role="alert">{copyError}</small>}
+      {bulkDraft && <small>Selection is locked until the paste draft is applied or discarded.</small>}
+      <button aria-label="Delete selected rows" disabled={!!bulkDraft} onClick={async()=>{
         if(!confirm('Move '+selectedRecords.length+' records to Trash?'))return
         for(let i=0;i<selectedRecords.length;i++){
           // A failed deletion must not silently clear the remaining selection.
@@ -374,7 +402,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     <table style={{borderCollapse:'collapse',tableLayout:'fixed',width:tableWidth}}>
       <colgroup><col style={{width:42}}/><col style={{width:180}}/>{visibleProps.map(p=><col key={p.id} style={{width:columnWidths[p.id]||160}} />)}</colgroup>
       <thead><tr>
-        <th><input aria-label="Select all visible records" type="checkbox" checked={records.length>0 && records.every(r=>selectedRecords.includes(r.id))} onChange={e=>setSelectedRecords(e.target.checked?[...new Set([...selectedRecords,...records.map(r=>r.id)])]:selectedRecords.filter(id=>!records.some(r=>r.id===id)))} /></th>
+        <th><input aria-label="Select all visible records" type="checkbox" disabled={!!bulkDraft} checked={records.length>0 && records.every(r=>selectedRecords.includes(r.id))} onChange={e=>setSelectedRecords(e.target.checked?[...new Set([...selectedRecords,...records.map(r=>r.id)])]:selectedRecords.filter(id=>!records.some(r=>r.id===id)))} /></th>
         <th>Page</th>{visibleProps.map((p,index)=><th key={p.id} style={{border:'1px solid var(--border)',padding:5,width:columnWidths[p.id]||160,minWidth:100}}>
           <div style={{display:'flex',alignItems:'center',gap:4}}><span>{p.name}</span>
             <button aria-label={'Move '+p.name+' left'} disabled={index===0} onClick={()=>reorder(p.id,-1)}>‹</button>
@@ -387,7 +415,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
           }} style={{width:64}} />
         </th>)}</tr></thead>
       <tbody>{records.map(rec=><tr key={rec.id} data-testid="database-record-row" data-record-id={rec.id}>
-        <td><input aria-label={'Select record '+rec.title} type="checkbox" checked={selectedRecords.includes(rec.id)} onChange={e=>setSelectedRecords(e.target.checked?[...selectedRecords,rec.id]:selectedRecords.filter(id=>id!==rec.id))}/></td>
+        <td><input aria-label={'Select record '+rec.title} type="checkbox" disabled={!!bulkDraft} checked={selectedRecords.includes(rec.id)} onChange={e=>setSelectedRecords(e.target.checked?[...selectedRecords,rec.id]:selectedRecords.filter(id=>id!==rec.id))}/></td>
         <td><button onClick={()=>rec.pageId&&onOpenRecord?.(rec.pageId)}>Open page</button><button aria-label={'Delete record '+rec.title} onClick={()=>{void deleteRecord(rec.id)}}>Delete</button></td>
         {visibleProps.map(p=><td key={p.id} data-column-id={p.id} onKeyDown={navigateTableCell} style={{border:'1px solid var(--border)',padding:4,width:columnWidths[p.id]||160}}>
           <Cell prop={p} recordId={rec.id} value={p.type==='title'?rec.title:rec.values?.[p.id]} onChange={value=>{
