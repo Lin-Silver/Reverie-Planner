@@ -340,6 +340,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
   // The anchor is an ID rather than a row index, so reordering cannot silently
   // select a different range; an invisible anchor falls back to a single row.
   const selectVisibleRow = (id: string, checked: boolean, shift: boolean) => {
+    setCellAnchor(null)
     const anchorIndex = records.findIndex(record => record.id === selectionAnchor)
     const targetIndex = records.findIndex(record => record.id === id)
     if (shift && anchorIndex >= 0 && targetIndex >= 0) {
@@ -356,6 +357,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
   // Keep the anchor tied to a record ID so sorting/filtering cannot retarget it.
   const extendVisibleRowWithKeyboard = (event: KeyboardEvent<HTMLInputElement>, id: string) => {
     if (!event.shiftKey || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return
+    setCellAnchor(null)
     event.preventDefault()
     const index = records.findIndex(record => record.id === id)
     const nextIndex = index + (event.key === 'ArrowDown' ? 1 : -1)
@@ -460,7 +462,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     </details>
     {selectedRecords.length>0&&<div style={{marginBottom:8}}>
       <strong>{selectedRecords.length} selected</strong>
-      <button aria-label="Clear selected rows" disabled={!!bulkDraft} onClick={()=>{setSelectedRecords([]);setSelectionAnchor('')}}>Clear selection</button>
+      <button aria-label="Clear selected rows" disabled={!!bulkDraft} onClick={()=>{setSelectedRecords([]);setSelectionAnchor('');setCellAnchor(null)}}>Clear selection</button>
       <label>Copy from <select aria-label="Copy start column" value={copyStart} onChange={event=>setCopyStartId(event.target.value)}>
         {visibleProps.map(property=><option key={property.id} value={property.id}>{property.name}</option>)}
       </select></label>
@@ -493,7 +495,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     <table style={{borderCollapse:'collapse',tableLayout:'fixed',width:tableWidth}}>
       <colgroup><col style={{width:42}}/><col style={{width:180}}/>{visibleProps.map(p=><col key={p.id} style={{width:columnWidths[p.id]||160}} />)}</colgroup>
       <thead><tr>
-        <th><input aria-label="Select all visible records" type="checkbox" disabled={!!bulkDraft} checked={records.length>0 && records.every(r=>selectedRecords.includes(r.id))} onChange={e=>setSelectedRecords(e.target.checked?[...new Set([...selectedRecords,...records.map(r=>r.id)])]:selectedRecords.filter(id=>!records.some(r=>r.id===id)))} /></th>
+        <th><input aria-label="Select all visible records" type="checkbox" disabled={!!bulkDraft} checked={records.length>0 && records.every(r=>selectedRecords.includes(r.id))} onChange={e=>{setCellAnchor(null);setSelectedRecords(e.target.checked?[...new Set([...selectedRecords,...records.map(r=>r.id)])]:selectedRecords.filter(id=>!records.some(r=>r.id===id)))}} /></th>
         <th>Page</th>{visibleProps.map((p,index)=><th key={p.id} style={{border:'1px solid var(--border)',padding:5,width:columnWidths[p.id]||160,minWidth:100}}>
           <div style={{display:'flex',alignItems:'center',gap:4}}><span>{p.name}</span>
             <button aria-label={'Move '+p.name+' left'} disabled={index===0 || !!bulkDraft} onClick={()=>reorder(p.id,-1)}>‹</button>
