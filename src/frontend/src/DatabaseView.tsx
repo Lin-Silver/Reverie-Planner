@@ -351,6 +351,23 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
       setSelectionAnchor(id)
     }
   }
+  // Shift+Arrow on a focused row checkbox extends selection without editing a cell.
+  // Keep the anchor tied to a record ID so sorting/filtering cannot retarget it.
+  const extendVisibleRowWithKeyboard = (event: KeyboardEvent<HTMLInputElement>, id: string) => {
+    if (!event.shiftKey || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return
+    event.preventDefault()
+    const index = records.findIndex(record => record.id === id)
+    const nextIndex = index + (event.key === 'ArrowDown' ? 1 : -1)
+    if (index < 0 || nextIndex < 0 || nextIndex >= records.length) return
+    const anchorIndex = records.findIndex(record => record.id === selectionAnchor)
+    const startIndex = anchorIndex < 0 ? index : anchorIndex
+    if (anchorIndex < 0) setSelectionAnchor(id)
+    const range = records.slice(Math.min(startIndex, nextIndex), Math.max(startIndex, nextIndex) + 1).map(record => record.id)
+    setSelectedRecords([...new Set([...selectedRecords, ...range])])
+    const row = event.currentTarget.closest('tr')
+    const nextRow = event.key === 'ArrowDown' ? row?.nextElementSibling : row?.previousElementSibling
+    nextRow?.querySelector<HTMLInputElement>('td:first-child input[type="checkbox"]')?.focus()
+  }
   const visibleProps=props.filter(p=>p.visible && !hiddenColumns.includes(p.id)).sort((a,b)=>{
     const ai=columnOrder.indexOf(a.id),bi=columnOrder.indexOf(b.id)
     return (ai<0?props.indexOf(a)+columnOrder.length:ai)-(bi<0?props.indexOf(b)+columnOrder.length:bi)
@@ -394,7 +411,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
       <div role="group" aria-label="Column visibility" style={{display:'flex',gap:10,flexWrap:'wrap',padding:8}}>
         {props.map(p=><label key={p.id}><input type="checkbox" checked={!hiddenColumns.includes(p.id)} disabled={p.type==='title' || !!bulkDraft} onChange={()=>toggle(p.id)} />{p.name}</label>)}
       </div>
-      <small>Column order and widths are stored with this view when you click Save view settings. Use Alt+Arrow keys to move between editable cells; Enter saves, Escape cancels.</small>
+      <small>Column order and widths are stored with this view when you click Save view settings. Use Alt+Arrow keys to move between editable cells; Shift+Up/Down on row checkboxes extends row selection; Enter saves, Escape cancels.</small>
     </details>
     {selectedRecords.length>0&&<div style={{marginBottom:8}}>
       <strong>{selectedRecords.length} selected</strong>
@@ -444,7 +461,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
           }} style={{width:64}} />
         </th>)}</tr></thead>
       <tbody>{records.map(rec=><tr key={rec.id} data-testid="database-record-row" data-record-id={rec.id}>
-        <td><input aria-label={'Select record '+rec.title} type="checkbox" disabled={!!bulkDraft} checked={selectedRecords.includes(rec.id)} onChange={e=>selectVisibleRow(rec.id,e.target.checked,(e.nativeEvent as MouseEvent).shiftKey)}/></td>
+        <td><input aria-label={'Select record '+rec.title} type="checkbox" disabled={!!bulkDraft} checked={selectedRecords.includes(rec.id)} onChange={e=>selectVisibleRow(rec.id,e.target.checked,(e.nativeEvent as MouseEvent).shiftKey)} onKeyDown={e=>extendVisibleRowWithKeyboard(e,rec.id)}/></td>
         <td><button onClick={()=>rec.pageId&&onOpenRecord?.(rec.pageId)}>Open page</button><button aria-label={'Delete record '+rec.title} onClick={()=>{void deleteRecord(rec.id)}}>Delete</button></td>
         {visibleProps.map(p=><td key={p.id} data-column-id={p.id} onKeyDown={navigateTableCell} style={{border:'1px solid var(--border)',padding:4,width:columnWidths[p.id]||160}}>
           <Cell prop={p} recordId={rec.id} value={p.type==='title'?rec.title:rec.values?.[p.id]} onChange={value=>{
