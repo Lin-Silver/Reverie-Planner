@@ -334,6 +334,23 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
   const [copyEndId, setCopyEndId] = useState('')
   const [copyStatus, setCopyStatus] = useState('')
   const [copyError, setCopyError] = useState('')
+  const [selectionAnchor, setSelectionAnchor] = useState('')
+  // Shift-click selects a contiguous range in the current filtered/sorted table.
+  // The anchor is an ID rather than a row index, so reordering cannot silently
+  // select a different range; an invisible anchor falls back to a single row.
+  const selectVisibleRow = (id: string, checked: boolean, shift: boolean) => {
+    const anchorIndex = records.findIndex(record => record.id === selectionAnchor)
+    const targetIndex = records.findIndex(record => record.id === id)
+    if (shift && anchorIndex >= 0 && targetIndex >= 0) {
+      const range = records.slice(Math.min(anchorIndex, targetIndex), Math.max(anchorIndex, targetIndex) + 1).map(record => record.id)
+      setSelectedRecords(checked
+        ? [...new Set([...selectedRecords, ...range])]
+        : selectedRecords.filter(selectedId => !range.includes(selectedId)))
+    } else {
+      setSelectedRecords(checked ? [...new Set([...selectedRecords, id])] : selectedRecords.filter(selectedId => selectedId !== id))
+      setSelectionAnchor(id)
+    }
+  }
   const visibleProps=props.filter(p=>p.visible && !hiddenColumns.includes(p.id)).sort((a,b)=>{
     const ai=columnOrder.indexOf(a.id),bi=columnOrder.indexOf(b.id)
     return (ai<0?props.indexOf(a)+columnOrder.length:ai)-(bi<0?props.indexOf(b)+columnOrder.length:bi)
@@ -381,7 +398,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     </details>
     {selectedRecords.length>0&&<div style={{marginBottom:8}}>
       <strong>{selectedRecords.length} selected</strong>
-      <button aria-label="Clear selected rows" disabled={!!bulkDraft} onClick={()=>setSelectedRecords([])}>Clear selection</button>
+      <button aria-label="Clear selected rows" disabled={!!bulkDraft} onClick={()=>{setSelectedRecords([]);setSelectionAnchor('')}}>Clear selection</button>
       <label>Copy from <select aria-label="Copy start column" value={copyStart} onChange={event=>setCopyStartId(event.target.value)}>
         {visibleProps.map(property=><option key={property.id} value={property.id}>{property.name}</option>)}
       </select></label>
@@ -427,7 +444,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
           }} style={{width:64}} />
         </th>)}</tr></thead>
       <tbody>{records.map(rec=><tr key={rec.id} data-testid="database-record-row" data-record-id={rec.id}>
-        <td><input aria-label={'Select record '+rec.title} type="checkbox" disabled={!!bulkDraft} checked={selectedRecords.includes(rec.id)} onChange={e=>setSelectedRecords(e.target.checked?[...selectedRecords,rec.id]:selectedRecords.filter(id=>id!==rec.id))}/></td>
+        <td><input aria-label={'Select record '+rec.title} type="checkbox" disabled={!!bulkDraft} checked={selectedRecords.includes(rec.id)} onChange={e=>selectVisibleRow(rec.id,e.target.checked,(e.nativeEvent as MouseEvent).shiftKey)}/></td>
         <td><button onClick={()=>rec.pageId&&onOpenRecord?.(rec.pageId)}>Open page</button><button aria-label={'Delete record '+rec.title} onClick={()=>{void deleteRecord(rec.id)}}>Delete</button></td>
         {visibleProps.map(p=><td key={p.id} data-column-id={p.id} onKeyDown={navigateTableCell} style={{border:'1px solid var(--border)',padding:4,width:columnWidths[p.id]||160}}>
           <Cell prop={p} recordId={rec.id} value={p.type==='title'?rec.title:rec.values?.[p.id]} onChange={value=>{
