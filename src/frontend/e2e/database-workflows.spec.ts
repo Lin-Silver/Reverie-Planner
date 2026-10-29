@@ -1046,3 +1046,49 @@ test('late clipboard reads cannot replace a typed draft or changed row selection
   await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
   expect((await rows(page, host.databaseId)).map(item => item.version)).toEqual(before.map(item => item.version))
 })
+
+
+test('table modifier mouse and keyboard cell rectangles copy exactly the selected data without edits', async ({page}) => {
+  const host = await makeDatabase(page)
+  const note = await property(page, host.databaseId, 'Rectangle note', 'text')
+  const score = await property(page, host.databaseId, 'Rectangle score', 'number')
+  for (const [title, text, number] of [
+    ['Rectangle alpha', 'one', 1], ['Rectangle beta', 'two', 2], ['Rectangle gamma', 'three', 3]
+  ] as const) {
+    const item = await record(page, host.databaseId, title)
+    const res = await page.request.put(API + '/db/records', {
+      data: {id: item.id, version: item.version, title, values: {[note.id]: text, [score.id]: number}}
+    })
+    expect(res.status()).toBe(200)
+  }
+  await reopen(page, host)
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  const before = await rows(page, host.databaseId)
+  const tableRows = page.getByTestId('database-record-row')
+  await expect(tableRows).toHaveCount(3)
+  const cell = (row: number, propertyId: string) => tableRows.nth(row).locator('td[data-column-id="' + propertyId + '"]')
+  const checks = page.locator('[data-testid="database-record-row"] td:first-child input[type="checkbox"]')
+
+  await cell(0, note.id).click({modifiers: ['Alt']})
+  await cell(2, score.id).click({modifiers: ['Alt', 'Shift']})
+  for (const index of [0, 1, 2]) await expect(checks.nth(index)).toBeChecked()
+  await expect(page.getByLabel('Copy start column')).toHaveValue(note.id)
+  await expect(page.getByLabel('Copy end column')).toHaveValue(score.id)
+  await page.getByLabel('Copy selected cells').click()
+  const copied = await page.evaluate(() => navigator.clipboard.readText())
+  expect(copied.replace(/\r\n/g, '\n')).toBe('one\t1\ntwo\t2\nthree\t3')
+
+  // Keyboard extension starts at the focused cell, not an old mouse anchor.
+  await page.getByLabel('Clear selected rows').click()
+  await cell(0, note.id).locator('input').focus()
+  await page.keyboard.press('Alt+Shift+ArrowDown')
+  await expect(checks.nth(0)).toBeChecked()
+  await expect(checks.nth(1)).toBeChecked()
+  await expect(checks.nth(2)).not.toBeChecked()
+  await expect(page.getByLabel('Copy start column')).toHaveValue(note.id)
+  await expect(page.getByLabel('Copy end column')).toHaveValue(note.id)
+  await page.keyboard.press('Alt+Shift+ArrowRight')
+  await expect(page.getByLabel('Copy end column')).toHaveValue(score.id)
+  expect((await rows(page, host.databaseId)).map(item => [item.id, item.version, item.values]))
+    .toEqual(before.map(item => [item.id, item.version, item.values]))
+})
