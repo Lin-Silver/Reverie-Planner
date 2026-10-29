@@ -239,6 +239,7 @@ func main() {
 	mux.HandleFunc("/api/databases", ctx.handleDatabases)
 	mux.HandleFunc("/api/db/properties", ctx.handleDBProperties)
 	mux.HandleFunc("/api/db/records", ctx.handleDBRecords)
+	mux.HandleFunc("/api/db/records/bulk", ctx.handleDBBulkEdit)
 	mux.HandleFunc("/api/db/views", ctx.handleDBViews)
 	mux.HandleFunc("/api/db/linked-view", ctx.handleDBLinkedView)
 	mux.HandleFunc("/api/db/trash", ctx.handleDBTrash)
