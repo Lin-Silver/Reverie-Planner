@@ -451,14 +451,12 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if p.Type == "relation" {
-			var cfg struct {TargetDatabaseID string `json:"targetDatabaseId"`}
-			_ = json.Unmarshal([]byte(p.Config), &cfg)
-			var target int
-			if err := tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL", cfg.TargetDatabaseID).Scan(&target); err != nil {
+			activeTarget, err := relationTargetActiveInTx(tx, p.Config)
+			if err != nil {
 				writeJSON(w, 500, map[string]string{"error": "could not inspect relation target"})
 				return
 			}
-			if target != 1 {
+			if !activeTarget {
 				writeJSON(w, 400, map[string]string{"error": "relation target database not found"})
 				return
 			}
@@ -540,20 +538,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
-		// Validate computed references against the same transaction as the versioned update.
-		if currentType == "relation" {
-			var cfg struct { TargetDatabaseID string `json:"targetDatabaseId"` }
-			if err:=json.Unmarshal([]byte(p.Config), &cfg);err!=nil || cfg.TargetDatabaseID=="" {
-				writeJSON(w,400,map[string]string{"error":"invalid relation target"})
-				return
-			}
-			var activeTarget int
-			if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",cfg.TargetDatabaseID).Scan(&activeTarget);err!=nil {
-				writeJSON(w,500,map[string]string{"error":"could not verify relation target"})
-				return
-			}
-			if activeTarget!=1 {writeJSON(w,400,map[string]string{"error":"relation target database not found"});return}
-		}
+		// Validate computed and relation references inside the schema write transaction.
 		visible := 0
 		if p.Visible {
 			visible = 1
@@ -563,6 +548,17 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		tx, err := a.DB.Begin()
 		if err != nil { writeJSON(w, 500, map[string]string{"error": "could not begin property update"}); return }
 		defer tx.Rollback()
+		if currentType == "relation" {
+			activeTarget, err := relationTargetActiveInTx(tx, p.Config)
+			if err != nil {
+				writeJSON(w, 500, map[string]string{"error": "could not inspect relation target"})
+				return
+			}
+			if !activeTarget {
+				writeJSON(w, 400, map[string]string{"error": "relation target database not found"})
+				return
+			}
+		}
 		if err := validateDBComputedDefinition(tx, actualDatabaseID, p.Type, p.Config); err != nil {
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
