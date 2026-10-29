@@ -966,6 +966,37 @@ test('table shift-click selects and deselects a contiguous range in visible row 
   expect((await rows(page, host.databaseId))).toHaveLength(4)
 })
 
+test('table Shift+Arrow keyboard selection follows visible rows without writing records', async ({page}) => {
+  const host = await makeDatabase(page)
+  for (const title of ['Keyboard range alpha', 'Keyboard range beta', 'Keyboard range gamma', 'Keyboard range delta']) {
+    await record(page, host.databaseId, title)
+  }
+  await reopen(page, host)
+  const checks = page.locator('[data-testid="database-record-row"] td:first-child input[type="checkbox"]')
+  await expect(checks).toHaveCount(4)
+  const before = await rows(page, host.databaseId)
+
+  await checks.nth(0).focus()
+  await page.keyboard.press('Shift+ArrowDown')
+  await expect(checks.nth(0)).toBeChecked()
+  await expect(checks.nth(1)).toBeChecked()
+  await expect(checks.nth(2)).not.toBeChecked()
+  await expect(checks.nth(1)).toBeFocused()
+  await page.keyboard.press('Shift+ArrowDown')
+  for (const index of [0, 1, 2]) await expect(checks.nth(index)).toBeChecked()
+  await expect(checks.nth(3)).not.toBeChecked()
+  await expect(checks.nth(2)).toBeFocused()
+
+  await page.getByRole('button', {name: 'Clear selected rows'}).click()
+  await checks.nth(3).focus()
+  await page.keyboard.press('Shift+ArrowUp')
+  for (const index of [0, 1]) await expect(checks.nth(index)).not.toBeChecked()
+  for (const index of [2, 3]) await expect(checks.nth(index)).toBeChecked()
+  await expect(checks.nth(2)).toBeFocused()
+  expect((await rows(page, host.databaseId)).map(item => [item.id, item.version]))
+    .toEqual(before.map(item => [item.id, item.version]))
+})
+
 test('late clipboard reads cannot replace a typed draft or changed row selection', async ({page}) => {
   const host = await makeDatabase(page)
   const note = await property(page, host.databaseId, 'Race note', 'text')
