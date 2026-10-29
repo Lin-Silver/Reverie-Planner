@@ -1078,6 +1078,9 @@ test('table modifier mouse and keyboard cell rectangles copy exactly the selecte
   const copied = await page.evaluate(() => navigator.clipboard.readText())
   expect(copied.replace(/\r\n/g, '\n')).toBe('one\t1\ntwo\t2\nthree\t3')
 
+  // A new single-cell selection followed by Clear must not leak its anchor.
+  await cell(2, score.id).click({modifiers: ['Alt']})
+  await expect(checks.nth(2)).toBeChecked()
   // Keyboard extension starts at the focused cell, not an old mouse anchor.
   await page.getByLabel('Clear selected rows').click()
   await cell(0, note.id).locator('input').focus()
@@ -1088,6 +1091,16 @@ test('table modifier mouse and keyboard cell rectangles copy exactly the selecte
   await expect(page.getByLabel('Copy start column')).toHaveValue(note.id)
   await expect(page.getByLabel('Copy end column')).toHaveValue(note.id)
   await page.keyboard.press('Alt+Shift+ArrowRight')
+  await expect(page.getByLabel('Copy end column')).toHaveValue(score.id)
+  await page.getByLabel('Clear selected rows').click()
+  await page.keyboard.down('Alt')
+  await cell(0, note.id).hover()
+  await page.mouse.down()
+  await cell(2, score.id).hover()
+  await page.mouse.up()
+  await page.keyboard.up('Alt')
+  for (const index of [0, 1, 2]) await expect(checks.nth(index)).toBeChecked()
+  await expect(page.getByLabel('Copy start column')).toHaveValue(note.id)
   await expect(page.getByLabel('Copy end column')).toHaveValue(score.id)
   expect((await rows(page, host.databaseId)).map(item => [item.id, item.version, item.values]))
     .toEqual(before.map(item => [item.id, item.version, item.values]))
