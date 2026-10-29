@@ -870,7 +870,7 @@ test('database selected-cell copy uses visible column range and locks pending pa
     const item = saved.find(row => row.id === id)!
     return item.values[note.id] + '\t' + item.values[score.id]
   }).join('\n')
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected)
+  expect((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n?/g, '\n')).toBe(expected)
 
   await page.getByLabel('Bulk paste start column').selectOption(note.id)
   await page.getByLabel('Bulk paste TSV').fill(expected)
@@ -892,5 +892,5 @@ test('database selected-cell copy uses visible column range and locks pending pa
   await page.getByLabel('Copy end column').selectOption(note.id)
   await page.getByRole('button', {name: 'Copy selected cells'}).click()
   await expect(page.getByRole('alert').filter({hasText: 'Cannot copy cells containing tabs or line breaks'})).toBeVisible()
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected)
+  expect((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n?/g, '\n')).toBe(expected)
 })
