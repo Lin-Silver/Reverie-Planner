@@ -82,7 +82,7 @@ test('concurrency: Reload latest keeps server content, discards stale draft', as
 
     // 客户端 B: 写入内容 B，基于陈旧版本自动保存 -> 触发 409
     await pageB.locator('.bn-editor').click()
-    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.press('ControlOrMeta+a')
     await pageB.keyboard.type('Body from client B')
 
     await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
@@ -136,7 +136,7 @@ test('concurrency: Retry my changes saves client content', async ({ browser }) =
 
     // B 写入内容 B，触发 409
     await pageB.locator('.bn-editor').click()
-    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.press('ControlOrMeta+a')
     await pageB.keyboard.type('Body from client B')
     await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
 
@@ -188,7 +188,7 @@ test('concurrency: metadata protected after Retry and continuous autosave', asyn
 
     // B 基于陈旧版本写入内容，触发 409
     await pageB.locator('.bn-editor').click()
-    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.press('ControlOrMeta+a')
     await pageB.keyboard.type('Body from client B')
     await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
 
@@ -286,7 +286,7 @@ test('navigation: conflict on leave preserves draft and shows failure', async ({
 
     // B types new content (unsaved) then attempts to navigate -> conflict
     await pageB.locator('.bn-editor').click()
-    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.press('ControlOrMeta+a')
     await pageB.keyboard.type('Body from client B')
 
     await pageB.locator('.nav-item').filter({ hasText: 'Home' }).click()
@@ -371,7 +371,7 @@ test('conflict lock survives parent rerender and keeps draft', async ({ browser 
     }, { timeout: 20000 }).toContain('more from A')
 
     await pageB.locator('.bn-editor').click()
-    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.press('ControlOrMeta+a')
     await pageB.keyboard.type('Body from client B')
 
     // wait for autosave to produce 409
@@ -498,7 +498,7 @@ test('concurrency: edits typed during explicit Retry are not silently acknowledg
       .toContain('Server change')
 
     await pageB.locator('.bn-editor').click()
-    await pageB.keyboard.press('Control+a')
+    await pageB.keyboard.press('ControlOrMeta+a')
     await pageB.keyboard.type('Retry draft')
     await expect(pageB.getByText('Version conflict')).toBeVisible({ timeout: 20000 })
 
