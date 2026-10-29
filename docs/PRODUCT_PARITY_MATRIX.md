@@ -18,7 +18,7 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: `1f5
 | Table/kanban/calendar/timeline views | Missing | Planned | |
 | Properties/filter/sort/relations | Missing | Planned | |
 | Search | Partial | Implemented | Global search across projects/tasks/pages |
-| Shortcuts & templates | Partial | Planned | Ctrl+K search pending |
+| Shortcuts & templates | Partial | Implemented | Ctrl+K command palette searches pages, projects, and issues; templates remain pending |
 
 ## Plane
 
