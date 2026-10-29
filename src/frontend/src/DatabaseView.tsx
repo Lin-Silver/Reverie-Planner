@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { matchesFilters, newFilterGroup, type FilterGroup } from './databaseFilters'
 import DatabaseFilterBuilder from './DatabaseFilterBuilder'
 import DatabasePropertyDialog from './DatabasePropertyDialog'
@@ -336,10 +336,14 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
   const [copyError, setCopyError] = useState('')
   const [selectionAnchor, setSelectionAnchor] = useState('')
   const [cellAnchor, setCellAnchor] = useState<{ recordId: string; propertyId: string } | null>(null)
+  // Track the previous keyboard-owned range so reversing Shift+Arrow can
+  // deselect cells outside the new range without clearing unrelated row picks.
+  const keyboardRange = useRef<{ anchorId: string; ids: string[] } | null>(null)
   // Shift-click selects a contiguous range in the current filtered/sorted table.
   // The anchor is an ID rather than a row index, so reordering cannot silently
   // select a different range; an invisible anchor falls back to a single row.
   const selectVisibleRow = (id: string, checked: boolean, shift: boolean) => {
+    keyboardRange.current = null
     setCellAnchor(null)
     const anchorIndex = records.findIndex(record => record.id === selectionAnchor)
     const targetIndex = records.findIndex(record => record.id === id)
@@ -362,11 +366,15 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     const index = records.findIndex(record => record.id === id)
     const nextIndex = index + (event.key === 'ArrowDown' ? 1 : -1)
     if (index < 0 || nextIndex < 0 || nextIndex >= records.length) return
+    const previous = keyboardRange.current
     const anchorIndex = records.findIndex(record => record.id === selectionAnchor)
-    const startIndex = anchorIndex < 0 ? index : anchorIndex
-    if (anchorIndex < 0) setSelectionAnchor(id)
+    const continuing = !!previous && previous.anchorId === selectionAnchor && previous.ids.includes(id) && anchorIndex >= 0
+    const startIndex = continuing ? anchorIndex : (previous || anchorIndex < 0 ? index : anchorIndex)
+    if (!continuing) setSelectionAnchor(records[startIndex].id)
     const range = records.slice(Math.min(startIndex, nextIndex), Math.max(startIndex, nextIndex) + 1).map(record => record.id)
-    setSelectedRecords([...new Set([...selectedRecords, ...range])])
+    const previousIds = continuing ? previous!.ids : []
+    setSelectedRecords([...new Set([...selectedRecords.filter(selectedId => !previousIds.includes(selectedId)), ...range])])
+    keyboardRange.current = { anchorId: records[startIndex].id, ids: range }
     const row = event.currentTarget.closest('tr')
     const nextRow = event.key === 'ArrowDown' ? row?.nextElementSibling : row?.previousElementSibling
     nextRow?.querySelector<HTMLInputElement>('td:first-child input[type="checkbox"]')?.focus()
@@ -383,6 +391,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     fallback?: { recordId: string; propertyId: string }
   ) => {
     if (bulkDraft) return
+    keyboardRange.current = null
     const endRow = records.findIndex(record => record.id === recordId)
     const endCol = visibleProps.findIndex(property => property.id === propertyId)
     if (endRow < 0 || endCol < 0) return
@@ -462,7 +471,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     </details>
     {selectedRecords.length>0&&<div style={{marginBottom:8}}>
       <strong>{selectedRecords.length} selected</strong>
-      <button aria-label="Clear selected rows" disabled={!!bulkDraft} onClick={()=>{setSelectedRecords([]);setSelectionAnchor('');setCellAnchor(null)}}>Clear selection</button>
+      <button aria-label="Clear selected rows" disabled={!!bulkDraft} onClick={()=>{setSelectedRecords([]);setSelectionAnchor('');setCellAnchor(null);keyboardRange.current=null}}>Clear selection</button>
       <label>Copy from <select aria-label="Copy start column" value={copyStart} onChange={event=>setCopyStartId(event.target.value)}>
         {visibleProps.map(property=><option key={property.id} value={property.id}>{property.name}</option>)}
       </select></label>
@@ -484,6 +493,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
           }
         }
         setSelectedRecords([])
+        keyboardRange.current = null
       }}>Move selected to Trash</button>
     </div>}
     {(selectedRecords.length > 0 || bulkDraft) && <DatabaseBulkPaste
@@ -495,7 +505,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     <table style={{borderCollapse:'collapse',tableLayout:'fixed',width:tableWidth}}>
       <colgroup><col style={{width:42}}/><col style={{width:180}}/>{visibleProps.map(p=><col key={p.id} style={{width:columnWidths[p.id]||160}} />)}</colgroup>
       <thead><tr>
-        <th><input aria-label="Select all visible records" type="checkbox" disabled={!!bulkDraft} checked={records.length>0 && records.every(r=>selectedRecords.includes(r.id))} onChange={e=>{setCellAnchor(null);setSelectedRecords(e.target.checked?[...new Set([...selectedRecords,...records.map(r=>r.id)])]:selectedRecords.filter(id=>!records.some(r=>r.id===id)))}} /></th>
+        <th><input aria-label="Select all visible records" type="checkbox" disabled={!!bulkDraft} checked={records.length>0 && records.every(r=>selectedRecords.includes(r.id))} onChange={e=>{keyboardRange.current=null;setCellAnchor(null);setSelectedRecords(e.target.checked?[...new Set([...selectedRecords,...records.map(r=>r.id)])]:selectedRecords.filter(id=>!records.some(r=>r.id===id)))}} /></th>
         <th>Page</th>{visibleProps.map((p,index)=><th key={p.id} style={{border:'1px solid var(--border)',padding:5,width:columnWidths[p.id]||160,minWidth:100}}>
           <div style={{display:'flex',alignItems:'center',gap:4}}><span>{p.name}</span>
             <button aria-label={'Move '+p.name+' left'} disabled={index===0 || !!bulkDraft} onClick={()=>reorder(p.id,-1)}>‹</button>
