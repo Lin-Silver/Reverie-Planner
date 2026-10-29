@@ -118,3 +118,57 @@ func TestPlainPropertyConfigurationsRejectInvalidJSONWithoutMutation(t *testing.
 	}
 	assertViewIntegrityProviders(t, providerPath, providerBefore)
 }
+
+func TestRequiredTitlePropertyRejectsInvalidConfigWithoutMutation(t *testing.T) {
+	app := setupTestContext(t)
+	defer app.DB.Close()
+	database, record := dbRegressionCreate(t, app)
+	providerPath, providerBefore := viewIntegrityProviders(t, app)
+	if len(database.Properties) != 1 || database.Properties[0].Type != "title" {
+		t.Fatalf("missing required title property: %+v", database.Properties)
+	}
+	title := database.Properties[0]
+	for _, config := range []string{
+		"null", "not-json", `{"key":1,"key":2}`,
+		`{"nested":{"key":1,"key":2}}`,
+	} {
+		invalid := title
+		invalid.Config = config
+		body, err := json.Marshal(invalid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := dbRegressionCall(t, app, http.MethodPut, "/api/db/properties", string(body), app.handleDBProperties)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("title config=%q: expected 400, got %d: %s", config, response.Code, response.Body.String())
+		}
+		var savedConfig string
+		var savedVersion int
+		if err := app.DB.QueryRow("SELECT config,version FROM db_properties WHERE id=?", title.ID).
+			Scan(&savedConfig, &savedVersion); err != nil {
+			t.Fatal(err)
+		}
+		if savedConfig != title.Config || savedVersion != title.Version {
+			t.Fatalf("rejected title update changed schema: config=%q version=%d", savedConfig, savedVersion)
+		}
+		var recordVersion int
+		if err := app.DB.QueryRow("SELECT version FROM db_records WHERE id=?", record.ID).Scan(&recordVersion); err != nil {
+			t.Fatal(err)
+		}
+		if recordVersion != record.Version {
+			t.Fatalf("rejected title update changed record version: %d", recordVersion)
+		}
+		assertViewIntegrityProviders(t, providerPath, providerBefore)
+	}
+	valid := title
+	valid.Config = `{"metadata":{"source":"preserved"}}`
+	body, err := json.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := dbRegressionCall(t, app, http.MethodPut, "/api/db/properties", string(body), app.handleDBProperties)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid title metadata update: %d %s", response.Code, response.Body.String())
+	}
+	assertViewIntegrityProviders(t, providerPath, providerBefore)
+}
