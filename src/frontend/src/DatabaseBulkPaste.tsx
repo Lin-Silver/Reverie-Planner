@@ -157,7 +157,7 @@ export default function DatabaseBulkPaste({
       <button aria-label="Read clipboard into bulk paste draft" disabled={busy || disabled || readingClipboard || !!draft} onClick={() => void readClipboard()}>{readingClipboard ? 'Reading clipboard…' : 'Paste from clipboard'}</button>
       <button aria-label="Apply bulk paste" disabled={busy || disabled || readingClipboard || !edits.length || !!validation} onClick={() => void apply()}>{busy ? 'Applying…' : 'Review and apply paste'}</button>
       <button aria-label="Refresh bulk record versions" disabled={busy || disabled || readingClipboard} onClick={() => void onRefreshVersions()}>Refresh record versions</button>
-      <button aria-label="Discard bulk paste draft" disabled={!draft || busy || readingClipboard} onClick={() => { changeDraft(''); setLocalError('') }}>Discard draft</button>
+      <button aria-label="Discard bulk paste draft" disabled={!draft || busy} onClick={() => { changeDraft(''); setLocalError('') }}>Discard draft</button>
     </div>
   </div>
 }
