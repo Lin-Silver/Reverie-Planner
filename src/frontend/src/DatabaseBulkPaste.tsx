@@ -133,6 +133,8 @@ export default function DatabaseBulkPaste({
   const apply = async () => {
     if (!edits.length || disabled || busy) return
     if (!confirm('Apply ' + edits.length + ' record edits (' + draft.split(/\r?\n/)[0].split('\t').length + ' columns) atomically? Any conflict or invalid cell will roll back the entire paste.')) return
+    // Freeze the submitted rectangle while its atomic request is in flight.
+    // Otherwise a successful response can clear edits typed during the request.
     setBusy(true)
     setLocalError('')
     try {
@@ -144,12 +146,12 @@ export default function DatabaseBulkPaste({
   }
   return <div role="group" aria-label="Bulk table paste" style={{ margin: '8px 0', padding: 8, border: '1px solid var(--border)' }}>
     <label>Start column{' '}
-      <select aria-label="Bulk paste start column" value={start} onChange={event => onStartPropertyChange(event.target.value)}>
+      <select aria-label="Bulk paste start column" value={start} disabled={busy} onChange={event => onStartPropertyChange(event.target.value)}>
         {properties.map(property => <option key={property.id} value={property.id}>{property.name}</option>)}
       </select>
     </label>
     <label style={{ display: 'block' }}>Paste tab-separated cells (one row per selected record, in visible order)
-      <textarea aria-label="Bulk paste TSV" value={draft} onChange={event => { changeDraft(event.target.value); setLocalError('') }} rows={3} style={{ display: 'block', width: '100%', maxWidth: 600 }} />
+      <textarea aria-label="Bulk paste TSV" value={draft} disabled={busy} onChange={event => { changeDraft(event.target.value); setLocalError('') }} rows={3} style={{ display: 'block', width: '100%', maxWidth: 600 }} />
     </label>
     {draft && <small role="status">{validation || ('Ready to update ' + edits.length + ' records. All changes commit together.')}</small>}
     {localError && <div role="alert">{localError}</div>}
