@@ -995,9 +995,18 @@ test('late clipboard reads cannot replace a typed draft or changed row selection
   await page.getByLabel('Read clipboard into bulk paste draft').click()
   await page.getByLabel('Bulk paste TSV').fill('typed alpha\ntyped beta')
   await finishRead('stale alpha\nstale beta')
-  await expect(page.getByRole('alert').filter({hasText: 'A paste draft was entered while reading'})).toBeVisible()
+  await expect(page.getByRole('alert').filter({hasText: 'Paste draft changed while reading'})).toBeVisible()
   await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('typed alpha\ntyped beta')
   await page.getByLabel('Discard bulk paste draft').click()
+
+  // Discarding an edit while the permission prompt is still pending must not
+  // let the old clipboard result silently recreate a draft.
+  await page.getByLabel('Read clipboard into bulk paste draft').click()
+  await page.getByLabel('Bulk paste TSV').fill('temporary draft')
+  await page.getByLabel('Discard bulk paste draft').click()
+  await finishRead('stale alpha\nstale beta')
+  await expect(page.getByRole('alert').filter({hasText: 'Paste draft changed while reading'})).toBeVisible()
+  await expect(page.getByLabel('Bulk paste TSV')).toHaveValue('')
 
   await page.getByLabel('Read clipboard into bulk paste draft').click()
   await page.getByLabel('Select record Race beta').uncheck()
