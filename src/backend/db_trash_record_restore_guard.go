@@ -32,6 +32,12 @@ func validateRestoredRecordRelations(tx *sql.Tx, recordID, databaseID string) (b
         var definition struct {
             TargetDatabaseID string `json:"targetDatabaseId"`
         }
+        // Persisted legacy configurations may predate strict mutation validation.
+        // Do not restore a record using an ambiguous last-key-wins relation target.
+        if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+            rows.Close()
+            return false, nil
+        }
         if err := json.Unmarshal([]byte(config), &definition); err != nil ||
             strings.TrimSpace(definition.TargetDatabaseID) == "" {
             rows.Close()
