@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { DBProperty, DBRecord } from './DatabaseView'
 
 export type BulkRecordEdit = { id: string; version: number; title?: string; values?: Record<string, unknown> }
@@ -84,6 +84,16 @@ export default function DatabaseBulkPaste({
   const [readingClipboard, setReadingClipboard] = useState(false)
   const [localError, setLocalError] = useState('')
   const start = properties.some(property => property.id === startPropertyId) ? startPropertyId : (properties[0]?.id || '')
+  // Clipboard reads are asynchronous. Do not overwrite a draft or use a stale
+  // row/column selection if the user edits the table while permission is pending.
+  const latestDraft = useRef(draft)
+  latestDraft.current = draft
+  const latestSource = useRef({ start, selectedIds, records, properties })
+  latestSource.current = { start, selectedIds, records, properties }
+  const changeDraft = (next: string) => {
+    latestDraft.current = next
+    onDraftChange(next)
+  }
   let edits: BulkRecordEdit[] = []
   let validation = ''
   if (draft) {
@@ -99,9 +109,14 @@ export default function DatabaseBulkPaste({
     try {
       if (!navigator.clipboard?.readText) throw new Error('Clipboard reading is unavailable in this browser.')
       const text = await navigator.clipboard.readText()
-      // Validate before replacing any draft or locking the selected row order.
-      buildBulkPasteEdits(text, start, properties, records, selectedIds)
-      onDraftChange(text)
+      if (latestDraft.current) throw new Error('A paste draft was entered while reading; clipboard data was not loaded.')
+      const source = latestSource.current
+      if (source.start !== start || source.selectedIds.join('\\0') !== selectedIds.join('\\0')) {
+        throw new Error('Row or column selection changed while reading; retry clipboard paste.')
+      }
+      // Validate against the latest records before locking their visible order.
+      buildBulkPasteEdits(text, source.start, source.properties, source.records, source.selectedIds)
+      changeDraft(text)
     } catch (error) {
       setLocalError('Clipboard paste failed: ' + (error as Error).message)
     } finally {
@@ -115,7 +130,7 @@ export default function DatabaseBulkPaste({
     setLocalError('')
     try {
       const ok = await onApply(edits)
-      if (ok) onDraftChange('')
+      if (ok) changeDraft('')
     } catch (error) {
       setLocalError((error as Error).message)
     } finally { setBusy(false) }
@@ -127,7 +142,7 @@ export default function DatabaseBulkPaste({
       </select>
     </label>
     <label style={{ display: 'block' }}>Paste tab-separated cells (one row per selected record, in visible order)
-      <textarea aria-label="Bulk paste TSV" value={draft} onChange={event => { onDraftChange(event.target.value); setLocalError('') }} rows={3} style={{ display: 'block', width: '100%', maxWidth: 600 }} />
+      <textarea aria-label="Bulk paste TSV" value={draft} onChange={event => { changeDraft(event.target.value); setLocalError('') }} rows={3} style={{ display: 'block', width: '100%', maxWidth: 600 }} />
     </label>
     {draft && <small role="status">{validation || ('Ready to update ' + edits.length + ' records. All changes commit together.')}</small>}
     {localError && <div role="alert">{localError}</div>}
@@ -135,7 +150,7 @@ export default function DatabaseBulkPaste({
       <button aria-label="Read clipboard into bulk paste draft" disabled={busy || disabled || readingClipboard || !!draft} onClick={() => void readClipboard()}>{readingClipboard ? 'Reading clipboard…' : 'Paste from clipboard'}</button>
       <button aria-label="Apply bulk paste" disabled={busy || disabled || readingClipboard || !edits.length || !!validation} onClick={() => void apply()}>{busy ? 'Applying…' : 'Review and apply paste'}</button>
       <button aria-label="Refresh bulk record versions" disabled={busy || disabled || readingClipboard} onClick={() => void onRefreshVersions()}>Refresh record versions</button>
-      <button aria-label="Discard bulk paste draft" disabled={!draft || busy || readingClipboard} onClick={() => { onDraftChange(''); setLocalError('') }}>Discard draft</button>
+      <button aria-label="Discard bulk paste draft" disabled={!draft || busy || readingClipboard} onClick={() => { changeDraft(''); setLocalError('') }}>Discard draft</button>
     </div>
   </div>
 }
