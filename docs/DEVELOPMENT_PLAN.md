@@ -25,12 +25,12 @@ This is the durable checkpoint for human and scheduled development. The target i
 - [x] Preview and restore validate archive limits, names, duplicates, checksums, database integrity, foreign keys and supported schema.
 - [x] Restore publishes only to a new directory; failures/cancellation leave the current workspace unchanged. Reopen the restored workspace and verify contents and attachments.
 - [x] Settings has download, preview, restore, status and error/retry controls; offline CLI restoration is documented and tested.
-- [ ] Page recovery final native acceptance (implementation/local validation complete; pending SHA-matched Linux/Windows/macOS CI).
+- [x] Page recovery automatic acceptance on code commit `b9beea506f96d4b2a97f6aece4d1e5fcab4d3056`; native Linux/Windows/macOS [CI 40975261473](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40975261473) passed.
   - [x] Transactional pre-change revisions, bounded history browsing/plain-text preview/block download, version-checked restore and undo of restore.
   - [x] Preserve current parent/project/links and database-owned titles/properties; recover document writing without replaying stale structural metadata.
   - [x] Version-checked page trash, same-ID restore/newer version, parent ordering, owned-page guards and restart/rollback regressions.
   - [x] Native portable script now checks history/trash through restart, workspace archive, CLI restore and another restart.
-  - [ ] Final native CI evidence and manual platform/assistive-technology acceptance recorded separately.
+  - [x] Final native CI evidence: **66/66 browser tests per platform**, Go tests/build, lifecycle, archive/CLI restore/restart and packaging passed. Manual platform/assistive-technology acceptance remains open under M4.
 - [ ] Historical v6/v7 sample acceptance is recorded only when an authorized real sample exists; synthetic fixtures are labelled synthetic.
 
 ## M2 — Migration and daily organization
@@ -67,7 +67,7 @@ M1 workspace archive and isolated restore accepted on code commit `a6ab2efab816b
 
 Page recovery increment now implemented on top of `4f8446fe5e4fd19fe00878ae345aa7abfb49bde3` (previous dev/native CI 40970433174 successful). Schema 11 captures pre-change page data inside SQLite transactions and retains deleted pages. Fixed the broken frontend DELETE body/query mismatch and post-delete navigation save. New history/trash UI follows the existing native dialog/tokens, immediate keyboard interactions, explicit focus return and an opaque reading panel. See [PAGE_RECOVERY.md](PAGE_RECOVERY.md) for exact retention, backup/version compatibility and owner/parent boundaries.
 
-Local validation complete: Go suite/vet, production frontend build/lint and extended native portable/CLI restore checks passed. Final full browser suite **66/66** passed, including 3 new regressions for history/restore/conflict, delete/recover/stale writes and retry/focus/narrow reduced-motion layout. Actual narrow/light and desktop/dark recovery screenshots reviewed; reading panels are opaque. Final native Linux/Windows/macOS CI is pending for this increment. Existing React lint warnings and editor chunk debt remain; this increment does not claim complete accessibility or full Notion replacement.
+Local validation complete: Go suite/vet, production frontend build/lint and extended native portable/CLI restore checks passed. Final full browser suite **66/66** passed, including 3 new regressions for history/restore/conflict, delete/recover/stale writes and retry/focus/narrow reduced-motion layout. Actual narrow/light and desktop/dark recovery screenshots reviewed; reading panels are opaque. Code commit `b9beea506f96d4b2a97f6aece4d1e5fcab4d3056` passed native [CI 40975261473](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40975261473): **66/66 on Linux, Windows and macOS**, plus backend, build, lint, native lifecycle/archive/CLI restore/restart and package steps. This follow-up checkpoint changes documentation only; its new CI run is not a new feature acceptance claim. Existing React lint warnings and editor chunk debt remain; this increment does not claim complete accessibility or full Notion replacement.
 
 Next after this acceptance: complete the remaining entity/dependency delete → restore → restart matrix (database/property/view/record/relations/formulas); then bounded multi-page Markdown/Notion package import with preview, assets, explicit format limits and transactional rollback. Real v6/v7 samples are unavailable and remain unverified; do not invent historical acceptance or block synthetic regressions on private samples.
 
