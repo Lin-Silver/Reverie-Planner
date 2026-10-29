@@ -212,20 +212,20 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     <div style={{ padding: 16 }}>
       {trashOpen && <DatabaseTrash databaseId={databaseId} onClose={()=>setTrashOpen(false)} onRestored={()=>{void load()}} />}
       {propertyDialogOpen && <DatabasePropertyDialog databaseId={databaseId} properties={props} onClose={() => setPropertyDialogOpen(false)} onCreated={() => {setPropertyDialogOpen(false);void load()}} />}
-      {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} {failedEdit && <button onClick={() => void retryFailedEdit()}>Retry my changes</button>} <button onClick={() => { void load() }}>Reload latest</button></div>}
+      {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} {failedEdit && <button onClick={() => void retryFailedEdit()}>Retry my changes</button>} <button disabled={!!bulkDraft} onClick={() => { void load() }}>Reload latest</button></div>}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <button className="btn" onClick={guardedBack}>← Back</button>
         <h2 style={{ margin: 0 }}>{db.icon} {db.title}</h2>
         <button className="btn" onClick={renameDb}>Rename</button>
         <button className="btn" onClick={() => {if(failedEdit || bulkDraft) {setError("Resolve unsaved edit or bulk draft before changing schema");return};setPropertyDialogOpen(true)}}>+ Property</button>
         <button className="btn primary" onClick={addRecord}>+ New</button>
-        <button className="btn" aria-label="Open database trash" onClick={()=>setTrashOpen(true)}>Trash</button>
+        <button className="btn" aria-label="Open database trash" disabled={!!bulkDraft} onClick={()=>setTrashOpen(true)}>Trash</button>
         <div style={{ flex: 1 }} />
-        <select aria-label="Active database view" value={viewId} onChange={e => { if (bulkDraft || failedEdit) { setError('Discard or resolve pending edits before switching views.'); return }; setViewId(e.target.value) }}>
+        <select aria-label="Active database view" disabled={!!bulkDraft || !!failedEdit} value={viewId} onChange={e => { if (bulkDraft || failedEdit) { setError('Discard or resolve pending edits before switching views.'); return }; setViewId(e.target.value) }}>
           {db.views.map(v => <option key={v.id} value={v.id}>{v.name} ({v.type})</option>)}
         </select>
         <select aria-label="New view type" value={newViewType} onChange={e => setNewViewType(e.target.value as ViewType)}>{VIEW_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
-        <button className="btn" onClick={async () => {
+        <button className="btn" disabled={!!bulkDraft || !!failedEdit} onClick={async () => {
           try {
             const v = await api('/api/db/views', { method: 'POST', body: JSON.stringify({ databaseId, name: newViewType[0].toUpperCase()+newViewType.slice(1), type: newViewType }) }) as DBView
             setDb(current => current && ({ ...current, views: [...current.views, v] }))
@@ -233,7 +233,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
             setError('')
           } catch (e) { setError((e as Error).message) }
         }}>+ View</button>
-        <button className="btn" aria-label="Rename database view" disabled={!view} onClick={async () => {
+        <button className="btn" aria-label="Rename database view" disabled={!view || !!bulkDraft || !!failedEdit} onClick={async () => {
           if (!view) return
           const name=prompt('New view name',view.name)
           if (!name?.trim() || name.trim()===view.name) return
@@ -242,7 +242,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
             setDb(current=>current&&({...current,views:current.views.map(v=>v.id===updated.id?updated:v)}))
           } catch(e){setError((e as Error).message)}
         }}>Rename view</button>
-        <button className="btn" aria-label="Duplicate database view" disabled={!view} onClick={async () => {
+        <button className="btn" aria-label="Duplicate database view" disabled={!view || !!bulkDraft || !!failedEdit} onClick={async () => {
           if (!view) return
           try {
             const copy=await api('/api/db/views',{method:'POST',body:JSON.stringify({databaseId,name:view.name+' copy',type:view.type,config:view.config})}) as DBView
@@ -250,7 +250,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
             setViewId(copy.id)
           } catch(e){setError((e as Error).message)}
         }}>Duplicate</button>
-        <button className="btn" aria-label="Delete database view" disabled={!view || db.views.length<=1} onClick={async () => {
+        <button className="btn" aria-label="Delete database view" disabled={!view || db.views.length<=1 || !!bulkDraft || !!failedEdit} onClick={async () => {
           if (!view || !confirm('Delete this view? Records will be kept.')) return
           try {
             await api('/api/db/views?id='+encodeURIComponent(view.id)+'&version='+encodeURIComponent(String(view.version)),{method:'DELETE'})
@@ -259,7 +259,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
             setViewId(remaining[0]?.id||'')
           } catch(e){setError((e as Error).message)}
         }}>Delete view</button>
-        <button className="btn" onClick={async () => {
+        <button className="btn" disabled={!!bulkDraft || !!failedEdit} onClick={async () => {
           try {
             const pg = await api('/api/pages', { method: 'POST', body: JSON.stringify({ title: `${db.title} (linked)`, workspace: true, createdBy: 'You' }) }) as any
             await api('/api/db/linked-view', { method: 'POST', body: JSON.stringify({ databaseId, pageId: pg.id, name: 'Linked view' }) })
@@ -269,20 +269,20 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
         }}>+ Linked view page</button>
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        <input aria-label="Database filter" placeholder="Filter records" value={filterText} onChange={e => setFilterText(e.target.value)} />
-        <select aria-label="Database sort" value={sortProp} onChange={e => {
+        <input aria-label="Database filter" disabled={!!bulkDraft} placeholder="Filter records" value={filterText} onChange={e => setFilterText(e.target.value)} />
+        <select aria-label="Database sort" disabled={!!bulkDraft} value={sortProp} onChange={e => {
           const next=e.target.value
           setSortProp(next)
           if (!next || next===secondarySortProp) setSecondarySortProp('')
         }}><option value="">No sort</option><option value="title">Title</option>{props.filter(p => p.type !== 'title').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
-        <select aria-label="Sort direction" value={sortDirection} disabled={!sortProp} onChange={e => setSortDirection(e.target.value as 'asc'|'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select>
-        <select aria-label="Secondary database sort" value={secondarySortProp} disabled={!sortProp} onChange={e => setSecondarySortProp(e.target.value)}><option value="">No secondary sort</option><option value="title" disabled={sortProp==='title'}>Title</option>{props.filter(p => p.type !== 'title').map(p => <option key={p.id} value={p.id} disabled={sortProp===p.id}>{p.name}</option>)}</select>
-        <select aria-label="Secondary sort direction" value={secondarySortDirection} disabled={!secondarySortProp} onChange={e => setSecondarySortDirection(e.target.value as 'asc'|'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select>
+        <select aria-label="Sort direction" value={sortDirection} disabled={!sortProp || !!bulkDraft} onChange={e => setSortDirection(e.target.value as 'asc'|'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select>
+        <select aria-label="Secondary database sort" value={secondarySortProp} disabled={!sortProp || !!bulkDraft} onChange={e => setSecondarySortProp(e.target.value)}><option value="">No secondary sort</option><option value="title" disabled={sortProp==='title'}>Title</option>{props.filter(p => p.type !== 'title').map(p => <option key={p.id} value={p.id} disabled={sortProp===p.id}>{p.name}</option>)}</select>
+        <select aria-label="Secondary sort direction" value={secondarySortDirection} disabled={!secondarySortProp || !!bulkDraft} onChange={e => setSecondarySortDirection(e.target.value as 'asc'|'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select>
         {view?.type === 'board' && <select aria-label="Board group by" value={groupBy} onChange={e => setGroupBy(e.target.value)}><option value="">First select property</option>{props.filter(p => p.type === 'select').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
         {view?.type === 'calendar' && <select aria-label="Calendar date property" value={dateProperty} onChange={e => setDateProperty(e.target.value)}><option value="">First date property</option>{props.filter(p => p.type === 'date').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
-        <button onClick={() => void saveViewSettings()}>Save view settings</button>
+        <button disabled={!!bulkDraft} onClick={() => void saveViewSettings()}>Save view settings</button>
       </div>
-      <details style={{ marginBottom: 10 }}><summary>Advanced filters (AND / OR)</summary><DatabaseFilterBuilder group={filterTree} properties={props} onChange={setFilterTree} /></details>
+      <details style={{ marginBottom: 10 }}><summary>Advanced filters (AND / OR)</summary><fieldset disabled={!!bulkDraft} style={{border:0,padding:0}}><DatabaseFilterBuilder group={filterTree} properties={props} onChange={setFilterTree} /></fieldset></details>
       {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} deleteRecord={deleteRecord} onOpenRecord={guardedOpen} columnOrder={columnOrder} setColumnOrder={setColumnOrder} hiddenColumns={hiddenColumns} setHiddenColumns={setHiddenColumns} columnWidths={columnWidths} setColumnWidths={setColumnWidths} selectedRecords={selectedRecords} setSelectedRecords={setSelectedRecords} bulkDraft={bulkDraft} setBulkDraft={setBulkDraft} bulkStartProperty={bulkStartProperty} setBulkStartProperty={setBulkStartProperty} applyBulkEdit={applyBulkEdit} refreshBulkVersions={refreshBulkVersions} bulkDisabled={!!failedEdit} />}
       {view?.type === 'board' && <BoardView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={guardedOpen} />}
       {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={guardedOpen} />}
@@ -329,6 +329,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
   refreshBulkVersions: () => Promise<void>;
   bulkDisabled: boolean;
 }) {
+  const [draftRowOrder, setDraftRowOrder] = useState<string[]>([])
   const [copyStartId, setCopyStartId] = useState('')
   const [copyEndId, setCopyEndId] = useState('')
   const [copyStatus, setCopyStatus] = useState('')
@@ -337,6 +338,17 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     const ai=columnOrder.indexOf(a.id),bi=columnOrder.indexOf(b.id)
     return (ai<0?props.indexOf(a)+columnOrder.length:ai)-(bi<0?props.indexOf(b)+columnOrder.length:bi)
   })
+  const changeBulkDraft = (next: string) => {
+    if (!bulkDraft && next) setDraftRowOrder(records.filter(record => selectedRecords.includes(record.id)).map(record => record.id))
+    if (!next) setDraftRowOrder([])
+    setBulkDraft(next)
+  }
+  // A refresh may re-sort visible rows. Keep each TSV line bound to its original
+  // selected record until the draft is discarded or successfully committed.
+  const pasteRecords = bulkDraft && draftRowOrder.length
+    ? draftRowOrder.map(id => records.find(record => record.id === id)).filter((record): record is DBRecord => !!record)
+    : records
+  const pasteIds = bulkDraft && draftRowOrder.length ? draftRowOrder : selectedRecords
   const copyStart = visibleProps.some(property => property.id === copyStartId) ? copyStartId : (visibleProps[0]?.id || '')
   const copyEnd = visibleProps.some(property => property.id === copyEndId) ? copyEndId : (visibleProps[visibleProps.length - 1]?.id || '')
   const copyCells = async () => {
@@ -363,7 +375,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
     <details style={{marginBottom:10}}>
       <summary>Table columns and layout</summary>
       <div role="group" aria-label="Column visibility" style={{display:'flex',gap:10,flexWrap:'wrap',padding:8}}>
-        {props.map(p=><label key={p.id}><input type="checkbox" checked={!hiddenColumns.includes(p.id)} disabled={p.type==='title'} onChange={()=>toggle(p.id)} />{p.name}</label>)}
+        {props.map(p=><label key={p.id}><input type="checkbox" checked={!hiddenColumns.includes(p.id)} disabled={p.type==='title' || !!bulkDraft} onChange={()=>toggle(p.id)} />{p.name}</label>)}
       </div>
       <small>Column order and widths are stored with this view when you click Save view settings. Use Alt+Arrow keys to move between editable cells; Enter saves, Escape cancels.</small>
     </details>
@@ -394,8 +406,8 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
       }}>Move selected to Trash</button>
     </div>}
     {(selectedRecords.length > 0 || bulkDraft) && <DatabaseBulkPaste
-      records={records} properties={visibleProps} selectedIds={selectedRecords}
-      draft={bulkDraft} onDraftChange={setBulkDraft}
+      records={pasteRecords} properties={visibleProps} selectedIds={pasteIds}
+      draft={bulkDraft} onDraftChange={changeBulkDraft}
       startPropertyId={bulkStartProperty} onStartPropertyChange={setBulkStartProperty}
       onApply={applyBulkEdit} onRefreshVersions={refreshBulkVersions} disabled={bulkDisabled}
     />}
@@ -405,11 +417,11 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
         <th><input aria-label="Select all visible records" type="checkbox" disabled={!!bulkDraft} checked={records.length>0 && records.every(r=>selectedRecords.includes(r.id))} onChange={e=>setSelectedRecords(e.target.checked?[...new Set([...selectedRecords,...records.map(r=>r.id)])]:selectedRecords.filter(id=>!records.some(r=>r.id===id)))} /></th>
         <th>Page</th>{visibleProps.map((p,index)=><th key={p.id} style={{border:'1px solid var(--border)',padding:5,width:columnWidths[p.id]||160,minWidth:100}}>
           <div style={{display:'flex',alignItems:'center',gap:4}}><span>{p.name}</span>
-            <button aria-label={'Move '+p.name+' left'} disabled={index===0} onClick={()=>reorder(p.id,-1)}>‹</button>
-            <button aria-label={'Move '+p.name+' right'} disabled={index===visibleProps.length-1} onClick={()=>reorder(p.id,1)}>›</button>
-            {p.type!=='title'&&<button aria-label={'Delete '+p.name} onClick={()=>{if(confirm('Move property '+p.name+' to Trash?'))void deleteProperty(p.id)}}>×</button>}
+            <button aria-label={'Move '+p.name+' left'} disabled={index===0 || !!bulkDraft} onClick={()=>reorder(p.id,-1)}>‹</button>
+            <button aria-label={'Move '+p.name+' right'} disabled={index===visibleProps.length-1 || !!bulkDraft} onClick={()=>reorder(p.id,1)}>›</button>
+            {p.type!=='title'&&<button aria-label={'Delete '+p.name} disabled={!!bulkDraft} onClick={()=>{if(confirm('Move property '+p.name+' to Trash?'))void deleteProperty(p.id)}}>×</button>}
           </div>
-          <input type="number" aria-label={'Width '+p.name} title={'Column width: '+p.name} min={100} max={700} step={10} value={columnWidths[p.id]||160} onChange={e=>{
+          <input type="number" aria-label={'Width '+p.name} title={'Column width: '+p.name} min={100} max={700} step={10} disabled={!!bulkDraft} value={columnWidths[p.id]||160} onChange={e=>{
             const width=Math.min(700,Math.max(100,Number(e.target.value)||160))
             setColumnWidths({...columnWidths,[p.id]:width})
           }} style={{width:64}} />
