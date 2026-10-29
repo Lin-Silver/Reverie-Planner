@@ -524,7 +524,17 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		if currentType != p.Type { writeJSON(w, 400, map[string]string{"error": "changing a property type requires a data migration"}); return }
 		if currentType == "title" && !p.Visible { writeJSON(w, 400, map[string]string{"error": "title property must remain visible"}); return }
 		if p.Config == "" { p.Config = "{}" }
-		if currentType != "title" { if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return } }
+		// The required title property is not creatable through this endpoint,
+		// but its existing config still needs the same JSON integrity checks.
+		if currentType == "title" {
+			if err := validatePlainPropertyConfig(p.Config); err != nil {
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
+				return
+			}
+		} else if err := validatePropertyDefinition(p.Type, p.Config); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
 		if err:=validateDBComputedDefinition(a.DB,actualDatabaseID,p.Type,p.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
 		if currentType == "relation" {
 			var cfg struct { TargetDatabaseID string `json:"targetDatabaseId"` }
