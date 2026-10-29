@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DatabaseView from './DatabaseView'
+import WorkspaceStorage from './WorkspaceStorage'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -720,6 +721,7 @@ export default function App() {
     if (view === 'settings') return (
       <div style={{ padding: 24, maxWidth: 720 }}>
         <h2>Settings</h2>
+        <WorkspaceStorage />
         <div className="form-row"><label>Theme</label>
           <select className="input" value={theme} onChange={(e) => setTheme(e.target.value as any)}>
             <option value="light">Light</option><option value="dark">Dark</option>

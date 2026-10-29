@@ -1,10 +1,16 @@
-# Reverie Planner
+# Reverie Planner V0.0.1
 
 Reverie Planner aims to replace Notion for a personal, local-first workspace: nested documents, a block editor, structured databases, multiple views, search and project planning in one app. Core workflows must work offline without an AI provider or a cloud account. The Go service persists data in SQLite; the React interface uses a loopback-only HTTP API.
 
 **Status: development preview, not complete Notion parity.** Pages, project/task planning and a substantial database subsystem are implemented. Import/export, templates, full property/view management, advanced relations, large-data performance and accessibility acceptance remain unfinished. Do not treat a green build as completion of the product.
 
 See [product direction and release gates](docs/PROJECT_DIRECTION.md), [branch audit and fixes](docs/PROJECT_AUDIT.md), [feature matrix](docs/PRODUCT_PARITY_MATRIX.md) and [database completion checklist](docs/DATABASE_COMPLETION_PLAN.md).
+
+## Linux and macOS quick start
+
+Extract the portable archive for your OS/CPU to a writable folder. Run `./start.sh`, open the printed local address, and use `./stop.sh` to stop. Source builds: `./build.sh` with Go 1.26 and Node 22+. Runtime archives need neither toolchain nor Python. See [portable data and backup guide](docs/PORTABLE.md).
+
+Settings → Local workspace shows exact data paths and creates consistent database snapshots. Stop the app before copying the entire workspace; snapshots alone do not include attachments or provider credentials. macOS builds are unsigned; platform acceptance is reported in the release PR checks.
 
 ## Windows quick start
 
