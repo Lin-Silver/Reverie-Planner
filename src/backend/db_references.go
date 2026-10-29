@@ -20,6 +20,11 @@ func validateDBReferenceValue(tx *sql.Tx, kind, config string, val any) error {
         if err := tx.QueryRow("SELECT COUNT(*) FROM members WHERE id=?",id).Scan(&count);err!=nil {return err}
         if count!=1{return fmt.Errorf("member does not exist")}
     case "relation":
+        // Saved legacy configurations can predate strict schema validation.
+        // Refuse ambiguous targets rather than using the last duplicate key.
+        if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+            return fmt.Errorf("invalid saved relation configuration: %w", err)
+        }
         var def struct { TargetDatabaseID string `json:"targetDatabaseId"` }
         if err:=json.Unmarshal([]byte(config),&def);err!=nil || def.TargetDatabaseID=="" {return fmt.Errorf("relation targetDatabaseId is required")}
         values,ok:=val.([]any)
