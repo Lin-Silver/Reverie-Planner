@@ -690,6 +690,15 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// readWritableDBRecordForUpdate checks both record and parent tombstones
+// against the transaction's SQLite snapshot, not a stale pre-write lookup.
+func readWritableDBRecordForUpdate(tx *sql.Tx, id string) (databaseID, title string, err error) {
+    err = tx.QueryRow(`SELECT r.database_id, r.title FROM db_records r
+        JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL
+        WHERE r.id=? AND r.deleted_at IS NULL`, id).Scan(&databaseID, &title)
+    return
+}
+
 func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 	dbID := r.URL.Query().Get("databaseId")
 	switch r.Method {
@@ -854,10 +863,8 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Keep the backing page version stable during property-only edits.
-		var dbID, previousTitle string
-		if err := tx.QueryRow(`SELECT r.database_id, r.title FROM db_records r
-			JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL
-			WHERE r.id=? AND r.deleted_at IS NULL`, body.ID).Scan(&dbID, &previousTitle); err != nil {
+		dbID, previousTitle, err := readWritableDBRecordForUpdate(tx, body.ID)
+		if err != nil {
 			tx.Rollback()
 			if errors.Is(err, sql.ErrNoRows) { writeJSON(w,404,map[string]string{"error":"record not found"}) } else { writeJSON(w,500,map[string]string{"error":err.Error()}) }
 			return
