@@ -19,7 +19,8 @@ export default function WorkspaceStorage({onImported}: {onImported: () => Promis
     }).then(setWorkspace).catch(e=>{if(!controller.signal.aborted)setError(String(e))})
     return()=>controller.abort()
   },[])
-  return <section className="storage-panel" aria-label="Portable workspace">
+  return <div className="storage-panel">
+    <section aria-label="Portable workspace">
     <h3>Local workspace {workspace && <small>v{workspace.version}</small>}</h3>
     <p>Your documents stay in this folder. Stop the app before moving or copying the entire workspace.</p>
     {workspace && <dl>{(['root','database','attachments','backups'] as const).map(key=><div key={key}><dt>{key}</dt><dd><code>{workspace[key]}</code></dd></div>)}</dl>}
@@ -32,10 +33,11 @@ export default function WorkspaceStorage({onImported}: {onImported: () => Promis
       }catch(e){setError((e as Error).message)}finally{setBusy(false)}
     }}>{busy?'Creating snapshot…':'Create database snapshot'}</button>
     <p role="status">{notice}</p>{error && <p role="alert">{error}</p>}
+    </section>
     <WorkspaceArchive />
     <MarkdownImport onImported={onImported} />
     <DocumentPackage onImported={onImported} />
     <CSVImport onImported={onImported} />
     <DatabasePackage onImported={onImported} />
-  </section>
+  </div>
 }

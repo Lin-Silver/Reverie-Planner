@@ -19,7 +19,7 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: inte
 | Properties/filter/sort/relations | Partial | Partially verified | Typed field schema, nested AND/OR filters, configurable select/date/number, formulas and relation rollups, scoped file attachment and version validation; more complex relation/formula behaviors and spreadsheet editing remain |
 | Search | Partial | Implemented | Global search across projects/tasks/pages |
 | Shortcuts & templates | Partial | In development | Ctrl/Cmd+K native focus-contained palette; five built-in editable page templates; custom templates pending |
-| Import/export & portability | Partial | In development | V0.0.1 native portable packages released. Single-page Markdown append/import and Markdown/block JSON export added on dev; complete Notion/workspace import/export remains open |
+| Import/export & portability | Partial | In development | V0.0.1 native portable packages released. dev includes workspace archive/isolated restore, page history/trash recovery, bounded Markdown ZIP + local assets, typed standalone CSV, document-tree packages and scalar database packages with independent views; full Notion/advanced database/asset compatibility remains open |
 
 ## Plane
 

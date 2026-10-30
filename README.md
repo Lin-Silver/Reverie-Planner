@@ -2,7 +2,7 @@
 
 Reverie Planner aims to replace Notion for a personal, local-first workspace: nested documents, a block editor, structured databases, multiple views, search and project planning in one app. Core workflows must work offline without an AI provider or a cloud account. The Go service persists data in SQLite; the React interface uses a loopback-only HTTP API.
 
-**Status: development preview, not complete Notion parity.** Pages, project/task planning and a substantial database subsystem are implemented. Import/export, templates, full property/view management, advanced relations, large-data performance and accessibility acceptance remain unfinished. Do not treat a green build as completion of the product.
+**Status: development preview, not complete Notion parity.** Pages, project/task planning and a substantial database subsystem are implemented. Complete Notion migration, custom templates, full property/view management, advanced relations, large-data performance and manual accessibility acceptance remain unfinished. Do not treat a green build as completion of the product.
 
 See [product direction and release gates](docs/PROJECT_DIRECTION.md), [branch audit and fixes](docs/PROJECT_AUDIT.md), [feature matrix](docs/PRODUCT_PARITY_MATRIX.md) and [database completion checklist](docs/DATABASE_COMPLETION_PLAN.md).
 
@@ -19,6 +19,24 @@ Settings → Local workspace shows exact data paths and creates consistent datab
 3. Use `stop.bat` for a graceful stop. The start console stays attached to the service; closing that console ends its process lifetime.
 
 The portable artifact includes the built frontend and backend and does not require Node.js, Go, Docker, or Python. Keep the folder writable so it can store `data/planner.db`, local configuration, and logs. Moving the whole folder preserves its relative data/configuration paths.
+
+## Development branch: transfer and recovery
+
+The published V0.0.1 packages are the initial baseline. Newer `dev` builds add
+built-in templates, favorites/recent pages, light/dark workspace materials,
+page history/trash recovery and verified workspace archives with isolated restore.
+Settings → Local workspace also contains bounded Markdown ZIP imports, typed CSV
+imports, document-tree packages and database packages. Core transfers work without
+an AI account. Each input is previewed; imports create independent copies rather
+than overwriting matching titles.
+
+Database packages preserve the supported scalar fields, record writing and
+independent view settings. Attachments, relations, formulas, select metadata and
+unknown settings require a workspace archive. These subsets do not establish
+complete Notion compatibility. See [database package limits](docs/DATABASE_PACKAGES.md),
+[Markdown packages](docs/MARKDOWN_PACKAGES.md), [CSV types](docs/CSV_IMPORT.md) and
+[development acceptance](docs/DEVELOPMENT_PLAN.md) for exact scope and CI evidence.
+Do not open newer-schema workspaces with the older release binary.
 
 ## AI providers and secrets
 
