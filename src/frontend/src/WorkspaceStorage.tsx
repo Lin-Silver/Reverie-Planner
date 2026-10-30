@@ -3,6 +3,7 @@ import WorkspaceArchive from './WorkspaceArchive'
 import MarkdownImport from './MarkdownImport'
 import DocumentPackage from './DocumentPackage'
 import CSVImport from './CSVImport'
+import DatabasePackage from './DatabasePackage'
 
 type Workspace = {version:string;root:string;database:string;attachments:string;backups:string}
 export default function WorkspaceStorage({onImported}: {onImported: () => Promise<void>}) {
@@ -35,5 +36,6 @@ export default function WorkspaceStorage({onImported}: {onImported: () => Promis
     <MarkdownImport onImported={onImported} />
     <DocumentPackage onImported={onImported} />
     <CSVImport onImported={onImported} />
+    <DatabasePackage onImported={onImported} />
   </section>
 }

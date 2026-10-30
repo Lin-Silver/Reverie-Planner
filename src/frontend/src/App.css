@@ -136,3 +136,23 @@ button.recovery-item[aria-pressed="true"] { outline: 2px solid var(--accent); ou
 .csv-sample table { border-collapse: collapse; width: 100%; font-size: .8125rem; }
 .csv-sample caption { text-align: left; padding: var(--space-3); color: var(--muted); }
 .csv-sample th,.csv-sample td { text-align: left; padding: var(--space-3); border-bottom: 1px solid var(--border); min-width: 8rem; max-width: 20rem; overflow-wrap: anywhere; white-space: pre-wrap; vertical-align: top; user-select: text; }
+
+/* Transfer reading stays still. Only occasional pointer feedback transitions. */
+.database-transfer { min-width: 0; }
+.database-transfer .archive-file-label { margin-top: var(--space-4); min-width: 0; }
+.database-transfer select { width: 100%; min-width: 0; }
+.database-transfer details { margin-block: var(--space-4); color: var(--muted); }
+.database-transfer summary { cursor: pointer; font-weight: 500; }
+.transfer-steps { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-6); padding: 0; margin: var(--space-4) 0; list-style: none; }
+.transfer-steps li { display: flex; align-items: center; gap: var(--space-2); font-size: .8125rem; color: var(--muted); }
+.transfer-steps li > span { display: inline-grid; place-items: center; width: 1.5rem; height: 1.5rem; border: 1px solid var(--border-strong); border-radius: 50%; font-size: .75rem; font-variant-numeric: tabular-nums; }
+.transfer-steps [aria-current='step'] { color: var(--accent); font-weight: 600; }
+.transfer-steps [aria-current='step'] > span { background: var(--accent-soft); border-color: var(--accent); }
+.transfer-steps [data-complete] > span { color: var(--success); border-color: currentColor; }
+.transfer-status { min-height: 3.25em; color: var(--muted); overflow-wrap: anywhere; }
+.database-transfer .archive-preview h4 { margin-top: 0; }
+.database-transfer[data-input='keyboard'] .btn { transition: none; transform: none; }
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+ .database-transfer[data-input='pointer'] .transfer-steps li > span { transition: background-color var(--duration-press) ease, color var(--duration-press) ease, border-color var(--duration-press) ease; }
+}
+@media (max-width: 768px) { .database-transfer .archive-actions .btn, .database-transfer summary { min-height: 2.75rem; white-space: normal; } }

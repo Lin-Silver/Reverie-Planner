@@ -69,6 +69,9 @@ func localSecurityMiddleware(config AppConfig, next http.Handler) http.Handler {
 			if r.URL.Path == "/api/import/csv" {
 				limit = maxCSVRequestBytes + 1
 			}
+			if r.URL.Path == "/api/database-package" {
+				limit = maxDatabasePackageBytes + 1
+			}
 			if r.URL.Path == "/api/document-package" {
 				limit = maxDocumentPackageBytes + 1
 			}
