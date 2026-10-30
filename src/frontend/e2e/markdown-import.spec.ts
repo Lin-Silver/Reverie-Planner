@@ -2,6 +2,8 @@ import {expect, test} from '@playwright/test'
 import {execFileSync} from 'node:child_process'
 import fs from 'node:fs/promises'
 
+test.use({trace: 'retain-on-failure', screenshot: 'only-on-failure'})
+
 function zip(files: Record<string,string>): Buffer {
  return execFileSync(process.platform==='win32'?'python':'python3', ['-c', 'import sys,json,io,zipfile; b=io.BytesIO(); z=zipfile.ZipFile(b,"w",zipfile.ZIP_DEFLATED); [z.writestr(k,v) for k,v in json.load(sys.stdin).items()]; z.close(); sys.stdout.buffer.write(b.getvalue())'], {input:JSON.stringify(files)})
 }
@@ -71,19 +73,26 @@ test('Markdown package reports unsupported assets and rejects broken links witho
  await expect(panel.getByRole('alert')).toContainText('missing local link target')
  await expect(panel.getByRole('button',{name:'Import as new pages',exact:true})).toBeDisabled()
  expect(await (await page.request.get('/api/pages')).json()).toEqual(before)
+ console.log('import-narrow: resizing')
  await page.setViewportSize({width:390,height:844})
  await page.emulateMedia({reducedMotion:'reduce',colorScheme:'light'})
  const navigation=page.getByRole('dialog',{name:'Workspace navigation',exact:true})
  await expect(navigation).toBeVisible()
  await navigation.getByRole('button',{name:'Close navigation',exact:true}).click()
  await expect(navigation).toHaveCount(0)
+ console.log('import-narrow: navigation closed')
+ console.log('import-narrow: choosing fixed package')
  await panel.getByLabel('Markdown package ZIP').setInputFiles({name:'fixed.zip',mimeType:'application/zip',buffer:zip({'Page.md':'# Fixed\n\nOffline again.'})})
  await panel.getByRole('button',{name:'Preview Markdown package',exact:true}).click()
  await expect(panel.getByRole('status')).toContainText('Preview ready')
+ console.log('import-narrow: preview ready')
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
  await fs.mkdir('test-results/import-evidence',{recursive:true})
+ console.log('import-narrow: capturing screenshot')
  await page.screenshot({path:'test-results/import-evidence/narrow-preview.png',fullPage:true})
+ console.log('import-narrow: screenshot captured')
  await panel.getByRole('button',{name:'Import as new pages',exact:true}).focus()
  await page.keyboard.press('Enter')
+ console.log('import-narrow: submitted by keyboard')
  await expect(panel.getByRole('status')).toContainText('Imported 1 pages')
 })

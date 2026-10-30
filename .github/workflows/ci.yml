@@ -26,6 +26,9 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install chromium
         working-directory: src/frontend
+      - name: Verify Markdown import browser workflow
+        run: npx playwright test markdown-import.spec.ts
+        working-directory: src/frontend
       - name: Run browser end-to-end tests
         run: npm run test:e2e
         working-directory: src/frontend
@@ -37,6 +40,9 @@ jobs:
           path: |
             src/frontend/test-results/database-evidence/
             src/frontend/test-results/import-evidence/
+            src/frontend/test-results/**/trace.zip
+            src/frontend/test-results/**/test-failed-*.png
+            src/frontend/test-results/**/error-context.md
           if-no-files-found: warn
       - name: Verify launcher rejects unrelated healthy services
         shell: pwsh
@@ -133,6 +139,9 @@ jobs:
         working-directory: src/frontend
       - run: npx playwright install --with-deps chromium
         working-directory: src/frontend
+      - name: Verify Markdown import browser workflow
+        run: npx playwright test markdown-import.spec.ts
+        working-directory: src/frontend
       - run: npm run test:e2e
         working-directory: src/frontend
       - name: Upload workspace and database UI evidence
@@ -143,6 +152,9 @@ jobs:
           path: |
             src/frontend/test-results/database-evidence/
             src/frontend/test-results/import-evidence/
+            src/frontend/test-results/**/trace.zip
+            src/frontend/test-results/**/test-failed-*.png
+            src/frontend/test-results/**/error-context.md
           if-no-files-found: warn
       - run: python3 scripts/test-portable.py
       - name: Package native portable app
