@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import DatabaseView from './DatabaseView'
 import WorkspaceStorage from './WorkspaceStorage'
 import Icon from './Icon'
@@ -342,6 +342,7 @@ export default function App() {
     }
     if (window.matchMedia('(max-width: 768px)').matches) setSidebarCollapsed(true)
     setView('page')
+    return openedId
   }
   const [recovery, setRecovery] = useState<{pageId?: string; version?: number; returnFocus?: HTMLElement | null} | null>(null)
   const [pageRecoveryBusy, setPageRecoveryBusy] = useState(false)
@@ -442,6 +443,26 @@ export default function App() {
   const [reloadToken, setReloadToken] = useState(0)
   useEffect(() => { pageDiscardRef.current = false }, [reloadToken])
   const [cmdOpen, setCmdOpen] = useState(false)
+  const openPageLink = useEffectEvent(async (id: string) => {
+    try { const full = await apiFetch<Page>(`/api/pages?id=${encodeURIComponent(id)}`); const opened = await openPageEditor(full); if (opened) window.history.replaceState(null, '', '/?page=' + encodeURIComponent(opened)) }
+    catch (e) { setError((e as Error).message) }
+  })
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null
+      if (!anchor || event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+      const href = anchor.getAttribute('href') || ''
+      if (!href.startsWith('/?page=')) return
+      const url = new URL(href, window.location.origin)
+      const id = url.searchParams.get('page')
+      if (!id) return
+      event.preventDefault(); event.stopPropagation(); void openPageLink(id)
+    }
+    document.addEventListener('click', onClick, true)
+    const initial = new URLSearchParams(window.location.search).get('page')
+    if (initial) queueMicrotask(() => { void openPageLink(initial) })
+    return () => document.removeEventListener('click', onClick, true)
+  }, [])
   const unreadCount = notifications.filter((n) => !n.read).length
   const [cmdIndex, setCmdIndex] = useState(0)
   const [cmdQuery, setCmdQuery] = useState('')
@@ -788,7 +809,7 @@ export default function App() {
     if (view === 'settings') return (
       <div style={{ padding: 24, maxWidth: 720 }}>
         <h2>Settings</h2>
-        <WorkspaceStorage />
+        <WorkspaceStorage onImported={refresh} />
         <div className="form-row"><label>Theme</label>
           <select className="input" value={theme} onChange={(e) => setTheme(e.target.value as any)}>
             <option value="light">Light</option><option value="dark">Dark</option>

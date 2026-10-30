@@ -230,6 +230,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", ctx.handleHealth)
+	mux.HandleFunc("/api/import/markdown-preview", ctx.handleMarkdownImport)
+	mux.HandleFunc("/api/import/markdown", ctx.handleMarkdownImport)
 	mux.HandleFunc("/api/workspace", ctx.handleWorkspace)
 	mux.HandleFunc("/api/workspace/archive", ctx.handleWorkspaceArchive)
 	mux.HandleFunc("/api/workspace/restore-preview", ctx.handleWorkspaceRestore)

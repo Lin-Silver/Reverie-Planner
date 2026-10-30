@@ -66,6 +66,12 @@ func localSecurityMiddleware(config AppConfig, next http.Handler) http.Handler {
 			if r.URL.Path == "/api/workspace/restore-preview" || r.URL.Path == "/api/workspace/restore" {
 				limit = maxWorkspaceArchiveBytes + 1
 			}
+			if r.URL.Path == "/api/import/markdown-preview" {
+				limit = maxMarkdownZIPBytes + 1
+			}
+			if r.URL.Path == "/api/import/markdown" {
+				limit = 40 << 20
+			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 		next.ServeHTTP(w, r)

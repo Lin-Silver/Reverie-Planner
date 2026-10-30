@@ -1,5 +1,5 @@
 """Native platform lifecycle, ownership, portable paths and restart test."""
-import contextlib, json, pathlib, shutil, socket, sqlite3, subprocess, sys, tempfile, time, urllib.request
+import contextlib, io, zipfile, json, pathlib, shutil, socket, sqlite3, subprocess, sys, tempfile, time, urllib.request
 root=pathlib.Path(__file__).resolve().parents[1]
 exe='ReveriePlanner.exe' if sys.platform=='win32' else 'ReveriePlanner'
 http=urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -28,6 +28,28 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
         assert record['values'][amount['id']] == 11 and record['values'][formula['id']] == 22
         assert record['values'][self_relation['id']] == [native_record['id']]
         assert any(v['id']==view['id'] and v['config']==view['config'] for v in api('/api/db/views?databaseId='+database['id']))
+    # Synthetic text-only import travels through restart, archive and CLI restore.
+    import_zip=io.BytesIO()
+    with zipfile.ZipFile(import_zip,'w',zipfile.ZIP_DEFLATED) as package:
+        package.writestr('Native import.md','# Native import\n\nOffline source.')
+    import_zip=import_zip.getvalue()
+    def import_package():
+        request=urllib.request.Request(url+'/api/import/markdown-preview',data=import_zip,method='POST')
+        with http.open(request) as response: preview=json.load(response)
+        boundary='reverie-native-import-boundary'
+        fields=[('digest',preview['digest'].encode()),('operationKey',b'native_import_operation_123456'),('blocks',json.dumps([{'path':'Native import.md','content':[{'type':'paragraph','content':[{'type':'text','text':'Native imported writing','styles':{}}]}]}]).encode())]
+        body=b''
+        for name,value in fields:
+            body+=f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode()+value+b'\r\n'
+        body+=f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="pages.zip"\r\nContent-Type: application/zip\r\n\r\n'.encode()+import_zip+f'\r\n--{boundary}--\r\n'.encode()
+        request=urllib.request.Request(url+'/api/import/markdown',data=body,method='POST',headers={'Content-Type':'multipart/form-data; boundary='+boundary})
+        with http.open(request) as response: return json.load(response)
+    def check_import():
+        before=len(api('/api/pages'))
+        assert import_package()==imported
+        assert len(api('/api/pages'))==before
+        document=api('/api/pages?id='+imported['pages']['Native import.md'])
+        assert document['parentId']==imported['rootId'] and 'Native imported writing' in document['content']
     for cycle in range(2):
         proc=subprocess.Popen([str(dest/'runtime'/exe),'--root='+str(dest)],cwd=tempfile.gettempdir())
         try:
@@ -46,6 +68,8 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             try: http.open(req);raise AssertionError('unauthenticated stop accepted')
             except urllib.error.HTTPError as err: assert err.code in (401,403)
             if cycle == 0:
+                imported=import_package()
+                check_import()
                 saved = api('/api/pages', 'POST', {'title':'Native recovery page','workspace':True,'content':'Original native writing'})
                 edited = api('/api/pages','PUT',{**saved,'content':'Newer native writing'})
                 api(f"/api/pages?id={edited['id']}&version={edited['version']}",'DELETE')
@@ -59,6 +83,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                 for path,item in [('/api/db/properties',formula),('/api/db/properties',amount),('/api/db/records',native_record),('/api/db/views',view),('/api/databases',database)]:
                     api(path+'?id='+item['id'],'DELETE')
             else:
+                check_import()
                 trash=api('/api/page-trash')
                 item=next(p for p in trash if p['id']==saved['id'])
                 api('/api/page-trash','POST',{'id':item['id'],'version':item['version']})
@@ -110,6 +135,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                     break
                 except OSError: time.sleep(.1)
             else: raise RuntimeError('restored service did not become ready')
+            check_import()
             assert api('/api/pages?id='+saved['id'])['content']=='Newer native writing'
             history=api('/api/page-history?pageId='+saved['id'])
             assert any(p['version']==saved['version'] for p in history)

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import WorkspaceArchive from './WorkspaceArchive'
+import MarkdownImport from './MarkdownImport'
 
 type Workspace = {version:string;root:string;database:string;attachments:string;backups:string}
-export default function WorkspaceStorage() {
+export default function WorkspaceStorage({onImported}: {onImported: () => Promise<void>}) {
   const [workspace,setWorkspace]=useState<Workspace|null>(null)
   const [error,setError]=useState('')
   const [notice,setNotice]=useState('')
@@ -29,5 +30,6 @@ export default function WorkspaceStorage() {
     }}>{busy?'Creating snapshot…':'Create database snapshot'}</button>
     <p role="status">{notice}</p>{error && <p role="alert">{error}</p>}
     <WorkspaceArchive />
+    <MarkdownImport onImported={onImported} />
   </section>
 }
