@@ -56,6 +56,19 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             assert response.read()==b'Native portable attachment bytes'
             assert response.headers['X-Content-Type-Options']=='nosniff'
             assert response.headers['Content-Disposition'].startswith('attachment')
+    def import_documents():
+        path='/api/document-package?digest='+document_digest+'&operationKey=native_documents_123456'
+        request=urllib.request.Request(url+path,data=document_raw,method='POST',headers={'Content-Type':'application/json'})
+        with http.open(request) as response: return json.load(response)
+    def check_documents():
+        before=len(api('/api/pages'))
+        assert import_documents()==documents
+        assert len(api('/api/pages'))==before
+        copied=api('/api/pages?id='+documents['pages'][imported['pages']['Native import.md']])
+        href=json.loads(copied['content'])[0]['content'][1]['href']
+        with http.open(url+href) as response: assert response.read()==b'Native portable attachment bytes'
+        exported=api('/api/document-package?rootId='+documents['pages'][imported['rootId']])
+        assert len(exported['pages'])==2 and len(exported['assets'])==1
     for cycle in range(2):
         proc=subprocess.Popen([str(dest/'runtime'/exe),'--root='+str(dest)],cwd=tempfile.gettempdir())
         try:
@@ -76,6 +89,11 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             if cycle == 0:
                 imported=import_package()
                 check_import()
+                document_raw=json.dumps(api('/api/document-package?rootId='+imported['rootId'])).encode()
+                request=urllib.request.Request(url+'/api/document-package?preview=1',data=document_raw,method='POST')
+                with http.open(request) as response: document_digest=json.load(response)['digest']
+                documents=import_documents()
+                check_documents()
                 saved = api('/api/pages', 'POST', {'title':'Native recovery page','workspace':True,'content':'Original native writing'})
                 edited = api('/api/pages','PUT',{**saved,'content':'Newer native writing'})
                 api(f"/api/pages?id={edited['id']}&version={edited['version']}",'DELETE')
@@ -90,6 +108,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                     api(path+'?id='+item['id'],'DELETE')
             else:
                 check_import()
+                check_documents()
                 trash=api('/api/page-trash')
                 item=next(p for p in trash if p['id']==saved['id'])
                 api('/api/page-trash','POST',{'id':item['id'],'version':item['version']})
@@ -142,6 +161,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                 except OSError: time.sleep(.1)
             else: raise RuntimeError('restored service did not become ready')
             check_import()
+            check_documents()
             assert api('/api/pages?id='+saved['id'])['content']=='Newer native writing'
             history=api('/api/page-history?pageId='+saved['id'])
             assert any(p['version']==saved['version'] for p in history)

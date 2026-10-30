@@ -24,6 +24,7 @@ A quiet local workspace for writing, finding and organizing information. Use a f
 | Database recovery | Native immediate dialog; opaque reading panel; abort stale category loads; retain category through refresh, announce success and return focus; explicit dependency-order errors and loading retry. |
 | Editor files | Markdown import appends; Markdown export simplifies rich blocks; JSON export preserves editor block structure. These are single-page transfers, not complete workspace/Notion migration. |
 | Markdown packages | Settings-based source/parent/attachment path and size preview; opaque selectable plain text, explicit format blockers, immediate keyboard controls and busy/error/success feedback. Import creates new pages; no decoration or new reading motion. |
+| Document packages | Saved-tree download and read-only title/block preview, explicit limits and blockers, separate-copy confirmation and idempotent retry. Opaque source panel, named controls, immediate keyboard feedback; no new motion or material. |
 | Database controls | Existing schema/conflict guards stay intact. Controls share tokens and the toolbar has a clear structural boundary. |
 
 ## Materials and accessibility

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import WorkspaceArchive from './WorkspaceArchive'
 import MarkdownImport from './MarkdownImport'
+import DocumentPackage from './DocumentPackage'
 
 type Workspace = {version:string;root:string;database:string;attachments:string;backups:string}
 export default function WorkspaceStorage({onImported}: {onImported: () => Promise<void>}) {
@@ -31,5 +32,6 @@ export default function WorkspaceStorage({onImported}: {onImported: () => Promis
     <p role="status">{notice}</p>{error && <p role="alert">{error}</p>}
     <WorkspaceArchive />
     <MarkdownImport onImported={onImported} />
+    <DocumentPackage onImported={onImported} />
   </section>
 }
