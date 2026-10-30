@@ -66,3 +66,10 @@ regressions. Browser tests cover actual download → preview → lost-response r
 confirmation. These are implemented checks; see DEVELOPMENT_PLAN.md for actual
 SHA-matched native results. Full Notion migration, assets/advanced properties,
 10,000-record scale and manual accessibility/platform acceptance remain open.
+
+Native acceptance: source `ba43477778c234f2e12538aa984d018b7bf7492c`,
+[CI 41082127088](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/41082127088).
+Linux, Windows and macOS each passed 12/12 migration browser tests and 82/82 full
+browser tests, backend/build checks and the extended native restart/archive/CLI
+restore/two-restored-start/package workflow. Original snapshot assertions remain.
+Manual platform and assistive-technology acceptance are separate open work.

@@ -41,6 +41,7 @@ This is the durable checkpoint for human and scheduled development. The target i
 - [ ] Markdown directory/Notion export-package import: preview, nested pages, links, assets, supported CSV database mapping, explicit unsupported-format reports.
 - [ ] Transactional import with collision policy; rollback and restart consistency.
 - [x] Bounded native document-tree transfer: editor block JSON, hierarchy, icons, local links/assets, separate-copy preview/import, rollback/receipt/restart/archive checks; accepted on `f9c34617fb48d3d2c58db40be20227cc73f5c37e`, native CI 41009774686. This is document-only; see DOCUMENT_PACKAGES.md.
+- [x] Bounded live scalar database packages: explicit typed fields/values, backing-page writing, remapped internal links, independent views, preview, transactional/readback rollback and persistent retry; native acceptance on `ba43477778c234f2e12538aa984d018b7bf7492c`. See DATABASE_PACKAGES.md.
 - [ ] Reversible document/database export; asset paths, typed values and independent views retained.
 - [ ] User-created templates, duplication, covers and complete page organization; offline browser acceptance.
 
@@ -189,3 +190,13 @@ The owner explicitly authorized uploading this increment to `dev` (full access).
 An official Go 1.26.10 SDK was downloaded and verified against official SHA-256 metadata. Local full Go tests now pass and new Go files are gofmt-formatted. Browser installation returned truncated archives, so no local browser pass is claimed; native CI remains required. Frontend build/lint and migration-test type checking are rerun for this correction. Final native acceptance is still pending the corrected source SHA.
 
 Local follow-up verification: full Go tests and `go vet ./...` passed using the verified SDK. The backend built with `-buildvcs=false` because VCS stamping failed in this managed worktree; native CI retains ordinary builds. The extended portable script now transfers a scalar database, edits only its copied view, retries after source restart, archives/restores it via the offline CLI and checks IDs/types/values/view independence/receipts through two restored starts. The complete extended script passed locally. This lifecycle increment requires its own native CI before final acceptance.
+
+### Final native acceptance — database packages
+
+Accepted source, tests, workflow and native lifecycle script: `ba43477778c234f2e12538aa984d018b7bf7492c`, [CI 41082127088](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/41082127088), **success**. Linux, Windows and macOS each passed backend tests/build, frontend build/lint (14 existing warnings, 0 errors), migration-test type checking, **12/12 focused migration browser tests and 82/82 full browser tests**, portable lifecycle, database-package retry after source restart, whole-workspace archive/CLI restore/two restored starts and native packaging. Windows additionally passed unrelated-service ownership and graceful start/stop checks. No assertions were removed from the original snapshot regression.
+
+Local full Go tests, go vet, frontend build/lint, migration-test type checking and the extended portable script passed. Local browser installation returned truncated downloads, so browser acceptance is the native CI evidence above. The exact accepted Linux artifact's 390px screenshot was downloaded and visually reviewed: readable opaque preview, wrapped steps, usable buttons, no page overflow and independent horizontal sample scrolling. This is screenshot/automated evidence, not manual hardware, gesture-feel or screen-reader certification.
+
+The owner authorization superseded the earlier upload block. Only main/dev remain; main and the published V0.0.1 assets were not changed. This follow-up changes documentation only; any documentation-only CI is separate from acceptance of the source SHA above.
+
+Next unmet workflow: database attachments and configured/advanced fields in reversible packages, followed by integrated Notion ZIP mapping. Complete Notion compatibility, real authorized v6/v7 samples, 10,000-record performance, advanced reciprocal dependency lifecycle, custom templates/covers and manual accessibility/macOS signing remain open. Do not close #5 or mark all of M2 complete from this bounded scalar increment.
