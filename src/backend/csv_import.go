@@ -66,8 +66,8 @@ func csvTypedValue(kind, raw string) (any, error) {
 		return raw, nil
 	}
 	if kind == "title" {
-		if strings.TrimSpace(raw) == "" || len(raw) > 500 {
-			return nil, errors.New("title must contain 1–500 bytes of non-blank text")
+		if strings.TrimSpace(raw) == "" || len(raw) > 500 || strings.ContainsAny(raw, "\r\n") {
+			return nil, errors.New("title must contain 1–500 bytes of non-blank single-line text")
 		}
 		return raw, nil
 	}

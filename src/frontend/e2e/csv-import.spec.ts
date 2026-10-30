@@ -45,8 +45,14 @@ test('CSV preview mapping commits typed records once and keeps new database view
  const third=records.find((r:{title:string})=>r.title==='Third')
  expect(third.values[field('Amount')]).toBeUndefined();expect(third.values[field('Notes')]).toBe('  literal  ')
  await page.goto('/?page='+result!.pageId)
- await expect(page.locator('.database-workspace')).toContainText('First, row')
- await page.reload();await expect(page.locator('.database-workspace')).toContainText('第二行')
+ const firstRow=page.locator('[data-record-id="'+first.id+'"]')
+ await expect(firstRow.getByRole('textbox',{name:'Name',exact:true})).toHaveValue('First, row')
+ const notes=firstRow.getByRole('textbox',{name:'Notes',exact:true})
+ await expect(notes).toHaveValue('line one\nline two')
+ await notes.focus();await firstRow.getByRole('textbox',{name:'Name',exact:true}).focus()
+ expect((await(await page.request.get('/api/db/records?databaseId='+database.id)).json()).find((record:{id:string})=>record.id===first.id).values[field('Notes')]).toBe('line one\nline two')
+ await page.reload()
+ await expect(page.locator('[data-record-id="'+second.id+'"]').getByRole('textbox',{name:'Name',exact:true})).toHaveValue('第二行')
 })
 
 test('CSV validation blocks partial import and permits keyboard correction in narrow reduced-motion layout',async({page})=>{

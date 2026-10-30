@@ -525,7 +525,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
       <div role="group" aria-label="Column visibility" style={{display:'flex',gap:10,flexWrap:'wrap',padding:8}}>
         {props.map(p=><label key={p.id}><input type="checkbox" checked={!hiddenColumns.includes(p.id)} disabled={p.type==='title' || !!bulkDraft} onChange={()=>toggle(p.id)} />{p.name}</label>)}
       </div>
-      <small>Column order and widths are stored with this view when you click Save view settings. Use Alt+Arrow keys to move between editable cells; Alt+click and Alt+Shift+click/drag select a rectangular cell range; Alt+Shift+Arrow extends a range from a focused cell; Shift+Up/Down on row checkboxes selects rows; Enter saves, Escape cancels.</small>
+      <small>Column order and widths are stored with this view when you click Save view settings. Use Alt+Arrow keys to move between editable cells; Alt+click and Alt+Shift+click/drag select a rectangular cell range; Alt+Shift+Arrow extends a range from a focused cell; Shift+Up/Down on row checkboxes selects rows; Enter saves, Escape cancels. In multiline text, Ctrl/Command+Enter saves.</small>
     </details>
     {selectedRecords.length>0&&<div style={{marginBottom:8}}>
       <strong>{selectedRecords.length} selected</strong>
@@ -603,6 +603,18 @@ function Cell({ prop, recordId, value, onChange }: { prop: DBProperty; recordId:
       if(e.key==='Enter')e.currentTarget.blur()
       if(e.key==='Escape'){e.currentTarget.value=String(value??'');e.currentTarget.blur()}
     }} />
+  // A single-line input silently strips imported line breaks even before edit.
+  // Keep multiline cells readable and do not write normalized DOM newlines back
+  // merely because a user focused/blurred a CSV field containing a lone CR.
+  if (prop.type === 'text' && /[\r\n]/.test(String(value ?? ''))) {
+    const original=String(value ?? '').replace(/\r\n?/g,'\n')
+    return <textarea aria-label={prop.name} key={String(value)} defaultValue={original} rows={3}
+      onBlur={e=>{if(e.currentTarget.value!==original)onChange(e.currentTarget.value)}}
+      onKeyDown={e=>{
+        if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))e.currentTarget.blur()
+        if(e.key==='Escape'){e.currentTarget.value=original;e.currentTarget.blur()}
+      }} style={{width:'100%',minWidth:0,resize:'vertical',background:'var(--card)',color:'var(--fg)',font:'inherit'}} />
+  }
   if (prop.type === 'date') return <input aria-label={prop.name} type="date" value={String(value ?? '').slice(0, 10)} onChange={e => onChange(e.target.value || null)} />
   if (prop.type === 'select') {
     let options: string[] = []

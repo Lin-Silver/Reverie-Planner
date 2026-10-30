@@ -11,13 +11,13 @@ Settings → Local workspace → Import a CSV database. No AI, account, upload s
 
 | Type | Accepted values |
 | --- | --- |
-| Title / Text | Literal strings; preserve whitespace and formula-looking text. Titles cannot be blank. NUL is refused in every cell. |
+| Title / Text | Literal strings; preserve whitespace and formula-looking text. Titles cannot be blank or multiline. NUL is refused in every cell. |
 | Number | JSON decimal notation including exponents; finite IEEE-754 values in ±9,007,199,254,740,991. No separators/currency/hex/NaN. Keep large IDs and exact decimal/accounting strings as Text; numbers use the app's ordinary floating-point precision. |
 | Checkbox | Exactly `true`, `false` or empty; no guessed translations or 0/1 coercion. |
 | Date | YYYY-MM-DD or RFC3339, using the existing property validator. |
 | URL / Email | Existing HTTP(S) URL / email validator. No fetching or link execution in preview. |
 
-Empty non-text cells are absent, never coerced to zero/false. Non-empty typed cells with surrounding whitespace are refused; choose Text to preserve those bytes. Preview shows up to five unconverted source records, total record count, type choices and up to 100 row/column errors with the full error count. Any error blocks the whole commit. The sample is escaped React text on an opaque, selectable, horizontally scrollable table with a keyboard focus target; no source HTML is rendered.
+Empty non-text cells are absent, never coerced to zero/false. Non-empty typed cells with surrounding whitespace are refused; choose Text to preserve those bytes. Preview shows up to five unconverted source records, total record count, type choices and up to 100 row/column errors with the full error count. Any error blocks the whole commit. Multiline text uses a textarea in the database table; focusing/blurring without edits preserves the stored writing. The sample is escaped React text on an opaque, selectable, horizontally scrollable table with a keyboard focus target; no source HTML is rendered.
 
 ## Safety and retry
 

@@ -187,7 +187,7 @@ func TestCSVPreviewRejectsMalformedAmbiguousAndUnsupportedInput(t *testing.T) {
 	}
 }
 func TestCSVPreviewListsAllTypedErrorsAndCapsResponse(t *testing.T) {
-	cases := []struct{ kind, source string }{{"title", " "}, {"title", strings.Repeat("a", 501)}, {"text", "bad\x00text"}, {"text", strings.Repeat("a", 32769)}, {"number", "12,000"}, {"number", "9007199254740993"}, {"number", "NaN"}, {"number", "1e999"}, {"number", " 12"}, {"number", "0x1p2"}, {"checkbox", "yes"}, {"date", "10/30/2026"}, {"date", "2026-02-30"}, {"url", "javascript:alert(1)"}, {"email", "not email"}}
+	cases := []struct{ kind, source string }{{"title", " "}, {"title", "line\nbreak"}, {"title", strings.Repeat("a", 501)}, {"text", "bad\x00text"}, {"text", strings.Repeat("a", 32769)}, {"number", "12,000"}, {"number", "9007199254740993"}, {"number", "NaN"}, {"number", "1e999"}, {"number", " 12"}, {"number", "0x1p2"}, {"checkbox", "yes"}, {"date", "10/30/2026"}, {"date", "2026-02-30"}, {"url", "javascript:alert(1)"}, {"email", "not email"}}
 	for _, c := range cases {
 		t.Run(c.kind+"/"+c.source[:min(len(c.source), 15)], func(t *testing.T) {
 			if _, err := csvTypedValue(c.kind, c.source); err == nil {
