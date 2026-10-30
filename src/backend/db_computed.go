@@ -47,33 +47,6 @@ func parseRollupDefinition(config string) (rollupDefinition,error) {
     if !map[string]bool{"count":true,"sum":true,"average":true,"min":true,"max":true}[def.Aggregate] {return def,fmt.Errorf("unsupported rollup aggregate")}
     return def,nil
 }
-// Computed fields may only refer to persisted (noncomputed) properties; no code
-// evaluation, recursive formula execution, SQL snippets or cyclic dependencies.
-func validateDBComputedDefinition(db dbComputedQueryer, databaseID, kind, config string) error {
-    switch kind {
-    case "formula":
-        def,err:=parseFormulaDefinition(config);if err!=nil{return err}
-        for _,operand:=range def.Args {
-            if operand.PropertyID=="" {continue}
-            var propertyType string
-            if err:=db.QueryRow("SELECT type FROM db_properties WHERE id=? AND database_id=? AND deleted_at IS NULL",operand.PropertyID,databaseID).Scan(&propertyType);err!=nil{return fmt.Errorf("formula property not found")}
-            if !map[string]bool{"title":true,"text":true,"number":true,"checkbox":true}[propertyType]{return fmt.Errorf("unsupported formula operand property type")}
-        }
-    case "rollup":
-        def,err:=parseRollupDefinition(config);if err!=nil{return err}
-        var kind,relationConfig string
-        if err:=db.QueryRow("SELECT type, config FROM db_properties WHERE id=? AND database_id=? AND deleted_at IS NULL",def.RelationPropertyID,databaseID).Scan(&kind,&relationConfig);err!=nil||kind!="relation"{return fmt.Errorf("rollup must reference relation property")}
-        var relation struct{TargetDatabaseID string `json:"targetDatabaseId"`}
-        // A legacy or corrupted relation config must not be interpreted with
-        // encoding/json last-key-wins semantics when defining a rollup.
-        if err:=rejectDuplicateJSONKeys([]byte(relationConfig));err!=nil{return fmt.Errorf("invalid relation configuration: %w",err)}
-        if err:=json.Unmarshal([]byte(relationConfig),&relation);err!=nil{return fmt.Errorf("invalid relation configuration")}
-        var targetType string
-        if err:=db.QueryRow("SELECT type FROM db_properties WHERE id=? AND database_id=? AND deleted_at IS NULL",def.TargetPropertyID,relation.TargetDatabaseID).Scan(&targetType);err!=nil{return fmt.Errorf("rollup target property not found")}
-        if def.Aggregate!="count" && targetType!="number" {return fmt.Errorf("numeric rollup requires a number property")}
-    }
-    return nil
-}
 func formulaValue(def formulaDefinition, rec DBRecord, byID map[string]DBProperty) any {
     vals:=make([]any,0,len(def.Args))
     for _,arg:=range def.Args {

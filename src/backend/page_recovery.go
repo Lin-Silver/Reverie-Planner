@@ -324,6 +324,21 @@ func (a *AppContext) handlePageTrash(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Deleted linked pages no longer protect their database/view from being
+	// trashed. Validate both targets again before publishing the saved link.
+	if p.LinkedDatabaseID != "" || p.LinkedViewID != "" {
+		var count int
+		if err = tx.QueryRow(`SELECT COUNT(*) FROM databases d WHERE d.id=? AND d.deleted_at IS NULL
+			AND (?='' OR EXISTS(SELECT 1 FROM db_views v WHERE v.id=? AND v.database_id=d.id AND v.deleted_at IS NULL))`,
+			p.LinkedDatabaseID, p.LinkedViewID, p.LinkedViewID).Scan(&count); err != nil {
+			recoveryReadError(w, err)
+			return
+		}
+		if count != 1 {
+			writeJSONError(w, 409, "restore linked database and view before restoring this page")
+			return
+		}
+	}
 	if _, err = tx.Exec("DELETE FROM page_trash WHERE id=? AND version=?", request.ID, request.Version); err != nil {
 		recoveryReadError(w, err)
 		return

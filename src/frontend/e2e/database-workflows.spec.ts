@@ -1307,3 +1307,120 @@ test('list record action moves to trash and restores the same record', async ({p
   await page.getByLabel('Close database trash').click()
   await expect(page.getByTestId('list-record').filter({hasText:'List trash action'})).toBeVisible()
 })
+
+test('database trash restores computed inputs first, retries loading and returns focus', async ({page}) => {
+  const host=await makeDatabase(page)
+  const amount=await property(page,host.databaseId,'Recovery amount','number')
+  const formula=await property(page,host.databaseId,'Recovery formula','formula',JSON.stringify({operation:'multiply',args:[{propertyId:amount.id},{number:2}]}))
+  const item=await record(page,host.databaseId,'Computed recovery')
+  expect((await page.request.put(API+'/db/records',{data:{id:item.id,title:item.title,version:item.version,values:{[amount.id]:9}}})).status()).toBe(200)
+  expect((await page.request.delete(API+'/db/properties?id='+formula.id)).status()).toBe(204)
+  expect((await page.request.delete(API+'/db/properties?id='+amount.id)).status()).toBe(204)
+  await reopen(page,host)
+  await page.setViewportSize({width:390,height:844})
+  await page.emulateMedia({reducedMotion:'reduce'})
+  const navigation=page.getByRole('dialog',{name:'Workspace navigation',exact:true})
+  await expect(navigation).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(navigation).toHaveCount(0)
+  let fail=true
+  await page.route('**/api/db/trash?*',async route=>{
+    if(fail){fail=false;await route.fulfill({status:500,contentType:'application/json',body:'{"error":"Synthetic load failure"}'});return}
+    await route.continue()
+  })
+  const opener=page.getByLabel('Open database trash')
+  await opener.click()
+  const dialog=page.getByRole('dialog',{name:'Database trash',exact:true})
+  await expect(dialog.getByRole('alert')).toContainText('Synthetic load failure')
+  await dialog.getByRole('button',{name:'Retry loading',exact:true}).click()
+  await expect(dialog).toContainText('No deleted record items.')
+  await dialog.getByLabel('Trash category').selectOption('property')
+  await dialog.getByLabel('Restore Recovery formula',{exact:true}).click()
+  await expect(dialog.getByRole('alert')).toContainText('restore input properties first')
+  await expect(dialog.getByLabel('Restore Recovery formula',{exact:true})).toBeEnabled()
+  // The conflict must not reactivate the formula or lose its saved input.
+  const conflicted=(await rows(page,host.databaseId)).find(r=>r.id===item.id)
+  expect(conflicted).toBeDefined()
+  expect(conflicted?.values?.[formula.id]).toBeUndefined()
+  await dialog.getByLabel('Restore Recovery amount',{exact:true}).click()
+  await expect(dialog.getByLabel('Restore Recovery amount',{exact:true})).toHaveCount(0)
+  await dialog.getByLabel('Restore Recovery formula',{exact:true}).click()
+  await expect(dialog.getByRole('status').filter({hasText:'Restored Recovery formula.'})).toBeVisible()
+  await expect(dialog.getByLabel('Trash category')).toBeFocused()
+  await expect.poll(async()=> (await rows(page,host.databaseId)).find(r=>r.id===item.id)?.values[formula.id]).toBe(18)
+  expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true)
+  await page.screenshot({path:'test-results/database-evidence/database-trash-narrow.png',fullPage:true})
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(opener).toBeFocused()
+  await page.setViewportSize({width:1280,height:900})
+  await page.goto('/')
+  await page.locator('.home-page-list').getByRole('button',{name:new RegExp(host.title)}).click()
+  await expect(page.getByLabel('Active database view')).toBeVisible()
+  expect((await rows(page,host.databaseId)).find(r=>r.id===item.id)?.values[formula.id]).toBe(18)
+})
+
+test('database trash ignores an old category response and contains keyboard focus', async ({page}) => {
+  const host=await makeDatabase(page)
+  const field=await property(page,host.databaseId,'Current category property','text')
+  expect((await page.request.delete(API+'/db/properties?id='+field.id)).status()).toBe(204)
+  await reopen(page,host)
+  let release!:()=>void
+  let requested!:()=>void
+  const waiting=new Promise<void>(resolve=>{release=resolve})
+  const started=new Promise<void>(resolve=>{requested=resolve})
+  await page.route('**/api/db/trash?kind=record&*',async route=>{
+    requested()
+    await waiting
+    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{id:'stale-record',title:'Old category response',deletedAt:new Date().toISOString()}])}).catch(()=>{})
+  })
+  await page.getByLabel('Open database trash').click()
+  const dialog=page.getByRole('dialog',{name:'Database trash',exact:true})
+  await started
+  await dialog.getByLabel('Trash category').selectOption('property')
+  await expect(dialog.getByLabel('Restore Current category property',{exact:true})).toBeVisible()
+  release()
+  // Wait for the old handler and another UI action; it must never replace
+  // the current list or post a property restore using an old record ID.
+  await page.unroute('**/api/db/trash?kind=record&*')
+  for(let i=0;i<7;i++) {
+    await page.keyboard.press('Tab')
+    // Chromium may focus browser chrome (reported as body) at the native
+    // modal boundary; the next Tab returns inside, never to background UI.
+    if(await page.evaluate(()=>document.activeElement===document.body))await page.keyboard.press('Tab')
+    expect(await dialog.evaluate(el=>el.contains(document.activeElement))).toBe(true)
+  }
+  await expect(dialog).not.toContainText('Old category response')
+  await dialog.getByLabel('Restore Current category property',{exact:true}).click()
+  await expect(dialog).toContainText('Restored Current category property.')
+  await page.keyboard.press('Escape')
+  await expect(page.getByLabel('Open database trash')).toBeFocused()
+})
+
+test('failed trash category load hides previous restore actions and retries the current category', async ({page}) => {
+  const host=await makeDatabase(page)
+  const item=await record(page,host.databaseId,'Retained deleted record')
+  const field=await property(page,host.databaseId,'Retained deleted property','text')
+  expect((await page.request.delete(API+'/db/records?id='+item.id)).status()).toBe(204)
+  expect((await page.request.delete(API+'/db/properties?id='+field.id)).status()).toBe(204)
+  await reopen(page,host)
+  await page.getByLabel('Open database trash').click()
+  const dialog=page.getByRole('dialog',{name:'Database trash',exact:true})
+  await expect(dialog.getByLabel('Restore Retained deleted record',{exact:true})).toBeVisible()
+  let fail=true
+  await page.route('**/api/db/trash?kind=property&*',async route=>{
+    if(fail){fail=false;await route.fulfill({status:500,contentType:'application/json',body:'{"error":"Synthetic category failure"}'});return}
+    await route.continue()
+  })
+  await dialog.getByLabel('Trash category').selectOption('property')
+  await expect(dialog.getByRole('alert')).toContainText('Synthetic category failure')
+  await expect(dialog.getByRole('button',{name:/^Restore /})).toHaveCount(0)
+  await dialog.getByRole('button',{name:'Retry loading',exact:true}).click()
+  await expect(dialog.getByLabel('Restore Retained deleted property',{exact:true})).toBeVisible()
+  await dialog.getByLabel('Restore Retained deleted property',{exact:true}).click()
+  await expect(dialog).toContainText('Restored Retained deleted property.')
+  await dialog.getByLabel('Trash category').selectOption('record')
+  await expect(dialog.getByLabel('Restore Retained deleted record',{exact:true})).toBeVisible()
+  await dialog.getByLabel('Restore Retained deleted record',{exact:true}).click()
+  await expect.poll(async()=> (await rows(page,host.databaseId)).some(row=>row.id===item.id)).toBe(true)
+})

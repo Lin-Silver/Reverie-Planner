@@ -63,8 +63,9 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const hasPendingEdit = !!failedEdit || !!bulkDraft || pendingView
   useEffect(() => { onPendingEditChange?.(hasPendingEdit) }, [hasPendingEdit, onPendingEditChange])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (keepSurface = false) => {
+    // Recovery refreshes must keep their modal/category/focus mounted.
+    if (!keepSurface) setLoading(true)
     try {
       const d = await api(`/api/databases?id=${databaseId}`) as Database
       setDb(d)
@@ -256,7 +257,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
 
   return (
     <div className="database-workspace">
-      {trashOpen && <DatabaseTrash databaseId={databaseId} onClose={()=>setTrashOpen(false)} onRestored={()=>{void load()}} />}
+      {trashOpen && <DatabaseTrash databaseId={databaseId} onClose={()=>setTrashOpen(false)} onRestored={()=>{void load(true)}} />}
       {propertyDialogOpen && <DatabasePropertyDialog databaseId={databaseId} properties={props} onClose={() => setPropertyDialogOpen(false)} onCreated={() => {setPropertyDialogOpen(false);void load()}} />}
       {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} {failedViewConfig && <button disabled={savingView} onClick={() => void retryViewSettings()}>Retry my view settings</button>} {failedEdit && <button onClick={() => void retryFailedEdit()}>Retry my changes</button>} <button disabled={!!bulkDraft || savingView} onClick={() => { void load() }}>Reload latest</button></div>}
       <div className="database-toolbar" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12 }}>

@@ -93,6 +93,14 @@ func (a *AppContext) handleDBTrash(w http.ResponseWriter,r *http.Request) {
                 if err:=tx.QueryRow("SELECT type,config FROM db_properties WHERE id=? AND database_id=?",request.ID,databaseID).Scan(&propertyType,&config);err!=nil {
                     writeJSON(w,500,map[string]string{"error":"could not inspect deleted property"});return
                 }
+                if err:=validateDBComputedDefinition(tx,databaseID,propertyType,config);err!=nil {
+                    if errors.Is(err,errInvalidComputedDefinition) {
+                        writeJSON(w,409,map[string]string{"error":err.Error()})
+                    } else {
+                        writeJSON(w,500,map[string]string{"error":"could not inspect computed dependencies"})
+                    }
+                    return
+                }
                 if propertyType=="relation" {
                     var definition struct{TargetDatabaseID string `json:"targetDatabaseId"`}
                     // Legacy saved configurations must not resolve duplicate keys

@@ -80,6 +80,12 @@ func validateRestoredRecordRelations(tx *sql.Tx, recordID, databaseID string) (b
     }
 
     for _, ref := range references {
+        // This record is reactivated by the caller in this same transaction.
+        // Its own reference is valid then; a self ID in another target
+        // database must still fail the normal ownership check below.
+        if ref.recordID == recordID && ref.targetDatabaseID == databaseID {
+            continue
+        }
         var count int
         if err := tx.QueryRow(`SELECT COUNT(*) FROM db_records r
             JOIN databases d ON d.id=r.database_id

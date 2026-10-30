@@ -447,7 +447,11 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err := validateDBComputedDefinition(tx, p.DatabaseID, p.Type, p.Config); err != nil {
-			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			if errors.Is(err, errInvalidComputedDefinition) {
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
+			} else {
+				writeJSON(w, 500, map[string]string{"error": "could not inspect computed dependencies"})
+			}
 			return
 		}
 		if p.Type == "relation" {
@@ -560,7 +564,11 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 		if err := validateDBComputedDefinition(tx, actualDatabaseID, p.Type, p.Config); err != nil {
-			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			if errors.Is(err, errInvalidComputedDefinition) {
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
+			} else {
+				writeJSON(w, 500, map[string]string{"error": "could not inspect computed dependencies"})
+			}
 			return
 		}
 		if (currentType == "select" || currentType == "multi_select") && p.Config != currentConfig {

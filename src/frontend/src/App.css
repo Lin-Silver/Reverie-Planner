@@ -119,3 +119,9 @@ button.recovery-item[aria-pressed="true"] { outline: 2px solid var(--accent); ou
 .recovery-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; max-height: 20rem; overflow: auto; }
 .recovery-preview .btn { margin: var(--space-1); }
 @media (max-width: 640px) { .recovery-layout { grid-template-columns: minmax(0,1fr); } .recovery-list { max-height: 10rem; } }
+.database-trash { background: var(--card); }
+.database-trash-list { padding: 0; list-style: none; }
+.database-trash-list .recovery-item { align-items: center; }
+.database-trash-list .recovery-item > span { min-width: 0; color: var(--fg); font-size: inherit; }
+.database-trash-list small { display: block; }
+.database-trash-list button { flex-shrink: 0; }

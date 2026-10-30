@@ -18,6 +18,16 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
         with http.open(request) as response:
             data=response.read()
             return json.loads(data) if data else None
+    def restore(kind, item):
+        return api('/api/db/trash','POST',{'kind':kind,'id':item['id']})
+    def reject_restore(kind, item):
+        try: restore(kind,item); raise AssertionError('missing dependency was restored')
+        except urllib.error.HTTPError as err: assert err.code == 409
+    def check_record():
+        record=next(r for r in api('/api/db/records?databaseId='+database['id']) if r['id']==native_record['id'])
+        assert record['values'][amount['id']] == 11 and record['values'][formula['id']] == 22
+        assert record['values'][self_relation['id']] == [native_record['id']]
+        assert any(v['id']==view['id'] and v['config']==view['config'] for v in api('/api/db/views?databaseId='+database['id']))
     for cycle in range(2):
         proc=subprocess.Popen([str(dest/'runtime'/exe),'--root='+str(dest)],cwd=tempfile.gettempdir())
         try:
@@ -39,6 +49,15 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                 saved = api('/api/pages', 'POST', {'title':'Native recovery page','workspace':True,'content':'Original native writing'})
                 edited = api('/api/pages','PUT',{**saved,'content':'Newer native writing'})
                 api(f"/api/pages?id={edited['id']}&version={edited['version']}",'DELETE')
+                database=api('/api/databases','POST',{'title':'Synthetic database recovery'})
+                amount=api('/api/db/properties','POST',{'databaseId':database['id'],'name':'Amount','type':'number','config':'{}'})
+                formula=api('/api/db/properties','POST',{'databaseId':database['id'],'name':'Double','type':'formula','config':json.dumps({'operation':'multiply','args':[{'propertyId':amount['id']},{'number':2}]})})
+                self_relation=api('/api/db/properties','POST',{'databaseId':database['id'],'name':'Self reference','type':'relation','config':json.dumps({'targetDatabaseId':database['id']})})
+                native_record=api('/api/db/records','POST',{'databaseId':database['id'],'title':'Retained native record','values':{amount['id']:11}})
+                native_record=api('/api/db/records','PUT',{**native_record,'values':{self_relation['id']:[native_record['id']]}})
+                view=api('/api/db/views','POST',{'databaseId':database['id'],'name':'Retained view','type':'gallery','config':json.dumps({'galleryProperties':[amount['id']]})})
+                for path,item in [('/api/db/properties',formula),('/api/db/properties',amount),('/api/db/records',native_record),('/api/db/views',view),('/api/databases',database)]:
+                    api(path+'?id='+item['id'],'DELETE')
             else:
                 trash=api('/api/page-trash')
                 item=next(p for p in trash if p['id']==saved['id'])
@@ -49,6 +68,17 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                 assert any(p['version']==saved['version'] for p in history)
                 deleted=api('/api/pages','POST',{'title':'Archive trash page','workspace':True,'content':'Archive retained writing'})
                 api(f"/api/pages?id={deleted['id']}&version={deleted['version']}",'DELETE')
+                reject_restore('record',native_record)
+                restore('database',database)
+                reject_restore('property',formula)
+                restore('property',amount)
+                restore('property',formula)
+                restore('view',view)
+                restore('record',native_record)
+                check_record()
+                # Keep dependency-ordered trash in the archive too.
+                api('/api/db/properties?id='+formula['id'],'DELETE')
+                api('/api/db/properties?id='+amount['id'],'DELETE')
             if cycle == 1:
                 archive = dest/'native-workspace.zip'
                 request = urllib.request.Request(url+'/api/workspace/archive', method='POST')
@@ -86,6 +116,10 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             if cycle == 0:
                 item=next(p for p in api('/api/page-trash') if p['id']==deleted['id'])
                 api('/api/page-trash','POST',{'id':item['id'],'version':item['version']})
+                reject_restore('property',formula)
+                restore('property',amount)
+                restore('property',formula)
+            check_record()
             assert api('/api/pages?id='+deleted['id'])['content']=='Archive retained writing'
             # Restored roots reuse only static assets from the existing package.
             with http.open(url+'/') as response: assert b'<div id="root">' in response.read()
