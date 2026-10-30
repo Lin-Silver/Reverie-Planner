@@ -42,7 +42,7 @@ export default function DocumentPackage({onImported}:{onImported:()=>Promise<voi
     setPreview(await response.json() as Preview);setNotice('Preview ready. Import creates a separate copy; existing pages stay unchanged.')
    }else{
     const result=await response.json() as {pages:Record<string,string>}
-    setComplete(true);setNotice(`Imported ${Object.keys(result.pages).length} documents under Imported documents.`)
+    setComplete(true);setNotice(`Imported ${Object.keys(result.pages).length} ${Object.keys(result.pages).length===1?'document':'documents'} under Imported documents.`)
     await onImported();setLoadAttempt(value=>value+1)
    }
   }catch(e){if(!controller.signal.aborted)setError((e as Error).message)}
@@ -61,7 +61,7 @@ export default function DocumentPackage({onImported}:{onImported:()=>Promise<voi
    setFile(next)
   }}/></label>
   <div className="row archive-actions"><button className="btn" disabled={!file||!!busy||complete} onClick={()=>void run('preview')}>{busy==='preview'?'Reading documents…':'Preview document package'}</button>{preview&&<button className="btn primary" disabled={!!busy||complete} onClick={()=>void run('import')}>{busy==='import'?'Importing documents…':'Import document copy'}</button>}</div>
-  {preview&&<div className="archive-preview" aria-label="Document package preview"><p><strong>{preview.pages.length} documents</strong> · {preview.attachments} attachments · {preview.attachmentBytes.toLocaleString()} attachment bytes</p><ul>{preview.pages.map(page=><li key={page.id}>{page.title||'Untitled'}{page.parentId?' · Child page':' · Tree root'}</li>)}</ul><details><summary>View preserved editor blocks</summary>{preview.pages.map(page=><div key={page.id}><h4>{page.title||'Untitled'}</h4><pre className="markdown-source">{page.content}</pre></div>)}</details></div>}
+  {preview&&<div className="archive-preview" aria-label="Document package preview"><p><strong>{preview.pages.length} {preview.pages.length===1?'document':'documents'}</strong> · {preview.attachments} attachments · {preview.attachmentBytes.toLocaleString()} attachment bytes</p><ul>{preview.pages.map(page=><li key={page.id}>{page.title||'Untitled'}{page.parentId?' · Inside '+(preview.pages.find(parent=>parent.id===page.parentId)?.title||'Untitled'):' · Tree root'}</li>)}</ul><details><summary>View preserved editor blocks</summary>{preview.pages.map(page=><div key={page.id}><h4>{page.title||'Untitled'}</h4><pre className="markdown-source">{page.content}</pre></div>)}</details></div>}
   {notice&&<p role="status">{notice}</p>}{error&&<p role="alert">{error} If a successful response was interrupted, retry with the same selected file to retrieve the completed copy.</p>}
  </section>
 }

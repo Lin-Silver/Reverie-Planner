@@ -50,7 +50,7 @@ test('Document package downloads, previews and imports a linked tree without rep
 test('Document package blockers allow retry and narrow keyboard preview stays readable',async({page})=>{
  const panel=await settings(page)
  const before=(await(await page.request.get('/api/pages')).json()).length
- const pack={format:'reverie-documents',version:1,rootId:'synthetic-root',pages:[{id:'synthetic-root',title:'Document preview',content:JSON.stringify([{type:'paragraph',content:[{type:'text',text:'Offline writing',styles:{}}]}])}],assets:[]}
+ const pack={format:'reverie-documents',version:1,rootId:'synthetic-root',pages:[{id:'synthetic-root',title:'Document preview',content:JSON.stringify([{type:'paragraph',content:[{type:'text',text:'Offline writing '+('Long preserved content for a narrow preview. '.repeat(80)),styles:{}}]}])}],assets:[]}
  await panel.getByLabel('Document package JSON').setInputFiles({name:'invalid.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({...pack,version:999}))})
  await panel.getByRole('button',{name:'Preview document package',exact:true}).click()
  await expect(panel.getByRole('alert')).toContainText('unsupported document package')
@@ -65,7 +65,11 @@ test('Document package blockers allow retry and narrow keyboard preview stays re
  await expect(panel.locator('.markdown-source')).toContainText('Offline writing')
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
  await fs.mkdir('test-results/import-evidence',{recursive:true})
- await panel.screenshot({path:'test-results/import-evidence/document-package-narrow.png'})
+ await expect(panel.locator('.markdown-source')).toHaveCSS('white-space','pre-wrap')
+ const source=panel.locator('.markdown-source')
+ expect(await source.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true)
+ await panel.getByLabel('Document package preview').scrollIntoViewIfNeeded()
+ await page.screenshot({path:'test-results/import-evidence/document-package-narrow.png'})
  await panel.getByRole('button',{name:'Import document copy',exact:true}).focus();await page.keyboard.press('Enter')
- await expect(panel.getByRole('status')).toContainText('Imported 1 documents')
+ await expect(panel.getByRole('status')).toContainText('Imported 1 document')
 })
