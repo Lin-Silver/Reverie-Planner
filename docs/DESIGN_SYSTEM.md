@@ -49,3 +49,5 @@ Reduced motion disables spatial transitions and press scaling. No continuous bac
 Browser regressions cover original workflows plus templates, favorites across browser contexts, recent navigation, Markdown roundtrip, retry, focus restoration, narrow windows and theme/reduced-motion screenshots. Backend checks cover persistent, independent favorite/visit writes and deleted-page filtering. CI is the native cross-platform gate.
 
 Full Notion replacement still requires multi-page/attachment import/export, richer templates, cover management, database scale/advanced relations, undo/history and broader accessibility/platform acceptance. Track `PROJECT_DIRECTION.md` and `PRODUCT_PARITY_MATRIX.md`; visual improvement does not close these gates.
+
+CSV import reuses the Settings archive panels: explicit type mapping in a responsive labelled fieldset, opaque source samples, a focusable horizontal table region and row/column diagnostics. Changing a field removes the old confirmation. Buttons give immediate busy/error/retry feedback; no new motion is added to reading or keyboard confirmation. The existing font/material/contrast/motion preferences apply.

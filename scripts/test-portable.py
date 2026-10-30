@@ -69,6 +69,22 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
         with http.open(url+href) as response: assert response.read()==b'Native portable attachment bytes'
         exported=api('/api/document-package?rootId='+documents['pages'][imported['rootId']])
         assert len(exported['pages'])==2 and len(exported['assets'])==1
+    csv_payload={'csv':'Name,Amount,Done,Date\nNative CSV record,12.5,true,2026-10-30\nEmpty cells,,,\n','title':'Synthetic native CSV','types':['title','number','checkbox','date']}
+    def import_csv():
+        return api('/api/import/csv','POST',csv_payload)
+    def check_csv():
+        before=len(api('/api/databases'))
+        assert import_csv()==csv_imported
+        assert len(api('/api/databases'))==before
+        database=api('/api/databases?id='+csv_imported['databaseId'])
+        assert len(database['views'])==1 and database['views'][0]['config']=='{}'
+        fields={field['name']:field['id'] for field in database['properties']}
+        records=api('/api/db/records?databaseId='+database['id'])
+        assert len(records)==2
+        record=next(row for row in records if row['title']=='Native CSV record')
+        assert record['values'][fields['Amount']]==12.5 and record['values'][fields['Done']] is True and record['values'][fields['Date']]=='2026-10-30'
+        empty=next(row for row in records if row['title']=='Empty cells')
+        assert empty.get('values',{}).get(fields['Amount']) is None and empty.get('values',{}).get(fields['Done']) is None
     for cycle in range(2):
         proc=subprocess.Popen([str(dest/'runtime'/exe),'--root='+str(dest)],cwd=tempfile.gettempdir())
         try:
@@ -87,6 +103,11 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             try: http.open(req);raise AssertionError('unauthenticated stop accepted')
             except urllib.error.HTTPError as err: assert err.code in (401,403)
             if cycle == 0:
+                csv_preview=api('/api/import/csv?preview=1','POST',csv_payload)
+                assert csv_preview['rows']==2 and csv_preview['problemCount']==0
+                csv_payload.update(digest=csv_preview['digest'],operationKey='native_csv_operation_123456')
+                csv_imported=import_csv()
+                check_csv()
                 imported=import_package()
                 check_import()
                 document_raw=json.dumps(api('/api/document-package?rootId='+imported['rootId'])).encode()
@@ -94,6 +115,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                 with http.open(request) as response: document_digest=json.load(response)['digest']
                 documents=import_documents()
                 check_documents()
+                check_csv()
                 saved = api('/api/pages', 'POST', {'title':'Native recovery page','workspace':True,'content':'Original native writing'})
                 edited = api('/api/pages','PUT',{**saved,'content':'Newer native writing'})
                 api(f"/api/pages?id={edited['id']}&version={edited['version']}",'DELETE')
@@ -109,6 +131,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             else:
                 check_import()
                 check_documents()
+                check_csv()
                 trash=api('/api/page-trash')
                 item=next(p for p in trash if p['id']==saved['id'])
                 api('/api/page-trash','POST',{'id':item['id'],'version':item['version']})
@@ -162,6 +185,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             else: raise RuntimeError('restored service did not become ready')
             check_import()
             check_documents()
+            check_csv()
             assert api('/api/pages?id='+saved['id'])['content']=='Newer native writing'
             history=api('/api/page-history?pageId='+saved['id'])
             assert any(p['version']==saved['version'] for p in history)

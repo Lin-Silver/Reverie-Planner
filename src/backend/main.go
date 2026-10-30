@@ -232,6 +232,7 @@ func main() {
 	mux.HandleFunc("/api/health", ctx.handleHealth)
 	mux.HandleFunc("/api/page-assets", ctx.handlePageAssets)
 	mux.HandleFunc("/api/document-package", ctx.handleDocumentPackage)
+	mux.HandleFunc("/api/import/csv", ctx.handleCSVImport)
 	mux.HandleFunc("/api/import/markdown-preview", ctx.handleMarkdownImport)
 	mux.HandleFunc("/api/import/markdown", ctx.handleMarkdownImport)
 	mux.HandleFunc("/api/workspace", ctx.handleWorkspace)

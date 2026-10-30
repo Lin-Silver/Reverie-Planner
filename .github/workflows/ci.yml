@@ -26,8 +26,8 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install chromium
         working-directory: src/frontend
-      - name: Verify document migration browser workflows
-        run: npx playwright test markdown-import.spec.ts document-package.spec.ts
+      - name: Verify document and CSV migration browser workflows
+        run: npx playwright test markdown-import.spec.ts document-package.spec.ts csv-import.spec.ts
         working-directory: src/frontend
       - name: Run browser end-to-end tests
         run: npm run test:e2e
@@ -139,8 +139,8 @@ jobs:
         working-directory: src/frontend
       - run: npx playwright install --with-deps chromium
         working-directory: src/frontend
-      - name: Verify document migration browser workflows
-        run: npx playwright test markdown-import.spec.ts document-package.spec.ts
+      - name: Verify document and CSV migration browser workflows
+        run: npx playwright test markdown-import.spec.ts document-package.spec.ts csv-import.spec.ts
         working-directory: src/frontend
       - run: npm run test:e2e
         working-directory: src/frontend

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import WorkspaceArchive from './WorkspaceArchive'
 import MarkdownImport from './MarkdownImport'
 import DocumentPackage from './DocumentPackage'
+import CSVImport from './CSVImport'
 
 type Workspace = {version:string;root:string;database:string;attachments:string;backups:string}
 export default function WorkspaceStorage({onImported}: {onImported: () => Promise<void>}) {
@@ -33,5 +34,6 @@ export default function WorkspaceStorage({onImported}: {onImported: () => Promis
     <WorkspaceArchive />
     <MarkdownImport onImported={onImported} />
     <DocumentPackage onImported={onImported} />
+    <CSVImport onImported={onImported} />
   </section>
 }
