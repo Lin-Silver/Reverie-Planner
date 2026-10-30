@@ -95,9 +95,9 @@ button:active:not(:disabled) { transform:scale(.98); }
 .editor-toolbar { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-2); }
 .editor-file-actions { display:flex; gap:var(--space-1); flex-wrap:wrap; }.editor-file-actions .btn { font-size:.75rem; }
 .editor-file-hint { color:var(--muted); font-size:.6875rem; line-height:1.6; margin:0 0 var(--space-6); max-width:38rem; }
-.navigation-dialog { position:fixed; inset:0 auto 0 0; margin:0; height:100dvh; max-height:none; width:min(19rem,85vw); max-width:none; transform:translateX(0); }
-.navigation-dialog .sidebar { position:relative; width:100%; height:100%; box-shadow:none; }
-.navigation-close { position:absolute; right:var(--space-2); top:max(var(--space-2),env(safe-area-inset-top)); }
+.navigation-dialog { background:var(--card); position:fixed; inset:0 auto 0 0; margin:0; height:100dvh; max-height:none; width:min(19rem,85vw); max-width:none; transform:translateX(0); }
+.navigation-dialog .sidebar { z-index:0; position:relative; width:100%; height:100%; box-shadow:none; }
+.navigation-close { z-index:1; position:absolute; right:var(--space-2); top:max(var(--space-2),env(safe-area-inset-top)); }
 @starting-style { .navigation-dialog:not([data-instant]) { transform:translateX(-100%); opacity:1; } }
 @media (prefers-reduced-motion:reduce) { .navigation-dialog { transform:none; } }
 
