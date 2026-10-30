@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -302,5 +303,60 @@ func TestDocumentPackageLargerPreviewUsesRouteLimit(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest("POST", "http://127.0.0.1:8765/api/document-package?preview=1", bytes.NewReader(raw)))
 	if response.Code != 200 {
 		t.Fatal("valid document transfer hit generic request limit", response.Code, response.Body.String())
+	}
+}
+
+func TestDocumentPackageRefusesSerializationExpansionBeforeExport(t *testing.T) {
+	for _, count := range []int{1, 15} {
+		p := documentPackage{Format: "reverie-documents", Version: 1, RootID: "serialization-root"}
+		length := 200000
+		if count == 1 {
+			length = 400000
+		}
+		for i := 0; i < count; i++ {
+			id := fmt.Sprintf("serialization-%d", i)
+			parent := p.RootID
+			if i == 0 {
+				id = p.RootID
+				parent = ""
+			}
+			p.Pages = append(p.Pages, documentPackagePage{ID: id, ParentID: parent, Title: id, Content: `[{"type":"paragraph","content":[{"type":"text","text":"` + strings.Repeat("<", length) + `","styles":{}}]}]`})
+		}
+		if err := validateDocumentPackage(p); err == nil || !strings.Contains(err.Error(), "serialized") {
+			t.Fatal("serialized content limits were not enforced", count, err)
+		}
+	}
+	a := setupTestContext(t)
+	defer a.DB.Close()
+	// Eight individually valid documents plus two 8 MiB assets meet logical
+	// limits, but JSON escaping/base64 make the actual download exceed 48 MiB.
+	content, _ := json.Marshal([]any{map[string]any{"type": "paragraph", "content": []any{map[string]any{"type": "text", "text": strings.Repeat("\\", 1000000), "styles": map[string]any{}}}}})
+	root := "encoded-root"
+	for i := 0; i < 8; i++ {
+		id := root
+		parent := ""
+		if i > 0 {
+			id = fmt.Sprintf("encoded-%d", i)
+			parent = root
+		}
+		if _, err := a.DB.Exec("INSERT INTO pages(id,parent_id,title,content,workspace) VALUES(?,?,?,?,1)", id, nullStr(parent), id, string(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data := make([]byte, maxMarkdownAssetBytes)
+	asset, _ := inspectMarkdownAsset("large.txt", data)
+	for _, id := range []string{"encoded-asset-1", "encoded-asset-2"} {
+		if _, err := a.DB.Exec(`INSERT INTO page_assets(id,root_id,original_name,content_type,size_bytes,sha256,data) VALUES(?,?,?,?,?,?,?)`, id, root, asset.Path, asset.ContentType, asset.Size, asset.SHA256, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response := httptest.NewRecorder()
+	a.handleDocumentPackage(response, httptest.NewRequest("GET", "/api/document-package?rootId="+root, nil))
+	if response.Code != 400 || !strings.Contains(response.Body.String(), "encoded document package exceeds 48 MiB") || response.Header().Get("Content-Disposition") != "" {
+		t.Fatal("export produced an unimportable download", response.Code, response.Body.String())
+	}
+	var count int
+	if err := a.DB.QueryRow("SELECT COUNT(*) FROM pages").Scan(&count); err != nil || count != 8 {
+		t.Fatal("refused export mutated source", count, err)
 	}
 }

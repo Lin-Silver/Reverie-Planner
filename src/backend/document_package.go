@@ -216,6 +216,9 @@ func rewriteDocumentContent(content string, pages, assets map[string]string, opt
 		return "", err
 	}
 	raw, err := json.Marshal(blocks)
+	if len(raw) > 2<<20 {
+		return "", errors.New("serialized document exceeds 2 MiB; use a workspace archive")
+	}
 	return string(raw), err
 }
 
@@ -262,9 +265,15 @@ func validateDocumentPackage(p documentPackage) error {
 	if total > 16<<20 {
 		return errors.New("attachments exceed 16 MiB")
 	}
+	total = 0
 	for _, page := range p.Pages {
-		if _, err := rewriteDocumentContent(page.Content, pages, assets, documentRewriteOptions{ImageAssets: images}); err != nil {
+		normalized, err := rewriteDocumentContent(page.Content, pages, assets, documentRewriteOptions{ImageAssets: images})
+		if err != nil {
 			return fmt.Errorf("%s: %w", page.Title, err)
+		}
+		total += len(normalized)
+		if total > maxDocumentContentBytes {
+			return errors.New("serialized documents exceed 16 MiB; use a workspace archive")
 		}
 	}
 	return nil
@@ -399,6 +408,15 @@ func (a *AppContext) exportDocumentPackage(ctx context.Context, root string) (do
 	if err = validateDocumentPackage(p); err != nil {
 		return p, err
 	}
+	// The transport escapes block JSON and base64-encodes assets. The
+	// logical payload limits alone do not guarantee a re-importable file.
+	encoded, encodeErr := json.Marshal(p)
+	if encodeErr != nil {
+		return p, encodeErr
+	}
+	if len(encoded)+1 > maxDocumentPackageBytes {
+		return p, errors.New("encoded document package exceeds 48 MiB; export a smaller tree or use a workspace archive")
+	}
 	return p, tx.Commit()
 }
 
@@ -446,6 +464,7 @@ func (a *AppContext) importDocumentPackage(ctx context.Context, p documentPackag
 	if err = insert(result.RootID, "", "Imported documents", "", `[{"type":"paragraph","content":[]}]`); err != nil {
 		return result, err
 	}
+	totalContent := 0
 	for _, page := range p.Pages {
 		parent := result.RootID
 		if page.ParentID != "" {
@@ -454,6 +473,10 @@ func (a *AppContext) importDocumentPackage(ctx context.Context, p documentPackag
 		content, e := rewriteDocumentContent(page.Content, result.Pages, assets)
 		if e != nil {
 			return result, e
+		}
+		totalContent += len(content)
+		if totalContent > maxDocumentContentBytes {
+			return result, errors.New("rewritten documents exceed 16 MiB; import a smaller tree")
 		}
 		if err = insert(result.Pages[page.ID], parent, page.Title, page.Icon, content); err != nil {
 			return result, err

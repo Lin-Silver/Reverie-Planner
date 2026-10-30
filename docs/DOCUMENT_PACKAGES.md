@@ -28,6 +28,9 @@ export reads one SQLite transaction so concurrent writes cannot mix snapshots.
 
 Limits: 100 pages; 2 MiB per document, 16 MiB aggregate document content; 500
 assets, 8 MiB per asset and 16 MiB aggregate asset bytes; 48 MiB JSON request.
+Limits also apply after block/reference serialization; export checks the actual
+encoded JSON/base64 download size so it cannot publish a file above the import
+request cap. An over-limit tree is refused without changing source data.
 Export and import validate limits, UTF-8, the parent tree, duplicate IDs/JSON keys,
 known format/version, supported types/URLs, asset format and checksum. Unknown
 package fields, cycles, outside-tree page links, covers, legacy non-block text,
@@ -55,7 +58,8 @@ binds confirmation to the previewed bytes; a stale digest returns HTTP 409.
 Backend tests cover inverse-ID round trips of blocks/typed numbers, hierarchy,
 icons, shared and unreferenced bytes, restart/receipt/archive restoration,
 transaction failures at page/asset/receipt writes, cancellation, scoped asset
-collection, unsupported dependencies and malformed packages. Browser regressions
+collection, unsupported dependencies, malformed packages and serialization/base64 expansion
+that would otherwise produce an unimportable file. Browser regressions
 exercise the real download → preview → lost-response retry → independent linked
 copy → reload flow and narrow/reduced-motion keyboard confirmation. Portable
 native checks repeat export/import/retry/download after restart, CLI workspace
