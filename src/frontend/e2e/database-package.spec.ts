@@ -44,8 +44,8 @@ test('database download preview and interrupted-response retry preserve types, w
  const copy=await(await page.request.get('/api/databases?id='+imported!.databaseId)).json()
  expect(copy.id).not.toBe(source.databaseId)
  const copiedAmount=copy.properties.find((p:{name:string})=>p.name==='Amount').id
- const settings=JSON.parse(copy.views[0].config)
- expect(settings.sortRules[0].propertyId).toBe(copiedAmount);expect(settings.columnWidths[copiedAmount]).toBe(180);expect(settings.hiddenColumns).toEqual([copiedAmount]);expect(settings.filter).toBe('literal '+amount)
+ const viewSettings=JSON.parse(copy.views[0].config)
+ expect(viewSettings.sortRules[0].propertyId).toBe(copiedAmount);expect(viewSettings.columnWidths[copiedAmount]).toBe(180);expect(viewSettings.hiddenColumns).toEqual([copiedAmount]);expect(viewSettings.filter).toBe('literal '+amount)
  const records=await(await page.request.get('/api/db/records?databaseId='+copy.id)).json()
  const first=records.find((r:{title:string})=>r.title==='First')
  const notes=copy.properties.find((p:{name:string})=>p.name==='Notes').id
@@ -53,6 +53,11 @@ test('database download preview and interrupted-response retry preserve types, w
  const originalView=await(await page.request.get('/api/db/views?databaseId='+source.databaseId)).json()
  expect(originalView[0].id).not.toBe(copy.views[0].id)
  await page.goto('/?page='+imported!.pageId)
+ await expect(page.getByRole('textbox',{name:'Database filter',exact:true})).toHaveValue('literal '+amount)
+ await page.getByRole('textbox',{name:'Database filter',exact:true}).fill('')
+ await page.getByRole('button',{name:'Save view settings',exact:true}).click()
+ await expect.poll(async()=>JSON.parse((await(await page.request.get('/api/db/views?databaseId='+copy.id)).json())[0].config).filter).toBe('')
+ expect(JSON.parse((await(await page.request.get('/api/db/views?databaseId='+source.databaseId)).json())[0].config).filter).toBe('literal '+amount)
  await expect(page.locator('[data-record-id="'+first.id+'"]').getByRole('textbox',{name:'Notes',exact:true})).toHaveValue('line one\nline two')
  await page.reload()
  await expect(page.locator('[data-record-id="'+first.id+'"]').getByRole('textbox',{name:'Name',exact:true})).toHaveValue('First')
