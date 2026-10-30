@@ -40,6 +40,7 @@ This is the durable checkpoint for human and scheduled development. The target i
 - [x] Bounded local Markdown attachment subset: source paths/sizes, embedded raster images and local file downloads, atomic page/byte/receipt writes, root ownership/trash retention, verified workspace archive/CLI restore/restart. Accepted on code `8675a80106e58dd3b5f6ab7963189c60b6c4a02b`, [native CI 41007579249](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/41007579249); supported formats/limits in MARKDOWN_PACKAGES.md. This does not close complete package compatibility.
 - [ ] Markdown directory/Notion export-package import: preview, nested pages, links, assets, supported CSV database mapping, explicit unsupported-format reports.
 - [ ] Transactional import with collision policy; rollback and restart consistency.
+- [x] Bounded native document-tree transfer: editor block JSON, hierarchy, icons, local links/assets, separate-copy preview/import, rollback/receipt/restart/archive checks; accepted on `f9c34617fb48d3d2c58db40be20227cc73f5c37e`, native CI 41009774686. This is document-only; see DOCUMENT_PACKAGES.md.
 - [ ] Reversible document/database export; asset paths, typed values and independent views retained.
 - [ ] User-created templates, duplication, covers and complete page organization; offline browser acceptance.
 
@@ -142,3 +143,12 @@ Initial source commit `62fbf08494a1631af7c35c2032d90955dc7d79b1` ran [native CI 
 ### Encoded-size safety correction before acceptance
 
 A boundary review found that raw document/asset byte limits alone could permit a JSON/base64 download larger than the 48 MiB importer cap, and JSON escaping could make stored normalized blocks exceed document limits. Added normalized per-document/aggregate and post-reference-rewrite aggregate guards, plus an actual encoded download-size check before response publication. The seventh backend regression covers per-page and aggregate escaping expansion, and an eight-page/two-asset synthetic workspace whose legal logical sizes encode above the transport cap; export is refused with a clear error and no source mutation. This is an additional safety fix on top of the preview correction; final acceptance requires its own SHA-matched native run. All earlier assertions remain in place.
+
+
+### Final document-transfer acceptance — 2026-10-30
+
+Final code commit `f9c34617fb48d3d2c58db40be20227cc73f5c37e` passed [native CI 41009774686](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/41009774686) on Linux, Windows and macOS: **7/7 focused migration tests and 77/77 complete browser tests per platform**, backend tests/build, frontend build/lint, document export/import and idempotent retry, native lifecycle, attachment downloads after restart, workspace archive/CLI restore/two restored starts, and packaging. Windows also passed unrelated-service ownership and graceful start/stop checks. Local full Go suite/vet and the extended portable script passed after the final serialization fix. The native Linux screenshot from this exact commit was downloaded and matched byte-for-byte the visually reviewed corrected preview: bounded, wrapping, selectable text on an opaque panel and usable narrow controls. This is automated/native plus screenshot evidence; it does not establish manual hardware or screen-reader acceptance.
+
+Only the explicitly bounded native document subset is checked off. CSV typed database mapping, reversible databases/independent views, complete Notion migration, covers/legacy media, real authorized v6/v7 samples, scale/advanced relations and manual accessibility remain open. Next: transactional previewed CSV mapping with explicit types/validation and independent views, then reversible database/asset exports. Main remains the published V0.0.1; only main/dev branches were present at final verification. No release or stable-branch update was made.
+
+This follow-up modifies this plan only. The accepted source/tests/workflow are the exact commit above; a new documentation-only CI invocation is separate and is not a new feature-acceptance claim. Publish this checkpoint using an expected-head lease and preserve newer concurrent work.
