@@ -119,6 +119,9 @@ func (a *AppContext) createWorkspaceArchive(ctx context.Context) (result string,
 	if err = verifyArchiveCoreSchema(ctx, a.DB); err != nil {
 		return "", err
 	}
+	if _, err = verifyPageAssetsData(ctx, a.DB); err != nil {
+		return "", err
+	}
 	snapshot, err := createDatabaseBackup(ctx, a.DB, a.RootPath)
 	if err != nil {
 		return "", err
@@ -457,7 +460,11 @@ func unpackWorkspaceArchive(ctx context.Context, archivePath, stage string) (pre
 			return preview, errors.New("archive contains unreferenced attachments")
 		}
 	}
-	preview = workspaceArchivePreview{Format: manifest.Format, CreatedAt: manifest.CreatedAt, SchemaVersion: version, Bytes: expanded, Attachments: len(referenced)}
+	pageAssets, err := verifyPageAssetsData(ctx, db)
+	if err != nil {
+		return preview, err
+	}
+	preview = workspaceArchivePreview{Format: manifest.Format, CreatedAt: manifest.CreatedAt, SchemaVersion: version, Bytes: expanded, Attachments: len(referenced) + pageAssets}
 	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM pages").Scan(&preview.Pages); err != nil {
 		return preview, err
 	}

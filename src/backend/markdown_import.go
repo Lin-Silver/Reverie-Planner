@@ -38,6 +38,7 @@ type markdownSource struct {
 type markdownPreview struct {
 	Digest   string           `json:"digest"`
 	Pages    []markdownSource `json:"pages"`
+	Assets   []markdownAsset  `json:"assets"`
 	Blockers []string         `json:"blockers"`
 }
 type markdownBlocks struct {
@@ -51,10 +52,10 @@ type markdownImportResult struct {
 }
 
 // ZIP bytes are never extracted. Every entry, including ignored directories, is
-// validated. Non-Markdown files block this initial text-only format, not skipped.
+// validated. Supported assets remain in memory until the single SQLite commit.
 func previewMarkdownZIP(ctx context.Context, raw []byte) (markdownPreview, error) {
 	sum := sha256.Sum256(raw)
-	out := markdownPreview{Digest: hex.EncodeToString(sum[:]), Pages: []markdownSource{}, Blockers: []string{}}
+	out := markdownPreview{Digest: hex.EncodeToString(sum[:]), Pages: []markdownSource{}, Blockers: []string{}, Assets: []markdownAsset{}}
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
 		return out, errors.New("not a valid Markdown ZIP")
@@ -86,8 +87,12 @@ func previewMarkdownZIP(ctx context.Context, raw []byte) (markdownPreview, error
 		if file.FileInfo().IsDir() {
 			continue
 		}
-		if file.UncompressedSize64 > maxMarkdownPageBytes {
-			return out, fmt.Errorf("entry exceeds 1 MiB: %s", name)
+		limit := maxMarkdownPageBytes
+		if ext := strings.ToLower(path.Ext(name)); ext != ".md" && ext != ".markdown" {
+			limit = maxMarkdownAssetBytes
+		}
+		if file.UncompressedSize64 > uint64(limit) {
+			return out, fmt.Errorf("entry exceeds %d byte limit: %s", limit, name)
 		}
 		expanded += file.UncompressedSize64
 		if expanded > maxMarkdownExpandedBytes {
@@ -97,17 +102,22 @@ func previewMarkdownZIP(ctx context.Context, raw []byte) (markdownPreview, error
 		if e != nil {
 			return out, e
 		}
-		data, e := io.ReadAll(io.LimitReader(archiveContextReader{ctx, reader}, maxMarkdownPageBytes+1))
+		data, e := io.ReadAll(io.LimitReader(archiveContextReader{ctx, reader}, int64(limit)+1))
 		reader.Close()
 		if e != nil {
 			return out, fmt.Errorf("cannot read ZIP entry %s: %w", name, e)
 		}
-		if len(data) > maxMarkdownPageBytes {
+		if len(data) > limit {
 			return out, errors.New("entry exceeds expanded limit")
 		}
 		ext := strings.ToLower(path.Ext(name))
 		if ext != ".md" && ext != ".markdown" {
-			out.Blockers = append(out.Blockers, "Unsupported file: "+name+". Assets and CSV databases are not yet supported.")
+			asset, supported := inspectMarkdownAsset(name, data)
+			if !supported {
+				out.Blockers = append(out.Blockers, "Unsupported file: "+name+". Only PNG/JPEG/GIF/WebP images, PDF, TXT and Office attachments are supported; CSV databases are not yet supported.")
+			} else {
+				out.Assets = append(out.Assets, asset)
+			}
 			continue
 		}
 		if !utf8.Valid(data) || bytes.Contains(data, []byte{0}) {
@@ -127,6 +137,7 @@ func previewMarkdownZIP(ctx context.Context, raw []byte) (markdownPreview, error
 	}
 	sort.Slice(out.Pages, func(i, j int) bool { return out.Pages[i].Path < out.Pages[j].Path })
 	sort.Strings(out.Blockers)
+	sort.Slice(out.Assets, func(i, j int) bool { return out.Assets[i].Path < out.Assets[j].Path })
 	// A directory corresponds to its sibling page (the Notion Markdown layout).
 	// Otherwise use the nearest explicit ancestor page; the source path is always
 	// shown in preview. No guessed/synthetic page content is generated.
@@ -151,7 +162,7 @@ func previewMarkdownZIP(ctx context.Context, raw []byte) (markdownPreview, error
 
 // Only stored editor blocks are rewritten. No raw HTML is rendered, remote
 // content is never fetched, and dangling local links fail the whole transaction.
-func rewriteImportedBlocks(raw json.RawMessage, source string, ids map[string]string) (string, error) {
+func rewriteImportedBlocks(raw json.RawMessage, source string, ids map[string]string, assets ...map[string]string) (string, error) {
 	if len(raw) > 2<<20 {
 		return "", errors.New("converted page exceeds 2 MiB")
 	}
@@ -186,7 +197,38 @@ func rewriteImportedBlocks(raw json.RawMessage, source string, ids map[string]st
 			}
 		case map[string]any:
 			if kind, _ := node["type"].(string); kind == "image" || kind == "video" || kind == "audio" || kind == "file" {
-				return errors.New("embedded media is not supported in text-only import")
+				if kind != "image" && kind != "file" {
+					return errors.New("embedded audio/video is not supported")
+				}
+				props, ok := node["props"].(map[string]any)
+				if !ok {
+					return errors.New("embedded media requires local asset props")
+				}
+				link, ok := props["url"].(string)
+				if !ok {
+					return errors.New("embedded media requires a local asset URL")
+				}
+				target, err := markdownLocalTarget(source, link)
+				if err != nil {
+					return err
+				}
+				assetURL := ""
+				if len(assets) > 0 {
+					assetURL = assets[0][target]
+				}
+				if assetURL == "" {
+					return fmt.Errorf("missing local asset target: %s", target)
+				}
+				if kind == "image" && !markdownImageExtension(target) {
+					return errors.New("image block must reference a supported image")
+				}
+				props["url"] = assetURL
+				// A client must not smuggle automatic external requests via extra media props.
+				for key := range props {
+					if key != "url" && key != "caption" && key != "name" && key != "previewWidth" && key != "showPreview" && key != "textAlignment" && key != "backgroundColor" {
+						delete(props, key)
+					}
+				}
 			}
 			if href, ok := node["href"]; ok {
 				link, ok := href.(string)
@@ -210,10 +252,13 @@ func rewriteImportedBlocks(raw json.RawMessage, source string, ids map[string]st
 					}
 					target := path.Clean(path.Join(path.Dir(source), u.Path))
 					id, exists := ids[target]
-					if !exists {
+					if exists {
+						node["href"] = "/?page=" + url.QueryEscape(id)
+					} else if len(assets) > 0 && assets[0][target] != "" {
+						node["href"] = assets[0][target]
+					} else {
 						return fmt.Errorf("missing local link target: %s", target)
 					}
-					node["href"] = "/?page=" + url.QueryEscape(id)
 				}
 			}
 			for _, v := range node {
@@ -231,7 +276,7 @@ func rewriteImportedBlocks(raw json.RawMessage, source string, ids map[string]st
 	return string(result), err
 }
 
-func convertMarkdownPages(preview markdownPreview, converted []markdownBlocks, ids map[string]string) (map[string]string, error) {
+func convertMarkdownPages(preview markdownPreview, converted []markdownBlocks, ids map[string]string, assets ...map[string]string) (map[string]string, error) {
 	if len(preview.Blockers) > 0 {
 		return nil, errors.New("unsupported package files must be resolved before importing")
 	}
@@ -251,7 +296,7 @@ func convertMarkdownPages(preview markdownPreview, converted []markdownBlocks, i
 		if !ok {
 			return nil, fmt.Errorf("missing converted page: %s", p.Path)
 		}
-		value, err := rewriteImportedBlocks(content, p.Path, ids)
+		value, err := rewriteImportedBlocks(content, p.Path, ids, assets...)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", p.Path, err)
 		}
@@ -294,7 +339,11 @@ func (a *AppContext) importMarkdown(ctx context.Context, preview markdownPreview
 	for _, p := range preview.Pages {
 		result.Pages[p.Path] = newID("page")
 	}
-	documents, err := convertMarkdownPages(preview, converted, result.Pages)
+	assetURLs := map[string]string{}
+	for _, asset := range preview.Assets {
+		assetURLs[asset.Path] = "/api/page-assets?id=" + newID("pageasset")
+	}
+	documents, err := convertMarkdownPages(preview, converted, result.Pages, assetURLs)
 	if err != nil {
 		return result, err
 	}
@@ -302,7 +351,19 @@ func (a *AppContext) importMarkdown(ctx context.Context, preview markdownPreview
 		_, e := tx.ExecContext(ctx, `INSERT INTO pages(id,parent_id,title,content,workspace,created_by,created_at,updated_at,version) VALUES(?,?,?,?,1,'Import',?,?,1)`, id, nullStr(parent), title, content, timeNowUTC(), timeNowUTC())
 		return e
 	}
-	if err = insert(result.RootID, "", "Imported Markdown", `[{"type":"paragraph","content":[]}]`); err != nil {
+	rootContent := `[{"type":"paragraph","content":[]}]`
+	if len(preview.Assets) > 0 {
+		index := []any{map[string]any{"type": "paragraph", "content": []any{map[string]any{"type": "text", "text": "Imported attachments", "styles": map[string]any{"bold": true}}}}}
+		for _, asset := range preview.Assets {
+			index = append(index, map[string]any{"type": "bulletListItem", "content": []any{map[string]any{"type": "link", "href": assetURLs[asset.Path], "content": []any{map[string]any{"type": "text", "text": asset.Path, "styles": map[string]any{}}}}}})
+		}
+		encoded, e := json.Marshal(index)
+		if e != nil {
+			return result, e
+		}
+		rootContent = string(encoded)
+	}
+	if err = insert(result.RootID, "", "Imported Markdown", rootContent); err != nil {
 		return result, err
 	}
 	for _, p := range preview.Pages {
@@ -311,6 +372,14 @@ func (a *AppContext) importMarkdown(ctx context.Context, preview markdownPreview
 			parent = result.Pages[p.ParentPath]
 		}
 		if err = insert(result.Pages[p.Path], parent, p.Title, documents[p.Path]); err != nil {
+			return result, err
+		}
+	}
+	// Bytes, ownership and pages share the same transaction. No published files
+	// can survive a failed commit, and retries reuse the original receipt.
+	for _, asset := range preview.Assets {
+		id := strings.TrimPrefix(assetURLs[asset.Path], "/api/page-assets?id=")
+		if _, err = tx.ExecContext(ctx, `INSERT INTO page_assets(id,root_id,original_name,content_type,size_bytes,sha256,data) VALUES(?,?,?,?,?,?,?)`, id, result.RootID, path.Base(asset.Path), asset.ContentType, asset.Size, asset.SHA256, asset.Data); err != nil {
 			return result, err
 		}
 	}
@@ -389,7 +458,11 @@ func (a *AppContext) handleMarkdownImport(w http.ResponseWriter, r *http.Request
 		for _, p := range preview.Pages {
 			ids[p.Path] = "preview"
 		}
-		if _, err := convertMarkdownPages(preview, converted, ids); err != nil {
+		assets := map[string]string{}
+		for _, asset := range preview.Assets {
+			assets[asset.Path] = "/api/page-assets?id=preview"
+		}
+		if _, err := convertMarkdownPages(preview, converted, ids, assets); err != nil {
 			writeJSONError(w, 400, err.Error())
 			return
 		}

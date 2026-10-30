@@ -24,6 +24,7 @@ func TestSyntheticV7UpgradePreservesRecordsAndConfiguration(t *testing.T) {
  if err := os.WriteFile(attachmentPath,[]byte{0,1,2,255},0600); err != nil { t.Fatal(err) }
  removePageRecoveryTestSchema(t,app.DB)
  for _, statement := range []string{
+  "DROP TABLE page_assets", // Remove v12 artifacts when constructing the synthetic old schema.
   "DROP TABLE db_files",
   "DROP INDEX idx_db_records_live",
   "DROP INDEX idx_db_properties_live",

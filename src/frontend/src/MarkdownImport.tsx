@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 type Source = {path: string; title: string; parentPath?: string; markdown: string}
-type Preview = {digest: string; pages: Source[]; blockers: string[]}
+type Preview = {digest: string; pages: Source[]; assets: {path:string;size:number;sha256:string;contentType:string}[]; blockers: string[]}
 type Result = {rootId: string; pages: Record<string, string>}
 export default function MarkdownImport({onImported}: {onImported: () => Promise<void>}) {
  const [file, setFile] = useState<File | null>(null)
@@ -58,9 +58,9 @@ export default function MarkdownImport({onImported}: {onImported: () => Promise<
   } finally { if (!controller.signal.aborted) setBusy(''); abort.current = null }
  }
  return <section className="archive-panel markdown-import" aria-label="Markdown package import" aria-busy={!!busy}>
-  <div className="section-heading"><h3>Bring in Markdown pages</h3><span>Local text-only ZIP</span></div>
-  <p>Preview a ZIP of UTF-8 Markdown pages. Each import creates a separate root; matching titles never replace your writing. Up to 100 pages, 1 MB per file and 16 MB per ZIP and expanded package.</p>
-  <p className="empty">This first format excludes attachments, CSV databases and local heading anchors. HTML and editor-unsupported Markdown can be simplified or omitted. A folder uses its sibling Markdown page as parent, or the nearest parent page; other paths appear directly under the import root. Formatting uses the editor’s Markdown parser and may simplify rich content. Keep the original ZIP.</p>
+  <div className="section-heading"><h3>Bring in Markdown pages</h3><span>Local pages and attachments</span></div>
+  <p>Preview a ZIP of UTF-8 Markdown pages. Each import creates a separate root; matching titles never replace your writing. Up to 100 pages, 1 MB per Markdown page, 8 MB per attachment and 16 MB per ZIP and expanded package.</p>
+  <p className="empty">Supports local PNG/JPEG/GIF/WebP images and PDF/TXT/Office downloads. CSV databases, embedded audio/video, remote images and local heading anchors are not supported. Shared attachments belong to the import root and are retained with its history and trash. HTML and editor-unsupported Markdown can be simplified or omitted. A folder uses its sibling Markdown page as parent, or the nearest parent page; other paths appear directly under the import root. Formatting uses the editor’s Markdown parser and may simplify rich content. Keep the original ZIP.</p>
   <label className="archive-file-label">Markdown package<input type="file" accept=".zip,application/zip" aria-label="Markdown package ZIP" disabled={!!busy} onChange={e => {
    const next=e.target.files?.[0] || null
    setPreview(null); setBlocks([]); setComplete(false); setNotice(''); setError('')
@@ -73,7 +73,8 @@ export default function MarkdownImport({onImported}: {onImported: () => Promise<
    {preview && !preview.blockers.length && <button className="btn primary" disabled={!!busy || !blocks.length || complete} onClick={() => void run(true)}>{busy==='import'?'Importing pages…':'Import as new pages'}</button>}
   </div>
   {preview && <div className="archive-preview" aria-label="Markdown package contents">
-   <p><strong>{preview.pages.length} Markdown pages</strong></p>
+   <p><strong>{preview.pages.length} Markdown pages</strong> · {preview.assets.length} attachments</p>
+   {!!preview.assets.length && <details><summary>Included attachments</summary><ul>{preview.assets.map(asset=><li key={asset.path}>{asset.path} · {asset.size.toLocaleString()} bytes</li>)}</ul></details>}
    {!!preview.blockers.length && <div role="alert"><p>Import blocked. No pages were written.</p><ul>{preview.blockers.map(message => <li key={message}>{message}</li>)}</ul></div>}
    <label className="archive-file-label">Preview source page<select value={selected} onChange={e=>setSelected(e.target.value)}>{preview.pages.map(p=><option key={p.path} value={p.path}>{p.path} → {p.parentPath || 'Import root'}</option>)}</select></label>
    <pre className="markdown-source">{preview.pages.find(p=>p.path===selected)?.markdown}</pre>

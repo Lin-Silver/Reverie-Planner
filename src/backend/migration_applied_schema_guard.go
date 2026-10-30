@@ -56,7 +56,10 @@ func verifyAppliedMigrationSchema(db *sql.DB) error {
     }
     var recoveryApplied int
     if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=11").Scan(&recoveryApplied); err != nil { return err }
-    if recoveryApplied > 0 { return verifyPageRecoverySchema(db) }
+    if recoveryApplied > 0 { if err:=verifyPageRecoverySchema(db);err!=nil{return err} }
+    var assetsApplied int
+    if err:=db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=12").Scan(&assetsApplied);err!=nil{return err}
+    if assetsApplied>0{return verifyPageAssetsSchema(db)}
     return nil
 }
 

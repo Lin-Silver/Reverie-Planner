@@ -230,6 +230,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", ctx.handleHealth)
+	mux.HandleFunc("/api/page-assets", ctx.handlePageAssets)
 	mux.HandleFunc("/api/import/markdown-preview", ctx.handleMarkdownImport)
 	mux.HandleFunc("/api/import/markdown", ctx.handleMarkdownImport)
 	mux.HandleFunc("/api/workspace", ctx.handleWorkspace)
@@ -672,6 +673,10 @@ func initializeDatabase(rootPath string) (*sql.DB, error) {
 		return nil, err
 	}
 	if err := migratePageRecovery(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := migratePageAssets(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

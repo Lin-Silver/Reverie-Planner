@@ -9,7 +9,7 @@ import (
 // Keep this in sync with the highest numbered migration in initializeDatabase.
 // Refuse to open newer databases before running any application migration: an
 // older binary cannot safely infer the schema or semantics of a future release.
-const latestSupportedSchemaMigration = 11
+const latestSupportedSchemaMigration = 12
 
 func rejectUnsupportedSchemaMigrations(db *sql.DB) error {
 	var version int

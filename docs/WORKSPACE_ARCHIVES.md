@@ -44,6 +44,7 @@ The command prints JSON containing `root`, for example `/path/new-recovery-conta
 ## What is preserved
 
 - The verified SQLite snapshot: documents, nested page relationships, databases, records, typed values, views, projects/tasks, favorites/recent metadata and other application data in SQLite.
+- Imported Markdown page assets are stored transactionally inside the SQLite snapshot, including unreferenced package assets and recoverable root trash. Schema 12 checks their size, SHA-256, format and live/trash root ownership at export and restore. Attachment preview counts include both storage types.
 - Every referenced database attachment, including soft-deleted attachments needed for recovery. Missing, non-regular or changed attachment inputs refuse export rather than silently producing an incomplete backup.
 - Typed public application settings, restricted to a loopback host and a local-only workspace.
 

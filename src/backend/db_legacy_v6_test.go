@@ -22,6 +22,7 @@ func TestSyntheticV6UpgradePreservesPagesProjectsAndAIState(t *testing.T) {
  if err!=nil { t.Fatal(err) }
  removePageRecoveryTestSchema(t,app.DB)
  for _,stmt:=range []string{
+  "DROP TABLE page_assets", // Remove v12 artifacts when constructing the synthetic old schema.
   "DROP TABLE db_files",
   "DROP TABLE db_values",
   "DROP TABLE db_views",

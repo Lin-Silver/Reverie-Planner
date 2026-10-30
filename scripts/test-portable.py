@@ -28,16 +28,17 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
         assert record['values'][amount['id']] == 11 and record['values'][formula['id']] == 22
         assert record['values'][self_relation['id']] == [native_record['id']]
         assert any(v['id']==view['id'] and v['config']==view['config'] for v in api('/api/db/views?databaseId='+database['id']))
-    # Synthetic text-only import travels through restart, archive and CLI restore.
+    # Synthetic pages and SQLite-owned attachment import travels through restart, archive and CLI restore.
     import_zip=io.BytesIO()
     with zipfile.ZipFile(import_zip,'w',zipfile.ZIP_DEFLATED) as package:
         package.writestr('Native import.md','# Native import\n\nOffline source.')
+        package.writestr('asset.txt','Native portable attachment bytes')
     import_zip=import_zip.getvalue()
     def import_package():
         request=urllib.request.Request(url+'/api/import/markdown-preview',data=import_zip,method='POST')
         with http.open(request) as response: preview=json.load(response)
         boundary='reverie-native-import-boundary'
-        fields=[('digest',preview['digest'].encode()),('operationKey',b'native_import_operation_123456'),('blocks',json.dumps([{'path':'Native import.md','content':[{'type':'paragraph','content':[{'type':'text','text':'Native imported writing','styles':{}}]}]}]).encode())]
+        fields=[('digest',preview['digest'].encode()),('operationKey',b'native_import_operation_123456'),('blocks',json.dumps([{'path':'Native import.md','content':[{'type':'paragraph','content':[{'type':'text','text':'Native imported writing','styles':{}},{'type':'link','href':'asset.txt','content':[{'type':'text','text':'Portable file','styles':{}}]}]}]}]).encode())]
         body=b''
         for name,value in fields:
             body+=f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode()+value+b'\r\n'
@@ -50,6 +51,11 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
         assert len(api('/api/pages'))==before
         document=api('/api/pages?id='+imported['pages']['Native import.md'])
         assert document['parentId']==imported['rootId'] and 'Native imported writing' in document['content']
+        href=json.loads(document['content'])[0]['content'][1]['href']
+        with http.open(url+href) as response:
+            assert response.read()==b'Native portable attachment bytes'
+            assert response.headers['X-Content-Type-Options']=='nosniff'
+            assert response.headers['Content-Disposition'].startswith('attachment')
     for cycle in range(2):
         proc=subprocess.Popen([str(dest/'runtime'/exe),'--root='+str(dest)],cwd=tempfile.gettempdir())
         try:

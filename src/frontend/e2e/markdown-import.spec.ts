@@ -4,8 +4,8 @@ import fs from 'node:fs/promises'
 
 test.use({trace: 'retain-on-failure', screenshot: 'only-on-failure'})
 
-function zip(files: Record<string,string>): Buffer {
- return execFileSync(process.platform==='win32'?'python':'python3', ['-c', 'import sys,json,io,zipfile; b=io.BytesIO(); z=zipfile.ZipFile(b,"w",zipfile.ZIP_DEFLATED); [z.writestr(k,v) for k,v in json.load(sys.stdin).items()]; z.close(); sys.stdout.buffer.write(b.getvalue())'], {input:JSON.stringify(files)})
+function zip(files: Record<string,string|Buffer>): Buffer {
+ return execFileSync(process.platform==='win32'?'python':'python3', ['-c', 'import sys,json,io,zipfile,base64; b=io.BytesIO(); z=zipfile.ZipFile(b,"w",zipfile.ZIP_DEFLATED); [z.writestr(k,base64.b64decode(v)) for k,v in json.load(sys.stdin).items()]; z.close(); sys.stdout.buffer.write(b.getvalue())'], {input:JSON.stringify(Object.fromEntries(Object.entries(files).map(([name,data])=>[name,Buffer.from(data).toString("base64")])))})
 }
 async function settings(page: import('@playwright/test').Page) {
  await page.goto('/')
@@ -90,4 +90,57 @@ test('Markdown package reports unsupported assets and rejects broken links witho
  await panel.getByRole('button',{name:'Import as new pages',exact:true}).focus()
  await page.keyboard.press('Enter')
  await expect(panel.getByRole('status')).toContainText('Imported 1 pages')
+})
+
+
+test('Markdown attachments preview without writes, import once and load locally after reload',async({page})=>{
+ const panel=await settings(page)
+ const pixel=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=','base64')
+ const before=(await (await page.request.get('/api/pages')).json()).length
+ await panel.getByLabel('Markdown package ZIP').setInputFiles({name:'local-assets.zip',mimeType:'application/zip',buffer:zip({'Asset page.md':'# Asset page\n\n![Local pixel](Asset%20page/pixel.png)\n\n[Read notes](Asset%20page/notes.txt)','Asset page/pixel.png':pixel,'Asset page/notes.txt':'Offline attachment bytes','Unused.pdf':'%PDF-synthetic retained attachment'})})
+ await panel.getByRole('button',{name:'Preview Markdown package',exact:true}).click()
+ await expect(panel.getByRole('status')).toContainText('Preview ready')
+ await expect(panel.getByLabel('Markdown package contents')).toContainText('3 attachments')
+ expect((await (await page.request.get('/api/pages')).json()).length).toBe(before)
+ let rootId=''; let pageId=''
+ await page.route('**/api/import/markdown',async route=>{
+  const response=await route.fetch();expect(response.status()).toBe(201)
+  const result=await response.json();rootId=result.rootId;pageId=result.pages['Asset page.md']
+  await route.abort('failed')
+ },{times:1})
+ await panel.getByRole('button',{name:'Import as new pages',exact:true}).click()
+ await expect(panel.getByRole('alert')).toBeVisible()
+ await panel.getByRole('button',{name:'Import as new pages',exact:true}).click()
+ await expect(panel.getByRole('status')).toContainText('Imported 1 pages')
+ expect((await (await page.request.get('/api/pages')).json()).length).toBe(before+2)
+ expect(rootId).toBeTruthy()
+ await page.goto('/?page='+pageId)
+ await expect(page.getByLabel('Page title')).toHaveValue('Asset page')
+ const image=page.locator('.bn-editor img:visible').first()
+ await expect(image).toHaveAttribute('src',/^\/api\/page-assets\?id=/)
+ await expect.poll(()=>image.evaluate((el:HTMLImageElement)=>el.complete&&el.naturalWidth===1)).toBe(true)
+ const imageURL=await image.getAttribute('src')
+ const response=await page.request.get(imageURL!)
+ expect(response.headers()['content-type']).toBe('image/png');expect(await response.body()).toEqual(pixel)
+ const link=page.locator('.bn-editor').getByRole('link',{name:'Read notes',exact:true})
+ const href=await link.getAttribute('href');expect(href).toMatch(/^\/api\/page-assets\?id=/)
+ const download=await page.request.get(href!)
+ expect(download.headers()['content-disposition']).toContain('attachment')
+ expect(download.headers()['x-content-type-options']).toBe('nosniff')
+ expect(await download.text()).toBe('Offline attachment bytes')
+ await page.reload()
+ await expect(page.locator('.bn-editor').getByRole('link',{name:'Read notes',exact:true})).toHaveAttribute('href',href!)
+ expect(await (await page.request.get(href!)).text()).toBe('Offline attachment bytes')
+})
+
+test('Markdown missing or remote embedded images fail preflight without writing pages',async({page})=>{
+ const panel=await settings(page)
+ const before=await (await page.request.get('/api/pages')).json()
+ for(const target of ['missing.png','https://example.com/pixel.png']){
+  await panel.getByLabel('Markdown package ZIP').setInputFiles({name:'bad-image.zip',mimeType:'application/zip',buffer:zip({'A.md':'![Missing]('+target+')'})})
+  await panel.getByRole('button',{name:'Preview Markdown package',exact:true}).click()
+  await expect(panel.getByRole('alert')).toContainText(/missing local asset|unsupported local asset/)
+  await expect(panel.getByRole('button',{name:'Import as new pages',exact:true})).toBeDisabled()
+  expect(await (await page.request.get('/api/pages')).json()).toEqual(before)
+ }
 })
