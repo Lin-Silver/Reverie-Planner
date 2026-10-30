@@ -85,6 +85,28 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
         assert record['values'][fields['Amount']]==12.5 and record['values'][fields['Done']] is True and record['values'][fields['Date']]=='2026-10-30'
         empty=next(row for row in records if row['title']=='Empty cells')
         assert empty.get('values',{}).get(fields['Amount']) is None and empty.get('values',{}).get(fields['Done']) is None
+    def import_database_package():
+        return api('/api/database-package?digest='+database_digest+'&operationKey=native_database_package_123456','POST',database_payload)
+    def check_database_package():
+        before=len(api('/api/databases'))
+        assert import_database_package()==database_copy
+        assert len(api('/api/databases'))==before
+        original=api('/api/databases?id='+csv_imported['databaseId'])
+        copied=api('/api/databases?id='+database_copy['databaseId'])
+        assert copied['id']!=original['id'] and copied['pageId']!=original['pageId']
+        assert [p['type'] for p in copied['properties']]==[p['type'] for p in original['properties']]
+        assert {p['id'] for p in copied['properties']}.isdisjoint({p['id'] for p in original['properties']})
+        fields={p['name']:p['id'] for p in copied['properties']}
+        assert copied['views'][0]['id']!=original['views'][0]['id']
+        assert copied['views'][0]['name']=='Independent native view'
+        assert json.loads(copied['views'][0]['config'])['columnWidths']=={fields['Amount']:180}
+        assert original['views'][0]['config']=='{}'
+        records=api('/api/db/records?databaseId='+copied['id'])
+        assert len(records)==2
+        record=next(row for row in records if row['title']=='Native CSV record')
+        assert record['values'][fields['Amount']]==12.5 and record['values'][fields['Done']] is True
+        exported=api('/api/database-package?databaseId='+copied['id'])
+        assert len(exported['records'])==2 and len(exported['views'])==1
     for cycle in range(2):
         proc=subprocess.Popen([str(dest/'runtime'/exe),'--root='+str(dest)],cwd=tempfile.gettempdir())
         try:
@@ -108,6 +130,16 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                 csv_payload.update(digest=csv_preview['digest'],operationKey='native_csv_operation_123456')
                 csv_imported=import_csv()
                 check_csv()
+                database_payload=api('/api/database-package?databaseId='+csv_imported['databaseId'])
+                database_preview=api('/api/database-package?preview=1','POST',database_payload)
+                assert database_preview['records']==2 and len(database_preview['properties'])==4
+                database_digest=database_preview['digest']
+                database_copy=import_database_package()
+                copied_schema=api('/api/databases?id='+database_copy['databaseId'])
+                copied_amount=next(p['id'] for p in copied_schema['properties'] if p['name']=='Amount')
+                copied_view=copied_schema['views'][0]
+                api('/api/db/views','PUT',dict(copied_view,name='Independent native view',config=json.dumps({'columnWidths':{copied_amount:180}})))
+                check_database_package()
                 imported=import_package()
                 check_import()
                 document_raw=json.dumps(api('/api/document-package?rootId='+imported['rootId'])).encode()
@@ -132,6 +164,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                 check_import()
                 check_documents()
                 check_csv()
+                check_database_package()
                 trash=api('/api/page-trash')
                 item=next(p for p in trash if p['id']==saved['id'])
                 api('/api/page-trash','POST',{'id':item['id'],'version':item['version']})
@@ -186,6 +219,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             check_import()
             check_documents()
             check_csv()
+            check_database_package()
             assert api('/api/pages?id='+saved['id'])['content']=='Newer native writing'
             history=api('/api/page-history?pageId='+saved['id'])
             assert any(p['version']==saved['version'] for p in history)
