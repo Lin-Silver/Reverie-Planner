@@ -53,3 +53,13 @@ Full Notion replacement still requires multi-page/attachment import/export, rich
 CSV import reuses the Settings archive panels: explicit type mapping in a responsive labelled fieldset, opaque source samples, a focusable horizontal table region and row/column diagnostics. Changing a field removes the old confirmation. Buttons give immediate busy/error/retry feedback; no new motion is added to reading or keyboard confirmation. The existing font/material/contrast/motion preferences apply.
 
 Database packages use the same opaque archive reading surface. Separate download/import headings and three named steps show progress without moving preview data. Pointer feedback uses the existing 120ms press/color tokens; keyboard interactions and reduced-motion stay immediate. Completion focuses a persistent status without scrolling. File replacement clears stale previews/confirmation, and responsive controls retain touch targets.
+
+## Glass v2 (owner-confirmed)
+
+See GLASS_UI_V2.md. The default macOS-inspired workspace uses a generated local
+sakura wallpaper, floating navigation and toolbar glass, and thicker translucent
+content materials. Classic remains selectable. Glass.css extends the same semantic
+tokens; foreground contrasts, system fonts, focus, reduced motion/transparency and
+high-contrast fallbacks apply to both. Appearance settings are versioned in SQLite
+app_state and travel with the workspace. No desktop-transparency promise or fake
+window controls are introduced.

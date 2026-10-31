@@ -200,3 +200,13 @@ Local full Go tests, go vet, frontend build/lint, migration-test type checking a
 The owner authorization superseded the earlier upload block. Only main/dev remain; main and the published V0.0.1 assets were not changed. This follow-up changes documentation only; any documentation-only CI is separate from acceptance of the source SHA above.
 
 Next unmet workflow: database attachments and configured/advanced fields in reversible packages, followed by integrated Notion ZIP mapping. Complete Notion compatibility, real authorized v6/v7 samples, 10,000-record performance, advanced reciprocal dependency lifecycle, custom templates/covers and manual accessibility/macOS signing remain open. Do not close #5 or mark all of M2 complete from this bounded scalar increment.
+
+## 2026-10-30 — Feature audit and Glass v2
+
+Started from remote dev `5d2c8013b614b9f66ca2d4c677db5e849efd6193`; its documentation CI 41083433422 succeeded. The owner requested an audit and a new Apple-style glass UI, and explicitly answered the design questions: macOS structure; application wallpaper; default Glass with Classic switch; generated pink/white sakura; Apple material layering with thicker translucent reading content. Ambiguous desktop transparency and all-content Liquid Glass were clarified before implementation.
+
+FEATURE_AUDIT_2026-10-30.md separates missing workflows, partial implementations and unverified release gates. It identifies incomplete provider settings UI and planning configuration in addition to known migration/database-scale gaps. GLASS_UI_V2.md records the design and exact generated wallpaper prompt/provenance. The runtime wallpaper is bundled, approximately 53 KB, and requires no network.
+
+Implemented Glass.css across shell/home/writing/database/settings/dialogs, a toolbar appearance dialog and settings controls, default Glass/Classic switching, Sakura/Mist and three material strengths. Preferences use an enumerated, version-checked app_state API with transactional readback and archive persistence; other workspace metadata and provider bytes are preserved. System solid-material preferences override the selected strength. Native screenshot/focus/reload tests are added without removing prior assertions.
+
+Local targeted appearance Go tests, go vet and frontend build/lint passed before publication (existing lint/editor chunk debt remains). Full local Go suite and migration/Glass test type checking are being completed. Native browser/platform checks and visual review are required for acceptance; no success is implied until the exact source SHA/run is recorded below. Main and published V0.0.1 remain unchanged.

@@ -125,6 +125,10 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
             try: http.open(req);raise AssertionError('unauthenticated stop accepted')
             except urllib.error.HTTPError as err: assert err.code in (401,403)
             if cycle == 0:
+                appearance=api('/api/appearance')
+                assert appearance=={'style':'glass','wallpaper':'sakura','material':'balanced','version':0}
+                appearance=api('/api/appearance','PUT',dict(appearance,style='classic',wallpaper='mist',material='frosted'))
+                assert appearance['version']==1
                 csv_preview=api('/api/import/csv?preview=1','POST',csv_payload)
                 assert csv_preview['rows']==2 and csv_preview['problemCount']==0
                 csv_payload.update(digest=csv_preview['digest'],operationKey='native_csv_operation_123456')
@@ -185,6 +189,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                 # Keep dependency-ordered trash in the archive too.
                 api('/api/db/properties?id='+formula['id'],'DELETE')
                 api('/api/db/properties?id='+amount['id'],'DELETE')
+            assert api('/api/appearance')==appearance
             if cycle == 1:
                 archive = dest/'native-workspace.zip'
                 request = urllib.request.Request(url+'/api/workspace/archive', method='POST')
@@ -216,6 +221,7 @@ with tempfile.TemporaryDirectory(prefix='reverie portable ') as tmp:
                     break
                 except OSError: time.sleep(.1)
             else: raise RuntimeError('restored service did not become ready')
+            assert api('/api/appearance')==appearance
             check_import()
             check_documents()
             check_csv()

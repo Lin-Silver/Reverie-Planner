@@ -27,10 +27,10 @@ jobs:
         run: npx playwright install chromium
         working-directory: src/frontend
       - name: Type-check migration browser tests
-        run: npx tsc --ignoreConfig --noEmit --target es2022 --module nodenext --moduleResolution nodenext --types node --skipLibCheck e2e/markdown-import.spec.ts e2e/document-package.spec.ts e2e/csv-import.spec.ts e2e/database-package.spec.ts
+        run: npx tsc --ignoreConfig --noEmit --target es2022 --module nodenext --moduleResolution nodenext --types node --skipLibCheck e2e/markdown-import.spec.ts e2e/document-package.spec.ts e2e/csv-import.spec.ts e2e/database-package.spec.ts e2e/glass-ui.spec.ts
         working-directory: src/frontend
       - name: Verify document and CSV migration browser workflows
-        run: npx playwright test markdown-import.spec.ts document-package.spec.ts csv-import.spec.ts database-package.spec.ts
+        run: npx playwright test markdown-import.spec.ts document-package.spec.ts csv-import.spec.ts database-package.spec.ts glass-ui.spec.ts
         working-directory: src/frontend
       - name: Run browser end-to-end tests
         run: npm run test:e2e
@@ -43,6 +43,7 @@ jobs:
           path: |
             src/frontend/test-results/database-evidence/
             src/frontend/test-results/import-evidence/
+            src/frontend/test-results/glass-evidence/
             src/frontend/test-results/**/trace.zip
             src/frontend/test-results/**/test-failed-*.png
             src/frontend/test-results/**/error-context.md
@@ -143,10 +144,10 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: src/frontend
       - name: Type-check migration browser tests
-        run: npx tsc --ignoreConfig --noEmit --target es2022 --module nodenext --moduleResolution nodenext --types node --skipLibCheck e2e/markdown-import.spec.ts e2e/document-package.spec.ts e2e/csv-import.spec.ts e2e/database-package.spec.ts
+        run: npx tsc --ignoreConfig --noEmit --target es2022 --module nodenext --moduleResolution nodenext --types node --skipLibCheck e2e/markdown-import.spec.ts e2e/document-package.spec.ts e2e/csv-import.spec.ts e2e/database-package.spec.ts e2e/glass-ui.spec.ts
         working-directory: src/frontend
       - name: Verify document and CSV migration browser workflows
-        run: npx playwright test markdown-import.spec.ts document-package.spec.ts csv-import.spec.ts database-package.spec.ts
+        run: npx playwright test markdown-import.spec.ts document-package.spec.ts csv-import.spec.ts database-package.spec.ts glass-ui.spec.ts
         working-directory: src/frontend
       - run: npm run test:e2e
         working-directory: src/frontend
@@ -158,6 +159,7 @@ jobs:
           path: |
             src/frontend/test-results/database-evidence/
             src/frontend/test-results/import-evidence/
+            src/frontend/test-results/glass-evidence/
             src/frontend/test-results/**/trace.zip
             src/frontend/test-results/**/test-failed-*.png
             src/frontend/test-results/**/error-context.md

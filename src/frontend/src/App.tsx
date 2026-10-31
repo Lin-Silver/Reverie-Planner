@@ -1,12 +1,15 @@
 import { lazy, Suspense, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import DatabaseView from './DatabaseView'
 import WorkspaceStorage from './WorkspaceStorage'
+import AppearanceSettings from './AppearanceSettings'
+import {useAppearance} from './useAppearance'
 import Icon from './Icon'
 import Dialog from './Dialog'
 import PageRecovery from './PageRecovery'
 import { pageTemplates } from './pageTemplates'
 import type { FormEvent } from 'react'
 import './App.css'
+import './Glass.css'
 
 const PageEditor = lazy(() => import('./PageEditor'))
 
@@ -49,6 +52,8 @@ export default function App() {
   const [creatingTemplate, setCreatingTemplate] = useState(false)
   const [fullWidth, setFullWidth] = useState(() => localStorage.getItem('reverie.fullWidth') === '1')
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('theme') as any) || 'light')
+  const appearancePreferences = useAppearance()
+  const [appearanceOpen, setAppearanceOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('reverie.sidebar.collapsed') === '1' || (localStorage.getItem('reverie.sidebar.collapsed') === null && window.matchMedia('(max-width: 768px)').matches))
   const [view, _setView] = useState<string>('home')
   const [selectedPage, setSelectedPage] = useState<string>('')
@@ -809,6 +814,7 @@ export default function App() {
     if (view === 'settings') return (
       <div style={{ padding: 24, maxWidth: 720 }}>
         <h2>Settings</h2>
+        <AppearanceSettings preferences={appearancePreferences} />
         <WorkspaceStorage onImported={refresh} />
         <div className="form-row"><label>Theme</label>
           <select className="input" value={theme} onChange={(e) => setTheme(e.target.value as any)}>
@@ -821,7 +827,7 @@ export default function App() {
             {providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
         </div>
-        <p className="empty">Provider configuration available via existing controls.</p>
+        <p className="empty">Provider creation, key editing and connection testing are not available in this screen yet.</p>
         <h3 style={{ marginTop: 24 }}>Members</h3>
         {members.map((m: any) => <div key={m.id}>{m.name} — {m.role}</div>)}
         <h3 style={{ marginTop: 24 }}>Workspaces</h3>
@@ -850,7 +856,8 @@ export default function App() {
   }
 
   return (
-    <div className="app" data-theme={theme} onPointerDown={() => document.documentElement.dataset.input = 'pointer'} onKeyDown={() => document.documentElement.dataset.input = 'keyboard'}>
+    <div className="app" onPointerDown={() => document.documentElement.dataset.input = 'pointer'} onKeyDown={() => document.documentElement.dataset.input = 'keyboard'}>
+      <div className="workspace-wallpaper" aria-hidden="true" />
       <a className="skip-link" href="#main-content">Skip to content</a>
       {narrow ? !sidebarCollapsed && <Dialog label="Workspace navigation" navigation onClose={() => setSidebarCollapsed(true)}>{sidebar}<button className="icon-button navigation-close" aria-label="Close navigation" onClick={() => setSidebarCollapsed(true)}><Icon name="close" /></button></Dialog> : sidebar}
       {recovery && <PageRecovery pageId={recovery.pageId} version={recovery.version} returnFocus={recovery.returnFocus} onClose={() => setRecovery(null)} onRestored={async () => { if (recovery.pageId) await reloadRecoveredPage(); else await refresh() }} />}
@@ -860,10 +867,13 @@ export default function App() {
           <nav className="breadcrumb" aria-label="Breadcrumb"><button onClick={() => navigate('home')} aria-label="Go to Home">Workspace</button><span>/</span><strong>{view === 'page' ? pageDraft.title : view.charAt(0).toUpperCase() + view.slice(1)}</strong></nav>
           <span className="topbar-spacer" />
           <button className="icon-button" aria-label="Quick find" onClick={() => setCmdOpen(true)}><Icon name="search" /></button>
+          <button className="icon-button appearance-trigger" aria-label="Appearance" aria-haspopup="dialog" aria-expanded={appearanceOpen} onClick={() => setAppearanceOpen(true)}><Icon name="palette" /></button>
           <button className="icon-button" aria-label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
         </header>
         <div id="main-content" className="content" tabIndex={-1}>{renderContent()}</div>
       </main>
+
+      {appearanceOpen && <Dialog label="Appearance" instant onClose={() => setAppearanceOpen(false)}><div className="modal appearance-modal"><div className="appearance-modal-heading"><h2>Personalize your space</h2><button className="icon-button" aria-label="Close appearance" onClick={() => setAppearanceOpen(false)}><Icon name="close" /></button></div><AppearanceSettings preferences={appearancePreferences} /></div></Dialog>}
 
       {taskEditorOpen && (
         <Dialog label="Issue editor" onClose={() => setTaskEditorOpen(false)}>
