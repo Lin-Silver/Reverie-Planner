@@ -28,6 +28,7 @@ test('glass default, generated wallpaper and portable classic switch persist in 
  await panel.getByRole('button',{name:'Classic interface',exact:true}).click()
  await expect(page.locator('html')).toHaveAttribute('data-interface','classic')
  await page.setViewportSize({width:390,height:844})
+ await expect(page.getByRole('dialog',{name:'Workspace navigation',exact:true})).toHaveCount(0)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
  const context=await browser.newContext()
  try{const next=await context.newPage();await next.goto('/');await expect(next.locator('html')).toHaveAttribute('data-interface','classic');await expect(next.locator('html')).toHaveAttribute('data-wallpaper','mist')}finally{await context.close()}
@@ -80,7 +81,7 @@ test('glass visual evidence covers light dark writing database and narrow screen
  await fs.mkdir('test-results/glass-evidence',{recursive:true})
  const response=await page.request.post('/api/pages',{data:{title:'Design notes · Sakura',workspace:true,content:JSON.stringify([{type:'paragraph',content:[{type:'text',text:'A quiet place for ideas, plans and the work that matters.',styles:{}}]}])}});expect(response.ok()).toBe(true);const note=await response.json()
  await page.goto('/');await expect(page.getByText('Welcome back',{exact:true})).toBeVisible()
- await expect(page.locator('.page-card').filter({hasText:'Design notes · Sakura'}).first()).toBeVisible()
+ await expect(page.locator('.home-page-list button').filter({hasText:'Design notes · Sakura'}).first()).toBeVisible()
  await page.screenshot({path:'test-results/glass-evidence/home-light.png'})
  await page.goto('/?page='+note.id);await expect(page.locator('.bn-editor')).toContainText('A quiet place')
  await page.screenshot({path:'test-results/glass-evidence/writing-light.png'})
