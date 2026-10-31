@@ -18,6 +18,8 @@ test('glass default, generated wallpaper and portable classic switch persist in 
  await page.goto('/')
  await expect(page.locator('html')).toHaveAttribute('data-interface','glass')
  await expect(page.getByText('Welcome back',{exact:true})).toBeVisible()
+ expect(await page.locator('.main').evaluate(element=>getComputedStyle(element).backdropFilter)).not.toBe('none')
+ expect(await page.locator('.sidebar').evaluate(element=>getComputedStyle(element).backdropFilter)).not.toBe('none')
  const image=await page.request.get('/wallpapers/sakura.webp');expect(image.status()).toBe(200);expect(image.headers()['content-type']).toContain('image/webp')
  const panel=await openAppearance(page)
  await expect(panel.getByRole('button',{name:'Glass interface',exact:true})).toHaveAttribute('aria-pressed','true')

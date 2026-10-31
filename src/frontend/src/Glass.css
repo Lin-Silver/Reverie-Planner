@@ -27,7 +27,7 @@ html[data-interface='glass'] .workspace-wallpaper { display:block; position:abso
 html[data-interface='glass'] .workspace-wallpaper::after { content:''; position:absolute; inset:0; background:rgba(255,247,250,.08); }
 html[data-interface='glass'][data-theme='dark'] .workspace-wallpaper::after { background:rgba(14,10,28,.6); }
 html[data-interface='glass'][data-wallpaper='mist'] .workspace-wallpaper { background:radial-gradient(ellipse at 16% 15%,#f3f7ff,transparent 60%),radial-gradient(ellipse at 85% 80%,#cdc7e7,transparent 60%),linear-gradient(145deg,#dfebf5,#f5e7ec); }
-html[data-interface='glass'] .sidebar { width:15.5rem; padding:var(--space-6) var(--space-3) var(--space-3); border:1px solid var(--glass-edge); border-radius:var(--radius-panel); background:var(--sidebar-bg); backdrop-filter:blur(var(--glass-blur)) saturate(145%); -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(145%); box-shadow:var(--shadow-panel),inset 0 1px 0 var(--glass-edge); }
+html[data-interface='glass'] .sidebar { width:15.5rem; padding:var(--space-6) var(--space-3) var(--space-3); border:1px solid var(--glass-edge); border-radius:var(--radius-panel); background:var(--sidebar-bg); -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(145%); backdrop-filter:blur(var(--glass-blur)) saturate(145%); box-shadow:var(--shadow-panel),inset 0 1px 0 var(--glass-edge); }
 html[data-interface='glass'] .workspace-name { padding:0 var(--space-2) var(--space-6); }
 html[data-interface='glass'] .brand-mark { color:var(--accent); background:var(--glass); border-color:var(--glass-edge); border-radius:1rem; box-shadow:inset 0 1px 0 var(--glass-edge); }
 html[data-interface='glass'] .command-trigger { background:var(--glass); border-color:var(--glass-edge); min-height:2.5rem; }
@@ -37,8 +37,8 @@ html[data-interface='glass'] .nav-item { min-height:2.375rem; gap:.625rem; paddi
 html[data-interface='glass'] .nav-item svg { color:var(--muted); }
 html[data-interface='glass'] .nav-item.active { background:var(--accent-soft); box-shadow:inset 0 1px 0 var(--glass-edge); color:var(--accent); }
 html[data-interface='glass'] .nav-item.active svg { color:var(--accent); }
-html[data-interface='glass'] .main,html[data-interface='glass'] .sidebar.collapsed+.main { margin:0; min-width:0; border-color:var(--glass-edge); background:var(--reading-fill); backdrop-filter:blur(var(--reading-blur)) saturate(115%); -webkit-backdrop-filter:blur(var(--reading-blur)) saturate(115%); box-shadow:var(--shadow-panel),inset 0 1px 0 var(--glass-edge); }
-html[data-interface='glass'] .topbar { flex-shrink:0; margin:var(--space-3); padding:var(--space-2) var(--space-3); min-height:3.25rem; gap:var(--space-3); border:1px solid var(--glass-edge); border-radius:1rem; background:var(--glass); backdrop-filter:blur(16px) saturate(135%); -webkit-backdrop-filter:blur(16px) saturate(135%); }
+html[data-interface='glass'] .main,html[data-interface='glass'] .sidebar.collapsed+.main { margin:0; min-width:0; border-color:var(--glass-edge); background:var(--reading-fill); -webkit-backdrop-filter:blur(var(--reading-blur)) saturate(115%); backdrop-filter:blur(var(--reading-blur)) saturate(115%); box-shadow:var(--shadow-panel),inset 0 1px 0 var(--glass-edge); }
+html[data-interface='glass'] .topbar { flex-shrink:0; margin:var(--space-3); padding:var(--space-2) var(--space-3); min-height:3.25rem; gap:var(--space-3); border:1px solid var(--glass-edge); border-radius:1rem; background:var(--glass); -webkit-backdrop-filter:blur(16px) saturate(135%); backdrop-filter:blur(16px) saturate(135%); }
 html[data-interface='glass'] .topbar .icon-button { border-radius:50%; width:2.25rem; height:2.25rem; background:var(--card); border:1px solid var(--glass-edge); }
 html[data-interface='glass'] .breadcrumb { font-size:.8125rem; gap:var(--space-2); }
 html[data-interface='glass'] .content { scrollbar-width:thin; }
@@ -73,7 +73,7 @@ html[data-interface='glass'] .database-workspace th { background:var(--muted-bg)
 html[data-interface='glass'] .database-workspace details,html[data-interface='glass'] .database-workspace input:not([type='checkbox']):not([type='radio']),html[data-interface='glass'] .database-workspace select,html[data-interface='glass'] .database-workspace textarea { background:var(--card); border-color:var(--border); }
 html[data-interface='glass'] .storage-panel,html[data-interface='glass'] .appearance-panel { background:var(--card); border-color:var(--glass-edge); box-shadow:inset 0 1px 0 var(--glass-edge); }
 html[data-interface='glass'] .archive-preview,html[data-interface='glass'] .csv-sample { background:var(--card); border-color:var(--glass-edge); }
-html[data-interface='glass'] .modal,html[data-interface='glass'] .page-recovery,html[data-interface='glass'] .database-trash { background:var(--dialog-fill); border-color:var(--glass-edge); backdrop-filter:blur(var(--reading-blur)) saturate(120%); -webkit-backdrop-filter:blur(var(--reading-blur)) saturate(120%); box-shadow:var(--shadow-dialog),inset 0 1px 0 var(--glass-edge); }
+html[data-interface='glass'] .modal,html[data-interface='glass'] .page-recovery,html[data-interface='glass'] .database-trash { background:var(--dialog-fill); border-color:var(--glass-edge); -webkit-backdrop-filter:blur(var(--reading-blur)) saturate(120%); backdrop-filter:blur(var(--reading-blur)) saturate(120%); box-shadow:var(--shadow-dialog),inset 0 1px 0 var(--glass-edge); }
 html[data-interface='glass'] .navigation-dialog { background:var(--sidebar-bg); border-right:1px solid var(--glass-edge); }
 html[data-interface='glass'] .navigation-dialog .sidebar { width:100%; border-radius:0; box-shadow:none; border:0; background:var(--sidebar-bg); }
 /* Appearance controls also work in Classic. They change real portable settings. */
@@ -117,7 +117,7 @@ html[data-interface='glass'] .navigation-dialog .sidebar { width:100%; border-ra
 @media (prefers-reduced-transparency:reduce), (prefers-contrast:more) {
  html[data-interface='glass'][data-material] { --dialog-fill:#fff; --card:#fff; --glass:#fff; --sidebar-bg:#fff; --reading-fill:#fff; --muted-bg:#f0f2f6; --border:#64748b; --border-strong:#475569; }
  html[data-interface='glass'][data-theme='dark'][data-material] { --dialog-fill:#211c2a; --card:#211c2a; --glass:#211c2a; --sidebar-bg:#211c2a; --reading-fill:#211c2a; --muted-bg:#332d3e; --border:#aaa0b5; --border-strong:#c8bfd2; }
- html[data-interface='glass'] .sidebar,html[data-interface='glass'] .main,html[data-interface='glass'] .topbar,html[data-interface='glass'] .modal,html[data-interface='glass'] .dialog-shell::backdrop,html[data-interface='glass'] .navigation-dialog .sidebar { backdrop-filter:none; -webkit-backdrop-filter:none; }
+ html[data-interface='glass'] .sidebar,html[data-interface='glass'] .main,html[data-interface='glass'] .topbar,html[data-interface='glass'] .modal,html[data-interface='glass'] .dialog-shell::backdrop,html[data-interface='glass'] .navigation-dialog .sidebar { -webkit-backdrop-filter:none; backdrop-filter:none; }
 }
 @supports not (backdrop-filter:blur(1px)) {
  html[data-interface='glass'] .sidebar,html[data-interface='glass'] .main,html[data-interface='glass'] .topbar,html[data-interface='glass'] .modal { background:var(--bg); }
@@ -133,10 +133,10 @@ html[data-interface='glass'] .navigation-dialog .sidebar { width:100%; border-ra
 html[data-interface='glass'] button { transition:transform var(--duration-press) var(--ease-out); }
 /* The native dialog itself owns the backdrop sampling layer. Keeping that
    only on a child can leave sharp underlying writing visible through it. */
-html[data-interface='glass'] .dialog-shell:not(.navigation-dialog) { background:var(--dialog-fill); border:1px solid var(--glass-edge); border-radius:var(--radius-panel); box-shadow:var(--shadow-dialog); backdrop-filter:blur(var(--glass-blur)) saturate(140%); -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(140%); overflow:hidden; }
-html[data-interface='glass'] .dialog-shell:not(.navigation-dialog)>.modal { background:transparent; border:0; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none; }
+html[data-interface='glass'] .dialog-shell:not(.navigation-dialog) { background:var(--dialog-fill); border:1px solid var(--glass-edge); border-radius:var(--radius-panel); box-shadow:var(--shadow-dialog); -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(140%); backdrop-filter:blur(var(--glass-blur)) saturate(140%); overflow:hidden; }
+html[data-interface='glass'] .dialog-shell:not(.navigation-dialog)>.modal { background:transparent; border:0; box-shadow:none; -webkit-backdrop-filter:none; backdrop-filter:none; }
 @media (prefers-reduced-transparency:reduce), (prefers-contrast:more) {
- html[data-interface='glass'] .dialog-shell:not(.navigation-dialog) { backdrop-filter:none; -webkit-backdrop-filter:none; }
+ html[data-interface='glass'] .dialog-shell:not(.navigation-dialog) { -webkit-backdrop-filter:none; backdrop-filter:none; }
 }
 @supports not (backdrop-filter:blur(1px)) {
  html[data-interface='glass'] .dialog-shell:not(.navigation-dialog) { background:var(--bg); }
