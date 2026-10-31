@@ -531,17 +531,12 @@ test('database calendar drag and unscheduled tray update actual dates',async({pa
   const origin=page.locator('[data-testid="calendar-cell"][data-date="'+date1+'"] [data-testid="calendar-drag-handle"]')
   const dest=page.locator('[data-testid="calendar-cell"][data-date="'+date2+'"]')
   await expect(origin).toBeVisible()
+  // Establish both endpoints before mouse-down. Otherwise dragTo scrolls the
+  // target while holding the mouse, moving the source out from under the pointer.
+  await dest.scrollIntoViewIfNeeded()
+  await origin.scrollIntoViewIfNeeded()
   await page.screenshot({path:'test-results/database-evidence/calendar-drag-before.png'})
-  await page.evaluate(()=>{
-    const evidence:string[]=[]
-    Object.assign(window,{calendarDragEvidence:evidence})
-    for(const type of ['dragstart','dragover','drop','dragend']) document.addEventListener(type,event=>{
-      const target=event.target as HTMLElement
-      evidence.push(type+':'+target.tagName+':'+(target.closest('[data-date]')?.getAttribute('data-date')||''))
-    },true)
-  })
   await origin.dragTo(dest)
-  console.log('Calendar drag evidence',await page.evaluate(()=>(window as unknown as {calendarDragEvidence:string[]}).calendarDragEvidence))
   await page.screenshot({path:'test-results/database-evidence/calendar-drag-after.png'})
   await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===firstRec.id)?.values?.[due.id],{timeout:15000}).toBe(date2)
   await page.getByLabel('Schedule Unscheduled calendar').fill(date3)

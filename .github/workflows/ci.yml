@@ -29,10 +29,11 @@ jobs:
       - name: Type-check migration browser tests
         run: npx tsc --ignoreConfig --noEmit --target es2022 --module nodenext --moduleResolution nodenext --types node --skipLibCheck e2e/markdown-import.spec.ts e2e/document-package.spec.ts e2e/csv-import.spec.ts e2e/database-package.spec.ts e2e/glass-ui.spec.ts
         working-directory: src/frontend
+      - name: Verify calendar drag in the glass layout
+        run: npx playwright test database-workflows.spec.ts -g "calendar drag"
+        working-directory: src/frontend
       - name: Verify document and CSV migration browser workflows
-        run: |
-          npx playwright test database-workflows.spec.ts -g "calendar drag"
-          npx playwright test markdown-import.spec.ts document-package.spec.ts csv-import.spec.ts database-package.spec.ts glass-ui.spec.ts
+        run: npx playwright test markdown-import.spec.ts document-package.spec.ts csv-import.spec.ts database-package.spec.ts glass-ui.spec.ts
         working-directory: src/frontend
       - name: Run browser end-to-end tests
         run: npm run test:e2e
@@ -148,10 +149,11 @@ jobs:
       - name: Type-check migration browser tests
         run: npx tsc --ignoreConfig --noEmit --target es2022 --module nodenext --moduleResolution nodenext --types node --skipLibCheck e2e/markdown-import.spec.ts e2e/document-package.spec.ts e2e/csv-import.spec.ts e2e/database-package.spec.ts e2e/glass-ui.spec.ts
         working-directory: src/frontend
+      - name: Verify calendar drag in the glass layout
+        run: npx playwright test database-workflows.spec.ts -g "calendar drag"
+        working-directory: src/frontend
       - name: Verify document and CSV migration browser workflows
-        run: |
-          npx playwright test database-workflows.spec.ts -g "calendar drag"
-          npx playwright test markdown-import.spec.ts document-package.spec.ts csv-import.spec.ts database-package.spec.ts glass-ui.spec.ts
+        run: npx playwright test markdown-import.spec.ts document-package.spec.ts csv-import.spec.ts database-package.spec.ts glass-ui.spec.ts
         working-directory: src/frontend
       - run: npm run test:e2e
         working-directory: src/frontend
