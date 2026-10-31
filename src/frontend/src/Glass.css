@@ -6,7 +6,7 @@ html[data-interface='glass'] {
  --card:rgba(255,255,255,.53); --paper:rgba(255,255,255,.57); --glass:rgba(255,255,255,.42);
  --sidebar-bg:rgba(255,255,255,.4); --border:rgba(95,72,92,.16); --border-strong:rgba(90,74,98,.38);
  --accent:#075dc4; --accent-hover:#064c9e; --accent-soft:rgba(24,106,218,.12); --hover:rgba(255,255,255,.48);
- --glass-edge:rgba(255,255,255,.85); --glass-blur:28px; --reading-blur:32px; --reading-fill:rgba(255,255,255,.57);
+ --dialog-fill:rgba(255,255,255,.88); --glass-edge:rgba(255,255,255,.85); --glass-blur:28px; --reading-blur:32px; --reading-fill:rgba(255,255,255,.57);
  --shadow-panel:0 18px 60px rgba(92,52,77,.1),0 1px 4px rgba(80,52,70,.06);
  --shadow-dialog:0 24px 80px rgba(50,34,60,.2); --radius: .75rem; --radius-card:1.125rem; --radius-panel:1.5rem;
 }
@@ -15,7 +15,7 @@ html[data-interface='glass'][data-material='frosted'] { --sidebar-bg:rgba(255,25
 html[data-interface='glass'][data-theme='dark'] {
  --bg:#211c2a; --fg:#f4eff6; --muted:#d1c8d6; --muted-bg:rgba(65,52,76,.52); --card:rgba(39,33,50,.76);
  --paper:rgba(30,26,40,.66); --glass:rgba(40,33,53,.58); --sidebar-bg:rgba(33,27,45,.62); --reading-fill:rgba(29,25,39,.7);
- --border:rgba(230,216,238,.19); --border-strong:rgba(232,218,240,.4); --glass-edge:rgba(255,255,255,.15);
+ --dialog-fill:rgba(29,25,39,.92); --border:rgba(230,216,238,.19); --border-strong:rgba(232,218,240,.4); --glass-edge:rgba(255,255,255,.15);
  --accent:#aacaff; --accent-hover:#d0e0ff; --accent-soft:rgba(156,192,255,.16); --hover:rgba(238,217,248,.1);
  --shadow-panel:0 18px 60px rgba(8,5,18,.3),0 1px 4px rgba(8,5,18,.15); --shadow-dialog:0 24px 80px rgba(5,2,12,.45);
 }
@@ -73,7 +73,7 @@ html[data-interface='glass'] .database-workspace th { background:var(--muted-bg)
 html[data-interface='glass'] .database-workspace details,html[data-interface='glass'] .database-workspace input:not([type='checkbox']):not([type='radio']),html[data-interface='glass'] .database-workspace select,html[data-interface='glass'] .database-workspace textarea { background:var(--card); border-color:var(--border); }
 html[data-interface='glass'] .storage-panel,html[data-interface='glass'] .appearance-panel { background:var(--card); border-color:var(--glass-edge); box-shadow:inset 0 1px 0 var(--glass-edge); }
 html[data-interface='glass'] .archive-preview,html[data-interface='glass'] .csv-sample { background:var(--card); border-color:var(--glass-edge); }
-html[data-interface='glass'] .modal,html[data-interface='glass'] .page-recovery,html[data-interface='glass'] .database-trash { background:var(--reading-fill); border-color:var(--glass-edge); backdrop-filter:blur(var(--reading-blur)) saturate(120%); -webkit-backdrop-filter:blur(var(--reading-blur)) saturate(120%); box-shadow:var(--shadow-dialog),inset 0 1px 0 var(--glass-edge); }
+html[data-interface='glass'] .modal,html[data-interface='glass'] .page-recovery,html[data-interface='glass'] .database-trash { background:var(--dialog-fill); border-color:var(--glass-edge); backdrop-filter:blur(var(--reading-blur)) saturate(120%); -webkit-backdrop-filter:blur(var(--reading-blur)) saturate(120%); box-shadow:var(--shadow-dialog),inset 0 1px 0 var(--glass-edge); }
 html[data-interface='glass'] .navigation-dialog { background:var(--sidebar-bg); border-right:1px solid var(--glass-edge); }
 html[data-interface='glass'] .navigation-dialog .sidebar { width:100%; border-radius:0; box-shadow:none; border:0; background:var(--sidebar-bg); }
 /* Appearance controls also work in Classic. They change real portable settings. */
@@ -115,8 +115,8 @@ html[data-interface='glass'] .navigation-dialog .sidebar { width:100%; border-ra
 }
 /* Solid fallbacks always win over user-selected glass strength. */
 @media (prefers-reduced-transparency:reduce), (prefers-contrast:more) {
- html[data-interface='glass'][data-material] { --card:#fff; --glass:#fff; --sidebar-bg:#fff; --reading-fill:#fff; --muted-bg:#f0f2f6; --border:#64748b; --border-strong:#475569; }
- html[data-interface='glass'][data-theme='dark'][data-material] { --card:#211c2a; --glass:#211c2a; --sidebar-bg:#211c2a; --reading-fill:#211c2a; --muted-bg:#332d3e; --border:#aaa0b5; --border-strong:#c8bfd2; }
+ html[data-interface='glass'][data-material] { --dialog-fill:#fff; --card:#fff; --glass:#fff; --sidebar-bg:#fff; --reading-fill:#fff; --muted-bg:#f0f2f6; --border:#64748b; --border-strong:#475569; }
+ html[data-interface='glass'][data-theme='dark'][data-material] { --dialog-fill:#211c2a; --card:#211c2a; --glass:#211c2a; --sidebar-bg:#211c2a; --reading-fill:#211c2a; --muted-bg:#332d3e; --border:#aaa0b5; --border-strong:#c8bfd2; }
  html[data-interface='glass'] .sidebar,html[data-interface='glass'] .main,html[data-interface='glass'] .topbar,html[data-interface='glass'] .modal,html[data-interface='glass'] .dialog-shell::backdrop,html[data-interface='glass'] .navigation-dialog .sidebar { backdrop-filter:none; -webkit-backdrop-filter:none; }
 }
 @supports not (backdrop-filter:blur(1px)) {
@@ -126,4 +126,18 @@ html[data-interface='glass'] .navigation-dialog .sidebar { width:100%; border-ra
 @media (max-width:768px) {
  html[data-interface='classic'] .topbar { gap:var(--space-2); }
  html[data-interface='classic'] .topbar .breadcrumb>button,html[data-interface='classic'] .topbar .breadcrumb>span { display:none; }
+}
+
+/* Foreground and material switch together; a delayed text-color transition
+   briefly makes dark-theme controls illegible. Press feedback stays physical. */
+html[data-interface='glass'] button { transition:transform var(--duration-press) var(--ease-out); }
+/* The native dialog itself owns the backdrop sampling layer. Keeping that
+   only on a child can leave sharp underlying writing visible through it. */
+html[data-interface='glass'] .dialog-shell:not(.navigation-dialog) { background:var(--dialog-fill); border:1px solid var(--glass-edge); border-radius:var(--radius-panel); box-shadow:var(--shadow-dialog); backdrop-filter:blur(var(--glass-blur)) saturate(140%); -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(140%); overflow:hidden; }
+html[data-interface='glass'] .dialog-shell:not(.navigation-dialog)>.modal { background:transparent; border:0; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none; }
+@media (prefers-reduced-transparency:reduce), (prefers-contrast:more) {
+ html[data-interface='glass'] .dialog-shell:not(.navigation-dialog) { backdrop-filter:none; -webkit-backdrop-filter:none; }
+}
+@supports not (backdrop-filter:blur(1px)) {
+ html[data-interface='glass'] .dialog-shell:not(.navigation-dialog) { background:var(--bg); }
 }

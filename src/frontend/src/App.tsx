@@ -47,7 +47,6 @@ const uid = () => Math.random().toString(36).slice(2, 10)
 
 export default function App() {
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 768px)').matches)
-  useEffect(() => { const media = window.matchMedia('(max-width: 768px)'); const update = () => { setNarrow(media.matches); if (media.matches && document.querySelector('dialog[open]:not(.navigation-dialog), .modal-backdrop')) setSidebarCollapsed(true) }; media.addEventListener('change', update); return () => media.removeEventListener('change', update) }, [])
   const [library, setLibrary] = useState<{favorites: string[]; recent: string[]}>({favorites: [], recent: []})
   const [creatingTemplate, setCreatingTemplate] = useState(false)
   const [fullWidth, setFullWidth] = useState(() => localStorage.getItem('reverie.fullWidth') === '1')
@@ -55,6 +54,7 @@ export default function App() {
   const appearancePreferences = useAppearance()
   const [appearanceOpen, setAppearanceOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('reverie.sidebar.collapsed') === '1' || (localStorage.getItem('reverie.sidebar.collapsed') === null && window.matchMedia('(max-width: 768px)').matches))
+  useEffect(() => { const media = window.matchMedia('(max-width: 768px)'); const update = () => { setNarrow(media.matches); if (media.matches && document.querySelector('dialog[open]:not(.navigation-dialog), .modal-backdrop')) setSidebarCollapsed(true) }; media.addEventListener('change', update); return () => media.removeEventListener('change', update) }, [])
   const [view, _setView] = useState<string>('home')
   const [selectedPage, setSelectedPage] = useState<string>('')
   const [selectedProject, setSelectedProject] = useState<string>('all')
