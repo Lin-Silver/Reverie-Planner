@@ -50,7 +50,7 @@ test('Document package downloads, previews and imports a linked tree without rep
   await link.click()
   await expect(page.getByLabel('Page title')).toHaveValue('Transfer child')
   await expect(page).toHaveURL(new RegExp('\\?page='+copiedChild+'$'))
- } finally {releaseDiscovery();await page.unroute('**/api/databases')}
+ } finally {releaseDiscovery();await page.unrouteAll({behavior:'wait'})}
  await expect(page.getByLabel('Page title')).toHaveValue('Transfer child')
  await page.reload();await expect(page.getByLabel('Page title')).toHaveValue('Transfer child')
  expect((await(await page.request.get('/api/pages?id='+root.id)).json()).content).toBe(JSON.stringify(linked))
