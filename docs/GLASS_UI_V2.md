@@ -26,7 +26,10 @@ fonts, compact sidebar hierarchy, pill primary actions, restrained separators an
 layered highlights give writing and data a clear place in the hierarchy.
 Home, templates, documents, all five database views, project tools, settings and
 native app dialogs share the tokens. Preview data and frequent keyboard actions
-stay still; existing 120ms press/color and 250ms occasional dialog tokens remain.
+stay still; existing 120ms physical press and 250ms occasional dialog tokens remain.
+Glass button foregrounds switch immediately with the theme to avoid a temporary
+contrast loss. Native dialogs own their blur layer and use a thicker material
+so the underlying table does not compete with the dialog text.
 No animation library or continuous wallpaper motion is added.
 
 Appearance is available from the toolbar or Settings:
@@ -74,3 +77,5 @@ solid-material preferences and saved writing/database screenshots in both themes
 Execution evidence belongs in DEVELOPMENT_PLAN.md at the exact tested source SHA.
 Existing regression assertions stay in place. Screenshots and automated checks do
 not establish manual hardware or assistive-technology certification.
+
+Actual accepted-source browser screenshots: [Glass v2 gallery](design/glass-v2/README.md).

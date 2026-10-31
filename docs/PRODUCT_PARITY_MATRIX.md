@@ -48,3 +48,14 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: inte
 - Responsive shell, native mobile navigation and theme/material tokens added on dev; full mobile and accessibility acceptance remain open
 
 Verified database interaction baseline: [Windows CI 40266607916](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/40266607916), commit `b0d34c68c4bc27cafa2389234d189819fc062814`, **27/27 Chromium E2E**. Newer commits require their own SHA-matched verification.
+
+## Glass v2 and current audit
+
+The owner-requested Glass v2 adds a default translucent macOS-style shell,
+generated sakura wallpaper, Classic fallback and portable appearance settings.
+See [design](GLASS_UI_V2.md) and [SHA-matched acceptance](DEVELOPMENT_PLAN.md).
+This design increment does not complete the functional parity rows above.
+[The 2026-10-30 feature audit](FEATURE_AUDIT_2026-10-30.md) additionally identifies
+the missing complete provider setup form, planning configuration screens,
+server-side pagination/virtualization and the distinction between implemented
+synthetic regressions and outstanding manual/historical-data release gates.

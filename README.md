@@ -38,6 +38,20 @@ complete Notion compatibility. See [database package limits](docs/DATABASE_PACKA
 [development acceptance](docs/DEVELOPMENT_PLAN.md) for exact scope and CI evidence.
 Do not open newer-schema workspaces with the older release binary.
 
+## Development branch: Glass v2
+
+New dev builds default to a macOS-inspired Glass interface with a bundled original
+pink/white sakura wallpaper. Toolbar → Appearance (also in Settings) switches to
+Classic, chooses Sakura/Mist and adjusts material clarity. Navigation is lighter;
+writing and tables use thicker reading materials. Dark mode, reduced motion and
+solid-material system preferences are supported. Appearance choices travel with
+the workspace archive. This is a cross-platform web implementation.
+
+See [Glass design and wallpaper provenance](docs/GLASS_UI_V2.md),
+[feature audit](docs/FEATURE_AUDIT_2026-10-30.md) and
+[exact source acceptance](docs/DEVELOPMENT_PLAN.md). The audit separates unfinished
+features from implemented workflows and pending manual release checks.
+
 ## AI providers and secrets
 
 On first start, `config/providers.example.json` is copied to the private `config/providers.json` runtime configuration. Existing provider files containing the legacy `apiKey` field are migrated to encrypted storage. Provider API responses never return the key; editing a provider with an empty key retains the saved value.

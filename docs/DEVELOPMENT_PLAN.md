@@ -210,3 +210,82 @@ FEATURE_AUDIT_2026-10-30.md separates missing workflows, partial implementations
 Implemented Glass.css across shell/home/writing/database/settings/dialogs, a toolbar appearance dialog and settings controls, default Glass/Classic switching, Sakura/Mist and three material strengths. Preferences use an enumerated, version-checked app_state API with transactional readback and archive persistence; other workspace metadata and provider bytes are preserved. System solid-material preferences override the selected strength. Native screenshot/focus/reload tests are added without removing prior assertions.
 
 Local targeted appearance Go tests, go vet and frontend build/lint passed before publication (existing lint/editor chunk debt remains). Full local Go suite and migration/Glass test type checking are being completed. Native browser/platform checks and visual review are required for acceptance; no success is implied until the exact source SHA/run is recorded below. Main and published V0.0.1 remain unchanged.
+
+### Glass pre-acceptance corrections
+
+The initial focused native gate exposed a resize conflict between an already-open
+appearance dialog and the mobile navigation drawer. The app now prioritizes an
+active modal on crossing into narrow layout, while ordinary desktop resizing
+retains the existing drawer behavior. The screenshot test closes that drawer
+before opening Appearance, as a user must. Existing import/drawer assertions
+remain unchanged. Dark button text now switches with its material rather than
+transitioning through a low-contrast state; dialogs own their thicker blur layer.
+
+A new computed-style assertion on CI 41185091806 caught a production CSS problem:
+the optimizer retained only the last prefixed backdrop-filter declaration,
+dropping the standard property. Both App.css and Glass.css now put the standard
+property last; the built CSS was inspected and retains both forms. New assertions
+require actual blur on navigation, main reading material and Appearance, in
+addition to the existing solid-preference assertions. No visual acceptance is
+inferred from a source declaration or a failed run. Corrected source is
+`a08bfd8898aa47aa2dae7335660321c8beb15100`; its own native gate is required.
+
+The corrected production blur passed the Linux focused gate. macOS's host media
+preferences produced solid surfaces; Glass tests now explicitly emulate the
+normal material environment and separately assert both system solid overrides.
+This changes the test conditions, not the application's respect for system
+preferences. The new native source is `c3d2fd229ea84d99881f747519b65bd3ccdedfa0`.
+Local full Go suite, go vet, production frontend build/lint and Glass browser
+TypeScript checks pass. Native acceptance is still pending below.
+
+The first full Glass regression ran 84/86 on Linux and macOS. The old database
+visual assertions expected the original semantic foreground colors; Glass now
+shares those readable light/dark values, preserving the old assertions. Calendar
+drag tracing found no dragstart: dragTo scrolled a partly clipped destination
+while holding the mouse, moving the source. The regression now places both
+endpoints in view before the same native drag and retains the actual persisted
+date/unscheduled-date assertions. Before/after screenshots and failure traces are
+retained. A separate early calendar gate also fails correctly on Windows shells.
+The corrected candidate is `e43658430ddbcab127862a0ba088cdde84404eab`.
+
+Candidate e436584 passed 86/86 plus both focused gates and native lifecycle/archive
+recovery/packaging on Linux and macOS. Windows passed 85/86 and exposed a real
+internal-link routing race: the child title rendered before an awaited database
+lookup allowed the URL update, so immediate reload reopened the parent. Internal
+link navigation now commits its location after leave/save guards and destination
+load, before exposing the new editor state. The document regression deliberately
+holds database discovery and still requires the child URL, child title, immediate
+reload and unchanged source writing. Candidate
+`89a5d77444eb34dccd7bab5f1e497aabef44e6cc` requires its own full native run.
+
+### Final native acceptance — Glass v2
+
+Accepted source and tests: `4ba302006fcc94e77a006a5311abd492019a6902`,
+[CI 41186824795](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/41186824795),
+**success**. Linux, macOS and Windows each passed backend tests/build, frontend
+build/lint (14 existing warnings, 0 errors), type checking, **1/1 calendar drag,
+16/16 focused migration/Glass and 86/86 full browser tests**, native portable
+lifecycle/restart, workspace archive/CLI restore/two restored starts and packaging.
+Windows also passed unrelated-service ownership and graceful start/stop checks.
+The final test waits for held route handlers before removing the interception;
+the URL/title/reload/data assertions remain intact. No existing regression
+assertions were removed or skipped to obtain acceptance.
+
+Local full Go tests, go vet, frontend build/lint and affected browser TypeScript
+checks passed. Local browser downloads remained truncated, so browser acceptance
+is the exact native run above. The accepted Linux artifact `13037690396` was
+downloaded and visually reviewed; [three unchanged PNG screenshots](design/glass-v2/README.md)
+show the light home, dark writing and 390px Appearance dialog. The normal-material
+screenshots explicitly control media preferences; reduced-transparency and
+increased-contrast solid overrides are checked separately. Dialog blur now
+separates underlying data, and foreground colors match immediately on theme
+switch. This does not certify Safari, AppKit, real hardware or screen readers.
+
+FEATURE_AUDIT_2026-10-30.md remains the list of functional gaps: integrated Notion
+migration, advanced/asset database packages, pagination/virtualization/10k scale,
+provider/property/planning editors, custom templates/covers and manual release
+gates remain open. Glass is the default with a retained Classic switch; wallpaper
+provenance and its full generation prompt are in GLASS_UI_V2.md. The follow-up
+commit contains only documentation and screenshot evidence. Only main/dev remain;
+main and published V0.0.1 are unchanged. Issue #7 remains open for its broader
+manual accessibility, macOS signing/notarization and engineering-debt gates.
