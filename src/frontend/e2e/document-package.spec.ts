@@ -41,7 +41,16 @@ test('Document package downloads, previews and imports a linked tree without rep
  await expect(page.locator('.bn-editor strong')).toContainText('Preserve bold writing')
  const link=page.locator('.bn-editor').getByRole('link',{name:'Open copied child',exact:true})
  await expect(link).toHaveAttribute('href','/?page='+copiedChild)
- await link.click()
+ // Routing must commit before the child becomes visible, even when unrelated
+ // database discovery is slow. Reloading visible writing must reopen that page.
+ let releaseDiscovery!:()=>void
+ const discoveryHeld=new Promise<void>(resolve=>{releaseDiscovery=resolve})
+ await page.route('**/api/databases',async route=>{await discoveryHeld;await route.continue()})
+ try {
+  await link.click()
+  await expect(page.getByLabel('Page title')).toHaveValue('Transfer child')
+  await expect(page).toHaveURL(new RegExp('\\?page='+copiedChild+'$'))
+ } finally {releaseDiscovery();await page.unroute('**/api/databases')}
  await expect(page.getByLabel('Page title')).toHaveValue('Transfer child')
  await page.reload();await expect(page.getByLabel('Page title')).toHaveValue('Transfer child')
  expect((await(await page.request.get('/api/pages?id='+root.id)).json()).content).toBe(JSON.stringify(linked))

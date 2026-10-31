@@ -293,7 +293,7 @@ export default function App() {
     try { await apiFetch('/api/tasks', { method: 'PUT', body: JSON.stringify({ ...task, status }) }); await refresh() } catch (e) { setError((e as Error).message) }
   }
 
-  const openPageEditor = async (page?: Page) => {
+  const openPageEditor = async (page?: Page, replaceLocation = false) => {
       if (view === 'page' && pageLeaveError && pageEditor && (!page || page.id !== pageEditor.id)) { setError('Resolve the page conflict with Retry or Reload latest before opening another page.'); return }
       if (databasePendingEditRef.current && (!page || page.id !== pageEditor?.id)) { setError('Resolve the unsaved database edit before opening another page.'); return }
       if (view === 'page' && pageEditor && (!page || page.id !== pageEditor.id)) {
@@ -316,6 +316,7 @@ export default function App() {
         pageVersions.current.set(full.id, full.version || 1)
         pageSnapshots.current.set(full.id, full)
         pageTitleDirtyRef.current = false
+        if (replaceLocation) window.history.replaceState(null, '', '/?page=' + encodeURIComponent(full.id))
         setPageEditor(full); setPageDraft({ title: full.title, icon: full.icon ?? '', content: full.content })
         openedId = full.id
         openedFull = full
@@ -449,7 +450,7 @@ export default function App() {
   useEffect(() => { pageDiscardRef.current = false }, [reloadToken])
   const [cmdOpen, setCmdOpen] = useState(false)
   const openPageLink = useEffectEvent(async (id: string) => {
-    try { const full = await apiFetch<Page>(`/api/pages?id=${encodeURIComponent(id)}`); const opened = await openPageEditor(full); if (opened) window.history.replaceState(null, '', '/?page=' + encodeURIComponent(opened)) }
+    try { const full = await apiFetch<Page>(`/api/pages?id=${encodeURIComponent(id)}`); await openPageEditor(full, true) }
     catch (e) { setError((e as Error).message) }
   })
   useEffect(() => {
