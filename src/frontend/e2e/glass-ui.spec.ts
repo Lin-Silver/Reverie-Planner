@@ -95,7 +95,7 @@ test('glass visual evidence covers light dark writing database and narrow screen
  await page.screenshot({path:'test-results/glass-evidence/writing-light.png'})
  await page.getByRole('button',{name:'Switch to dark theme',exact:true}).click()
  await expect(page.locator('html')).toHaveAttribute('data-theme','dark')
- expect(await page.getByRole('button',{name:'Home',exact:true}).evaluate(element=>getComputedStyle(element).color)).toBe('rgb(244, 239, 246)')
+ expect(await page.getByRole('button',{name:'Home',exact:true}).evaluate(element=>getComputedStyle(element).color)).toBe('rgb(226, 232, 240)')
  await page.screenshot({path:'test-results/glass-evidence/writing-dark.png'})
  const db=await(await page.request.post('/api/databases',{data:{title:'Design library'}})).json()
  expect((await page.request.post('/api/db/records',{data:{databaseId:db.id,title:'A considered interface'}})).ok()).toBe(true)

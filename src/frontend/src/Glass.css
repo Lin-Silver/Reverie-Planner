@@ -2,7 +2,7 @@
    jobs. No Apple assets/frameworks or pretend desktop window controls are used. */
 .workspace-wallpaper { display:none; }
 html[data-interface='glass'] {
- --bg:#f3e9eb; --fg:#242536; --muted:#5b586b; --muted-bg:rgba(255,255,255,.37);
+ --bg:#f3e9eb; --fg:#202b3e; --muted:#5b586b; --muted-bg:rgba(255,255,255,.37);
  --card:rgba(255,255,255,.53); --paper:rgba(255,255,255,.57); --glass:rgba(255,255,255,.42);
  --sidebar-bg:rgba(255,255,255,.4); --border:rgba(95,72,92,.16); --border-strong:rgba(90,74,98,.38);
  --accent:#075dc4; --accent-hover:#064c9e; --accent-soft:rgba(24,106,218,.12); --hover:rgba(255,255,255,.48);
@@ -13,7 +13,7 @@ html[data-interface='glass'] {
 html[data-interface='glass'][data-material='soft'] { --sidebar-bg:rgba(255,255,255,.25); --glass:rgba(255,255,255,.3); --reading-fill:rgba(255,255,255,.43); --card:rgba(255,255,255,.42); }
 html[data-interface='glass'][data-material='frosted'] { --sidebar-bg:rgba(255,255,255,.68); --glass:rgba(255,255,255,.72); --reading-fill:rgba(255,255,255,.8); --card:rgba(255,255,255,.76); }
 html[data-interface='glass'][data-theme='dark'] {
- --bg:#211c2a; --fg:#f4eff6; --muted:#d1c8d6; --muted-bg:rgba(65,52,76,.52); --card:rgba(39,33,50,.76);
+ --bg:#211c2a; --fg:#e2e8f0; --muted:#d1c8d6; --muted-bg:rgba(65,52,76,.52); --card:rgba(39,33,50,.76);
  --paper:rgba(30,26,40,.66); --glass:rgba(40,33,53,.58); --sidebar-bg:rgba(33,27,45,.62); --reading-fill:rgba(29,25,39,.7);
  --dialog-fill:rgba(29,25,39,.92); --border:rgba(230,216,238,.19); --border-strong:rgba(232,218,240,.4); --glass-edge:rgba(255,255,255,.15);
  --accent:#aacaff; --accent-hover:#d0e0ff; --accent-soft:rgba(156,192,255,.16); --hover:rgba(238,217,248,.1);

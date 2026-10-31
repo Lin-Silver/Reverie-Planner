@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
+test.use({trace:'retain-on-failure',screenshot:'only-on-failure'})
+
 const API = 'http://127.0.0.1:18765/api'
 type RecordRow = { id: string; pageId: string; title: string; version: number; values: Record<string, unknown> }
 type Host = { databaseId: string; title: string }
@@ -529,7 +531,18 @@ test('database calendar drag and unscheduled tray update actual dates',async({pa
   const origin=page.locator('[data-testid="calendar-cell"][data-date="'+date1+'"] [data-testid="calendar-drag-handle"]')
   const dest=page.locator('[data-testid="calendar-cell"][data-date="'+date2+'"]')
   await expect(origin).toBeVisible()
+  await page.screenshot({path:'test-results/database-evidence/calendar-drag-before.png'})
+  await page.evaluate(()=>{
+    const evidence:string[]=[]
+    Object.assign(window,{calendarDragEvidence:evidence})
+    for(const type of ['dragstart','dragover','drop','dragend']) document.addEventListener(type,event=>{
+      const target=event.target as HTMLElement
+      evidence.push(type+':'+target.tagName+':'+(target.closest('[data-date]')?.getAttribute('data-date')||''))
+    },true)
+  })
   await origin.dragTo(dest)
+  console.log('Calendar drag evidence',await page.evaluate(()=>(window as unknown as {calendarDragEvidence:string[]}).calendarDragEvidence))
+  await page.screenshot({path:'test-results/database-evidence/calendar-drag-after.png'})
   await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===firstRec.id)?.values?.[due.id],{timeout:15000}).toBe(date2)
   await page.getByLabel('Schedule Unscheduled calendar').fill(date3)
   await expect.poll(async()=>(await rows(page,host.databaseId)).find(r=>r.id===undated.id)?.values?.[due.id],{timeout:15000}).toBe(date3)
