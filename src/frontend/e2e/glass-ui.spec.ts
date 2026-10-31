@@ -8,7 +8,13 @@ async function defaults(request:import('@playwright/test').APIRequestContext){
  const saved=await request.put('/api/appearance',{data:{...current,style:'glass',wallpaper:'sakura',material:'balanced'}})
  expect(saved.ok()).toBe(true)
 }
-test.beforeEach(async({request})=>{await defaults(request)})
+test.beforeEach(async({request,page})=>{
+ await defaults(request)
+ // CI hosts may request solid materials at OS level. Establish the normal
+ // glass condition explicitly; the accessibility test then exercises both overrides.
+ const cdp=await page.context().newCDPSession(page)
+ await cdp.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-transparency',value:'no-preference'},{name:'prefers-contrast',value:'no-preference'}]})
+})
 test.afterEach(async({request})=>{await defaults(request)})
 async function openAppearance(page:import('@playwright/test').Page){
  await page.getByRole('button',{name:'Appearance',exact:true}).click()
