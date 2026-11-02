@@ -156,3 +156,17 @@ button.recovery-item[aria-pressed="true"] { outline: 2px solid var(--accent); ou
  .database-transfer[data-input='pointer'] .transfer-steps li > span { transition: background-color var(--duration-press) ease, color var(--duration-press) ease, border-color var(--duration-press) ease; }
 }
 @media (max-width: 768px) { .database-transfer .archive-actions .btn, .database-transfer summary { min-height: 2.75rem; white-space: normal; } }
+
+.provider-panel { margin:var(--space-6) 0; padding:var(--space-6); border:1px solid var(--border); border-radius:var(--radius-card); background:var(--card); min-width:0; }
+.provider-panel .section-heading { margin-top:0; gap:var(--space-4); }
+.provider-panel h3 { margin:var(--space-1) 0 0; }
+.provider-form { display:grid; gap:var(--space-3); margin-top:var(--space-4); }
+.provider-field { display:grid; gap:var(--space-1); min-width:0; font-size:.8125rem; font-weight:600; }
+.provider-field input,.provider-field select { width:100%; min-width:0; padding:.625rem var(--space-3); border:1px solid var(--border); border-radius:var(--radius); background:var(--card); }
+.provider-numbers { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-4); }
+.provider-flags,.provider-actions { display:flex; gap:var(--space-4); flex-wrap:wrap; align-items:center; }
+.provider-check { display:flex; gap:var(--space-2); align-items:center; font-size:.8125rem; }
+.provider-form .appearance-hint { margin:0; }
+@media (max-width:768px) { .provider-field input,.provider-field select { font-size:1rem; } }
+
+.provider-form-fields { border:0; padding:0; margin:0; min-width:0; display:grid; gap:var(--space-3); }

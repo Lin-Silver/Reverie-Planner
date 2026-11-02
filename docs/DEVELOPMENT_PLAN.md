@@ -289,3 +289,15 @@ provenance and its full generation prompt are in GLASS_UI_V2.md. The follow-up
 commit contains only documentation and screenshot evidence. Only main/dev remain;
 main and published V0.0.1 are unchanged. Issue #7 remains open for its broader
 manual accessibility, macOS signing/notarization and engineering-debt gates.
+
+## 2026-11-02 — Provider settings (native acceptance pending)
+
+Starting point: dev `e67215818538394e516185f533c92f950c1ce247`, Glass v2 accepted
+on source `4ba3020` in CI 41186824795. Added a settings screen to manage optional
+OpenAI-compatible providers, keys and saved-configuration connection tests.
+`PROVIDER_SETTINGS.md` documents constraints and the version-checked API. Legacy
+whole-list saves share the write lock; stale edits are rejected, and errors retain
+the user's draft. A missing test ID no longer falls back to another provider.
+Synthetic backend/browser tests cover key concealment/retention/removal, stale
+writes and creation/edit/delete. Full native acceptance is pending this source's
+own CI. Do not report real-model or manual hardware acceptance from mocked tests.

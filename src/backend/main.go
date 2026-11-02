@@ -94,6 +94,7 @@ type providerInput struct {
 	Provider    string  `json:"provider"`
 	BaseURL     string  `json:"baseURL"`
 	APIKey      string  `json:"apiKey"`
+	ClearAPIKey bool    `json:"clearAPIKey,omitempty"`
 	Model       string  `json:"model"`
 	Temperature float64 `json:"temperature"`
 	MaxTokens   int     `json:"maxTokens"`
@@ -245,6 +246,7 @@ func main() {
 	mux.HandleFunc("/api/tasks", ctx.handleTasks)
 	mux.HandleFunc("/api/settings", ctx.handleSettings)
 	mux.HandleFunc("/api/provider-settings", ctx.handleProviderSettings)
+	mux.HandleFunc("/api/provider-management", ctx.handleProviderManagement)
 	mux.HandleFunc("/api/ai/providers", ctx.handleProviderSettings)
 	mux.HandleFunc("/api/ai/test-connection", ctx.handleAIPing)
 	mux.HandleFunc("/api/ai/chat", ctx.handleAIChat)
@@ -1398,6 +1400,8 @@ func (a *AppContext) handleSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AppContext) handleProviderSettings(w http.ResponseWriter, r *http.Request) {
+	providerSettingsMu.Lock()
+	defer providerSettingsMu.Unlock()
 	if r.Method == http.MethodGet {
 		providers, _, err := loadProviderFile(a.RootPath)
 		if err != nil {
@@ -1481,6 +1485,10 @@ func (a *AppContext) handleAIPing(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+	}
+	if provider.ID == "" && req.ProviderID != "" {
+		writeJSONError(w, http.StatusNotFound, "provider not found")
+		return
 	}
 	if provider.ID == "" {
 		cfg, _, err := loadProviderFile(a.RootPath)

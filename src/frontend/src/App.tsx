@@ -2,6 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useEffectEvent, useMemo, useRef
 import DatabaseView from './DatabaseView'
 import WorkspaceStorage from './WorkspaceStorage'
 import AppearanceSettings from './AppearanceSettings'
+import ProviderSettings from './ProviderSettings'
+import type {Provider} from './ProviderSettings'
 import {useAppearance} from './useAppearance'
 import Icon from './Icon'
 import Dialog from './Dialog'
@@ -19,7 +21,6 @@ type Priority = 'low' | 'medium' | 'high'
 type Project = { id: string; name: string; description: string; status: ProjectStatus; owner: string; color: string; createdAt: string }
 type Task = { id: string; projectId: string; title: string; description?: string; status: TaskStatus; priority: Priority; dueDate?: string; assignee?: string; createdAt: string; stateId?: string; cycleId?: string; moduleId?: string; estimate?: string; parentId?: string; labelsJson?: string }
 type Overview = { projectCount: number; taskCount: number; completedCount: number; upcomingCount: number; aiEnabled: boolean }
-type Provider = { id: string; label: string; provider: string; baseURL: string; model: string; temperature: number; maxTokens: number; enabled: boolean; streaming: boolean; toolCalling: boolean; apiKeyConfigured: boolean }
 type TaskDraft = { projectId: string; title: string; description: string; status: TaskStatus; priority: Priority; dueDate: string; assignee: string }
 type ChatMessage = { role: 'user' | 'assistant'; content: string; id: string }
 type Page = { id: string; projectId?: string; workspace: boolean; parentId?: string; linkedDatabaseId?: string; linkedViewId?: string; title: string; icon?: string; cover?: string; content: string; version?: number; createdBy: string; createdAt: string; updatedAt: string }
@@ -225,10 +226,14 @@ export default function App() {
       ])
       setProjects(pr); setTasks(tk); setOverview(ov); setProviders(pv)
       setPages(pg); setCycles(cy); setModules(mo); setIntake(it); setNotifications(nt); setStickies(sk); setDrafts(dr); setAnalytics(an); setWorkspaces(ws); setMembers(mb)
-      setSelectedProvider((c) => c || pv.find((p) => p.enabled)?.id || pv[0]?.id || '')
+      setSelectedProvider((c) => pv.some(p=>p.id===c && p.enabled) ? c : pv.find((p) => p.enabled)?.id || pv[0]?.id || '')
       setError('')
     } catch (e) { setError((e as Error).message) }
   }
+  const onProvidersChanged = useCallback((next:Provider[]) => {
+    setProviders(next)
+    setSelectedProvider(current => next.some(p=>p.id===current && p.enabled) ? current : next.find(p=>p.enabled)?.id || next[0]?.id || '')
+  }, [])
   const refreshLibrary = async () => setLibrary(await apiFetch('/api/page-library'))
   useEffect(() => { void refresh(); void refreshLibrary().catch(e => setError((e as Error).message)) }, [])
   useEffect(() => { localStorage.setItem('reverie.fullWidth', fullWidth ? '1' : '0') }, [fullWidth])
@@ -822,13 +827,7 @@ export default function App() {
             <option value="light">Light</option><option value="dark">Dark</option>
           </select>
         </div>
-        <h3 style={{ marginTop: 24 }}>AI Providers</h3>
-        <div className="row" style={{ marginBottom: 12 }}>
-          <select className="input" value={selectedProvider} onChange={(e) => setSelectedProvider(e.target.value)}>
-            {providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-        </div>
-        <p className="empty">Provider creation, key editing and connection testing are not available in this screen yet.</p>
+        <ProviderSettings onChanged={onProvidersChanged} />
         <h3 style={{ marginTop: 24 }}>Members</h3>
         {members.map((m: any) => <div key={m.id}>{m.name} — {m.role}</div>)}
         <h3 style={{ marginTop: 24 }}>Workspaces</h3>
