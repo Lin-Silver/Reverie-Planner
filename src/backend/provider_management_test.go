@@ -40,7 +40,7 @@ func TestProviderManagementRevisionAndCredentialLifecycle(t *testing.T) {
 	}
 	initial := read()
 	input := providerInput{ID: "mock", Label: "Mock", Provider: "openai-compatible", BaseURL: "http://127.0.0.1:11434/v1", Model: "model", MaxTokens: 128, Enabled: true, APIKey: "synthetic-secret"}
-	original := providerInput{ID: "default", Label: "Local Test", Provider: "openai-compatible", BaseURL: "http://127.0.0.1:11434/v1", Model: "test-model", MaxTokens: 2048}
+	original := providerInput{ID: "default", Label: "Local Test", Provider: "openai-compatible", BaseURL: "http://127.0.0.1:11434/v1", Model: "test-model", MaxTokens: 0}
 	w := call(http.MethodPut, providerUpdate{Revision: initial.Revision, Providers: []providerInput{original, input}})
 	if w.Code != 200 || strings.Contains(w.Body.String(), input.APIKey) {
 		t.Fatalf("save failed or disclosed secret: %d %s", w.Code, w.Body.String())

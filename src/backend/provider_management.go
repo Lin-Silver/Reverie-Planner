@@ -83,11 +83,22 @@ func (a *AppContext) handleProviderManagement(w http.ResponseWriter, r *http.Req
 		id := strings.TrimSpace(v.ID)
 		label := strings.TrimSpace(v.Label)
 		model := strings.TrimSpace(v.Model)
-		if id == "" || id != v.ID || len(id) > 128 || len(label) == 0 || len(label) > 200 || len(model) == 0 || len(model) > 256 || len(v.APIKey) > 8192 || len(v.BaseURL) > 2048 || seen[id] || (v.ClearAPIKey && v.APIKey != "") || v.Provider != "openai-compatible" || v.MaxTokens < 1 || v.MaxTokens > 131072 || v.Temperature < 0 || v.Temperature > 2 || validateProviderURL(v.BaseURL) != nil {
-			writeJSONError(w, 400, "Invalid provider settings. Check the name, model, URL and numeric limits.")
+		if id == "" || id != v.ID || len(id) > 128 || seen[id] {
+			writeJSONError(w, 400, "Invalid or duplicate provider ID.")
 			return
 		}
 		seen[id] = true
+		old, exists := existing[id]
+		// Untouched older entries can contain values accepted by the legacy API.
+		// Preserve them while editing another provider rather than forcing a migration.
+		if exists && v.APIKey == "" && !v.ClearAPIKey && v.Label == old.Label && v.Provider == old.Provider && v.BaseURL == old.BaseURL && v.Model == old.Model && v.Temperature == old.Temperature && v.MaxTokens == old.MaxTokens && v.Enabled == old.Enabled && v.Streaming == old.Streaming && v.ToolCalling == old.ToolCalling {
+			next = append(next, old)
+			continue
+		}
+		if len(label) == 0 || len(label) > 200 || len(model) == 0 || len(model) > 256 || len(v.APIKey) > 8192 || len(v.BaseURL) > 2048 || (v.ClearAPIKey && v.APIKey != "") || (v.Provider != "openai-compatible" && (!exists || v.Provider != old.Provider)) || v.MaxTokens < 1 || v.MaxTokens > 131072 || v.Temperature < 0 || v.Temperature > 2 || validateProviderURL(v.BaseURL) != nil {
+			writeJSONError(w, 400, "Invalid provider settings. Check the name, model, URL and numeric limits.")
+			return
+		}
 		key := v.APIKey
 		if key == "" && !v.ClearAPIKey {
 			key = existing[id].APIKey

@@ -13,11 +13,11 @@ test('create, test, edit, retain and remove a provider without revealing its key
  await panel.getByLabel('Name',{exact:true}).fill('E2E provider local')
  await panel.getByLabel('Base URL').fill('http://127.0.0.1:11434/v1')
  await panel.getByLabel('Model',{exact:true}).fill('local-model')
- await panel.getByLabel('API key').fill('synthetic-provider-key')
+ await panel.getByLabel('API key',{exact:true}).fill('synthetic-provider-key')
  await panel.getByRole('button',{name:'Save provider'}).click()
  await expect(panel.getByRole('status')).toContainText('Provider saved')
- await expect(panel.getByLabel('API key')).toHaveValue('')
- await expect(panel.getByLabel('API key')).toHaveAttribute('placeholder',/Saved key/)
+ await expect(panel.getByLabel('API key',{exact:true})).toHaveValue('')
+ await expect(panel.getByLabel('API key',{exact:true})).toHaveAttribute('placeholder',/Saved key/)
  const current=await snapshot(request);const created=current.providers.find(p=>p.label==='E2E provider local')!
  expect(created.apiKeyConfigured).toBe(true);expect(JSON.stringify(current)).not.toContain('synthetic-provider-key')
  let tests=0

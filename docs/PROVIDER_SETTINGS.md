@@ -22,6 +22,9 @@ writes through this application process; editing the file with an external tool
 at the same time is outside that guarantee. A 500 after a successful write but
 failed readback asks for a reload, rather than claiming a rollback.
 
+Unchanged legacy entries are retained even if their older numeric defaults no
+longer meet the validation for newly edited entries.
+
 The connection test looks up the saved provider by ID; a missing ID returns 404
 instead of testing another provider. The new management screen currently supports
 OpenAI-compatible providers only. Non-AI offline functions remain independent.
