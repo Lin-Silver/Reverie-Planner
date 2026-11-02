@@ -58,3 +58,12 @@ of complete authentication, collaborative permissions or cloud functionality.
 
 Glass v2 is a separate, owner-requested design increment; it must preserve all
 existing data/conflict/restore checks and must not close these functional gates.
+
+## Follow-up — provider setup on dev
+
+The provider setup row above describes the audited 2026-10-30 baseline. A later
+dev increment adds the missing OpenAI-compatible provider form, key editing and
+removal, explicit saved-settings connection test, validation and cross-window
+conflict handling. See [provider settings](PROVIDER_SETTINGS.md) and the exact
+source/acceptance evidence in [development plan](DEVELOPMENT_PLAN.md). Full
+Notion migration, database scalability and the other rows remain open.

@@ -59,3 +59,10 @@ This design increment does not complete the functional parity rows above.
 the missing complete provider setup form, planning configuration screens,
 server-side pagination/virtualization and the distinction between implemented
 synthetic regressions and outstanding manual/historical-data release gates.
+
+## Optional AI provider setup
+
+Dev adds local/remote OpenAI-compatible provider creation, editing, deletion,
+credential replacement/removal and an explicit connection test. Existing credentials
+are not returned to the browser. Version checks reject stale app-window saves;
+[provider settings](PROVIDER_SETTINGS.md) documents compatibility and limits.

@@ -301,3 +301,25 @@ the user's draft. A missing test ID no longer falls back to another provider.
 Synthetic backend/browser tests cover key concealment/retention/removal, stale
 writes and creation/edit/delete. Full native acceptance is pending this source's
 own CI. Do not report real-model or manual hardware acceptance from mocked tests.
+
+### Provider settings — native acceptance
+
+Accepted source and tests: `57b6a1042727163459990967c4f8bb1cf1224c01`,
+[CI 41424866517](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/41424866517),
+**success**. Each Linux, macOS and Windows native job passed backend tests,
+frontend build/lint, 1/1 calendar drag, 18/18 focused migration/Glass/provider
+browser tests and 88/88 full browser tests, plus the existing native portable
+lifecycle, workspace archive/CLI restore/restart checks and packaging. Windows
+also passed its launcher ownership and graceful-stop checks. The provider browser
+connection test is intercepted; backend connectivity tests use a local mock.
+No real third-party model, hardware or screen-reader acceptance is claimed.
+
+Local full Go tests, go vet, affected browser TypeScript checks and production
+frontend build/lint passed. An isolated process smoke check exercised health,
+protected credential save and stale revision rejection; no existing user data or
+real provider credentials were used. Existing lint warnings and the large editor
+chunk remain. The initial candidate exposed a test locator matching both the key
+field and removal checkbox; the corrected test uses the exact accessible name.
+Unchanged legacy entries with older defaults are retained while another provider
+is edited. The follow-up commit updates documentation only; it does not close the
+remaining Notion migration, 10,000-record performance or manual release gates.

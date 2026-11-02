@@ -54,6 +54,12 @@ features from implemented workflows and pending manual release checks.
 
 ## AI providers and secrets
 
+On the development branch, Settings → AI providers can add and edit
+OpenAI-compatible endpoints, replace or explicitly remove keys, enable models
+and test saved configurations. Remote tests send a short model request and may
+use provider quota; the rest of the workspace works without AI. Provider changes
+are revision checked across app windows. See [provider settings](docs/PROVIDER_SETTINGS.md).
+
 On first start, `config/providers.example.json` is copied to the private `config/providers.json` runtime configuration. Existing provider files containing the legacy `apiKey` field are migrated to encrypted storage. Provider API responses never return the key; editing a provider with an empty key retains the saved value.
 
 Windows uses DPAPI tied to the current Windows user. Keep the configuration and data folder private. A DPAPI-protected provider file may not be usable under a different Windows account. Remote provider URLs must use HTTPS; loopback URLs may use HTTP for local services such as Ollama.
