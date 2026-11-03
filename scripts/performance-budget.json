@@ -1,0 +1,6 @@
+{
+  "write": {"mode": "batch", "minRecordsPerSecond": 700},
+  "readRecords": {"maxP50Ms": 250, "maxP95Ms": 400},
+  "readDatabaseSchema": {"maxP50Ms": 50},
+  "clientFilter": {"maxP50Ms": 10}
+}

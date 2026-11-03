@@ -8,6 +8,7 @@ import {useAppearance} from './useAppearance'
 import Icon from './Icon'
 import Dialog from './Dialog'
 import PageRecovery from './PageRecovery'
+import PageCover from './PageCover'
 import { pageTemplates } from './pageTemplates'
 import type { FormEvent } from 'react'
 import './App.css'
@@ -113,7 +114,7 @@ export default function App() {
   const pageSnapshots = useRef<Map<string, Page>>(new Map())
   const pageDiscardRef = useRef(false)
   const pageWriteQueues = useRef<Map<string, Promise<void>>>(new Map())
-  const savePageContent = async (pageId: string, content: string) => {
+  const savePageContent = async (pageId: string, content: string, patch?: { cover?: string }) => {
     // serialize per page
     const prev = pageWriteQueues.current.get(pageId) || Promise.resolve()
     const next = prev.then(async () => {
@@ -133,8 +134,11 @@ export default function App() {
       // (icon, cover, parentId, project_id, workspace) comes from the server snapshot so a
       // Retry + continuous autosave never resurrects stale remote metadata.
       const title = pageEditorRef.current?.id === pageId ? pageTitleRef.current : snapshot.title
+      // A cover edit must travel through the same serialized, version-checked
+      // write as autosave so it cannot overwrite a concurrent remote change.
+      const cover = patch && 'cover' in patch ? patch.cover : snapshot.cover
       try {
-        const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...snapshot, title, icon: snapshot.icon, cover: snapshot.cover, parentId: snapshot.parentId, content, version }) })
+        const res = await apiFetch<Page>('/api/pages', { method: 'PUT', body: JSON.stringify({ ...snapshot, title, icon: snapshot.icon, cover, parentId: snapshot.parentId, content, version }) })
         if (res.version) {
           pageVersions.current.set(pageId, res.version)
           pageSnapshots.current.set(pageId, res)
@@ -175,6 +179,25 @@ export default function App() {
     })
     pageWriteQueues.current.set(pageId, next.catch(() => {}))
     return next
+  }
+
+  // Cover changes save the current body draft with the same queued, versioned
+  // write as autosave. On failure the previous cover is restored and the error
+  // is surfaced without discarding the user's writing.
+  const updatePageCover = async (cover: string) => {
+    const current = pageEditorRef.current
+    if (!current) return
+    const previous = current.cover || ''
+    current.cover = cover
+    setPageEditor(pe => (pe && pe.id === current.id ? { ...pe, cover } : pe))
+    try {
+      await savePageContent(current.id, pageDraft.content, { cover })
+    } catch (e) {
+      if (pageEditorRef.current?.id === current.id) pageEditorRef.current.cover = previous
+      setPageEditor(pe => (pe && pe.id === current.id ? { ...pe, cover: previous } : pe))
+      setError(`Cover save failed: ${(e as Error).message}`)
+      throw e
+    }
   }
 
   const setView = (next: string) => {
@@ -613,6 +636,7 @@ export default function App() {
             }}>Create database</button>}
           </div>
         </div>
+        {pageEditor && <PageCover cover={pageEditor.cover} title={pageDraft.title} onChange={updatePageCover} />}
         <button className="page-icon" aria-label="Change page icon" onClick={() => { if (!pageEditor) return; setIconDraft(pageEditor.icon || ''); setIconTarget(pageEditor) }}>{pageDraft.icon || '📄'}</button>
         <input className="page-title" aria-label="Page title" value={pageDraft.title} onChange={(e) => { pageTitleDirtyRef.current = true; setPageDraft((d) => ({ ...d, title: e.target.value })); pageTitleRef.current = e.target.value }} onBlur={() => { if (pageEditor && pageTitleDirtyRef.current && !pageLeaveError) void savePageContent(pageEditor.id, pageDraft.content || pageEditor.content).catch((e) => { if ((e as Error).message.includes('version conflict')) setPageLeaveError(true); else setError(`Title save failed: ${(e as Error).message}`) }) }} placeholder="Untitled" />
   {pageEditor && (

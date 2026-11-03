@@ -4,20 +4,34 @@ on:
   push:
     branches: [ main, dev ]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          cache: true
       - name: Run backend tests
-        run: go test ./...
+        run: go test -count=1 ./...
+      - name: Vet backend packages
+        run: go vet ./...
       - name: Build app with the Windows build script
         run: .\build.bat
       - name: Lint frontend
@@ -104,13 +118,15 @@ jobs:
       - name: Native Windows portable acceptance
         run: python scripts/test-portable.py
       - name: Versioned Windows archive
-        run: python scripts/package.py --target windows-amd64
+        run: python scripts/package.py --target windows-amd64 --source-commit ${{ github.sha }}
+      - name: Verify versioned Windows archive
+        run: python scripts/verify-package.py release/Reverie-Planner-0.0.1-windows-amd64.zip --target windows-amd64
       - name: Upload versioned Windows archive
         uses: actions/upload-artifact@v4
         with:
           name: Reverie-Planner-0.0.1-windows-amd64
           path: release/*.zip
-      - name: Package portable Windows app
+      - name: Upload portable Windows app
         uses: actions/upload-artifact@v4
         with:
           name: Reverie-Planner-Windows
@@ -132,15 +148,20 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-      - run: go test ./...
+          cache: true
+      - run: go test -count=1 ./...
+      - run: go vet ./...
       - run: ./build.sh
       - run: npm run lint
         working-directory: src/frontend
@@ -173,7 +194,10 @@ jobs:
       - run: python3 scripts/test-portable.py
       - name: Package native portable app
         shell: bash
-        run: python3 scripts/package.py --target "$(go env GOOS)-$(go env GOARCH)"
+        run: python3 scripts/package.py --target "$(go env GOOS)-$(go env GOARCH)" --source-commit "$GITHUB_SHA"
+      - name: Verify native portable archive
+        shell: bash
+        run: python3 scripts/verify-package.py "release/Reverie-Planner-0.0.1-$(go env GOOS)-$(go env GOARCH).tar.gz"
       - uses: actions/upload-artifact@v4
         with:
           name: Reverie-Planner-0.0.1-${{ matrix.os }}
@@ -183,6 +207,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build, unix-portable]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -191,6 +216,13 @@ jobs:
         with:
           pattern: Reverie-Planner-0.0.1-*
           path: packages
+      - name: Verify downloaded archives before publishing
+        shell: bash
+        run: |
+          find packages -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 |
+            while IFS= read -r -d '' archive; do
+              python3 scripts/verify-package.py "$archive"
+            done
       - name: Publish verified portable version once
         env:
           GH_TOKEN: ${{ github.token }}

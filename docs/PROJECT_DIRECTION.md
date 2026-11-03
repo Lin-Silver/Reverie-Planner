@@ -9,7 +9,7 @@ Replace Notion for personal notes, knowledge organization and project planning w
 - Portable Go + React + SQLite application with data owned by the user, explicit backups and forward-only migrations.
 - Nested pages, rich block editing, search, record pages and independent Table/Board/Calendar/List/Gallery views.
 - Typed properties, relations and computed fields with clear errors and explicit conflict resolution.
-- Preserve current Windows launchers and packaging. Native Linux/Windows/macOS CI and portable packages shipped in V0.0.1. Automated checks do not establish full manual acceptance; macOS signing/notarization remains open.
+- Preserve current Windows launchers and packaging. Native Linux/Windows/macOS CI and portable packages shipped in V0.0.1. Automated checks do not establish full manual acceptance. macOS packages are unsigned; signing/notarization is out of scope for this release and is not treated as a blocker.
 - Cloud sync, public publishing, real-time collaborative editing and a complete copy of Notion are outside the initial local release.
 
 ## Priorities and acceptance
