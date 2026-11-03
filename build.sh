@@ -6,5 +6,5 @@ npm ci
 npm run build
 cd "$ROOT"
 mkdir -p runtime
-go build -trimpath -o runtime/ReveriePlanner ./src/backend
+go build -trimpath -buildvcs=false -o runtime/ReveriePlanner ./src/backend
 printf 'Built %s/runtime/ReveriePlanner\n' "$ROOT"
