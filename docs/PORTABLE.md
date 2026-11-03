@@ -19,7 +19,7 @@ Windows credentials use DPAPI and are bound to the Windows account. Moving docum
 
 Go 1.26 and Node 22+. Windows: build.bat. Unix: ./build.sh. Builds retain existing user data. Executable accepts --root DIRECTORY or --root=DIRECTORY (including spaces), and --stop to send authenticated graceful shutdown for that root. Default launchers always use their own folder, independent of current working directory.
 
-This version is a local workspace foundation. Notion import/export, cloud sync, advanced relation lifecycle and 10k performance acceptance remain tracked in issues #4–#7. Cross-compilation is not native platform acceptance; consult the PR's Linux/macOS/Windows checks before using a package. macOS binaries are currently unsigned; signing/notarization is a remaining distribution limitation.
+This version is a local workspace foundation. Notion import/export, cloud sync, advanced relation lifecycle and 10k performance acceptance remain tracked in issues #4–#7. Cross-compilation is not native platform acceptance; consult the PR's Linux/macOS/Windows checks before using a package. macOS binaries are currently unsigned; signing/notarization is out of scope for this release and is not treated as a blocker.
 
 ## Branches
 

@@ -87,11 +87,11 @@ The existing `v0.0.1` assets were built before this lane (old packaging used fil
 
 These are historical digests for download integrity, not proof that the current source reproduces them.
 
-## macOS signing and notarization — blocked
+## macOS signing and notarization — unsigned, out of scope
 
-Current macOS archives are **unsigned and not notarized**. There is no `codesign`, `notarytool` or `stapler` step in CI. Gatekeeper will block a downloaded unsigned app unless the user removes quarantine manually, which is a workaround, not release acceptance.
+Current macOS archives are **unsigned and not notarized**. Signing/notarization is **out of scope for this release by product decision**, not a blocker: there is no `codesign`, `notarytool` or `stapler` step in CI, and none is planned for this release. Gatekeeper will block a downloaded unsigned app unless the user removes quarantine manually; download instructions should state this workaround plainly.
 
-To sign and notarize, the project needs credentials that are not present:
+If signing is ever brought back into scope, the project would need credentials that are not present:
 
 1. An Apple Developer Program membership and a **Developer ID Application** certificate exported as `.p12` with its password.
 2. A CI keychain import (`security create-keychain`, `security import`, `security set-key-partition-list`).
@@ -99,9 +99,9 @@ To sign and notarize, the project needs credentials that are not present:
 4. Notarization credentials: either App Store Connect API key (`.p8` file, key ID, issuer ID) or Apple ID + app-specific password + team ID.
 5. `xcrun notarytool submit <archive> --wait`, then `xcrun stapler staple <bundle>` and a final `spctl --assess --type execute` check.
 
-Proposed secret names (not configured): `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8`, or `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`. A signing job was **not** added because it would fail without these and would create a false impression of support.
+Proposed secret names (not configured): `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8`, or `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`. A signing job is intentionally **not** added: it would fail without these credentials and would create a false impression of support.
 
-Manual macOS acceptance (real machine, Gatekeeper, start/stop, data paths) is also outstanding and cannot be automated here.
+Manual macOS acceptance (real machine, Gatekeeper, start/stop, data paths) remains a manual step and is not part of this release's automated evidence.
 
 Windows artifacts are likewise unsigned (no Authenticode certificate configured), so SmartScreen warnings are possible. Linux artifacts are unsigned tarballs; integrity relies on the published SHA-256.
 

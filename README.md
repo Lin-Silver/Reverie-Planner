@@ -10,7 +10,7 @@ See [product direction and release gates](docs/PROJECT_DIRECTION.md), [branch au
 
 Extract the portable archive for your OS/CPU to a writable folder. Run `./start.sh`, open the printed local address, and use `./stop.sh` to stop. Source builds: `./build.sh` with Go 1.26 and Node 22+. Runtime archives need neither toolchain nor Python. See [portable data and backup guide](docs/PORTABLE.md).
 
-Settings → Local workspace shows exact data paths and creates consistent database snapshots. Stop the app before copying the entire workspace; snapshots alone do not include attachments or provider credentials. macOS builds are unsigned; platform acceptance is reported in the release PR checks.
+Settings → Local workspace shows exact data paths and creates consistent database snapshots. Stop the app before copying the entire workspace; snapshots alone do not include attachments or provider credentials. macOS builds are unsigned (signing is out of scope for this release); platform acceptance is reported in the release PR checks.
 
 ## Windows quick start
 
@@ -103,7 +103,7 @@ python scripts/benchmark.py --records 10000 --iterations 5 `
   --output release/benchmark-10000.json
 ```
 
-Measured numbers, method and limits: [performance baseline](docs/PERFORMANCE_BASELINE.md). CI coverage, deterministic packaging and the unsigned macOS blocker: [CI and release process](docs/RELEASE_PROCESS.md).
+Measured numbers, method and limits: [performance baseline](docs/PERFORMANCE_BASELINE.md). CI coverage, deterministic packaging and the unsigned macOS scope note: [CI and release process](docs/RELEASE_PROCESS.md).
 
 ## Project structure
 
