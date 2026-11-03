@@ -24,7 +24,7 @@ call npm run build
 if errorlevel 1 goto command_failed
 
 cd /d "%BACKEND_DIR%"
-go build -o "%OUTPUT_DIR%\ReveriePlanner.exe" .
+go build -trimpath -buildvcs=false -o "%OUTPUT_DIR%\ReveriePlanner.exe" .
 if errorlevel 1 goto command_failed
 
 echo Build complete.

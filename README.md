@@ -2,9 +2,9 @@
 
 Reverie Planner aims to replace Notion for a personal, local-first workspace: nested documents, a block editor, structured databases, multiple views, search and project planning in one app. Core workflows must work offline without an AI provider or a cloud account. The Go service persists data in SQLite; the React interface uses a loopback-only HTTP API.
 
-**Status: development preview, not complete Notion parity.** Pages, project/task planning and a substantial database subsystem are implemented. Complete Notion migration, custom templates, full property/view management, advanced relations, large-data performance and manual accessibility acceptance remain unfinished. Do not treat a green build as completion of the product.
+**Status: development preview, not complete Notion parity.** Pages, project/task planning and a substantial database subsystem are implemented. Complete Notion migration, custom templates, full property/view management, advanced relations, large-data UI performance (pagination/virtualization) and manual accessibility acceptance remain unfinished. The database checklist is **11/35**; do not treat a green build as completion of the product.
 
-See [product direction and release gates](docs/PROJECT_DIRECTION.md), [branch audit and fixes](docs/PROJECT_AUDIT.md), [feature matrix](docs/PRODUCT_PARITY_MATRIX.md) and [database completion checklist](docs/DATABASE_COMPLETION_PLAN.md).
+See [product direction and release gates](docs/PROJECT_DIRECTION.md), [branch audit and fixes](docs/PROJECT_AUDIT.md), [feature matrix](docs/PRODUCT_PARITY_MATRIX.md), [database completion checklist](docs/DATABASE_COMPLETION_PLAN.md), [10k performance baseline](docs/PERFORMANCE_BASELINE.md) and [CI/release process](docs/RELEASE_PROCESS.md).
 
 ## Linux and macOS quick start
 
@@ -92,6 +92,18 @@ npm run test:e2e
 ```
 
 The browser test starts an isolated backend and disposable SQLite workspace; it exercises project/task changes and reload persistence without touching user data.
+
+## Performance baseline and release flow
+
+The repeatable 10,000-record benchmark drives the real HTTP API and the real client filter/sort modules. It covers record writes, full record reads, schema/view loads and query plans; it does **not** measure DOM rendering, so it is data-layer evidence only.
+
+```powershell
+build.bat
+python scripts/benchmark.py --records 10000 --iterations 5 `
+  --output release/benchmark-10000.json
+```
+
+Measured numbers, method and limits: [performance baseline](docs/PERFORMANCE_BASELINE.md). CI coverage, deterministic packaging and the unsigned macOS blocker: [CI and release process](docs/RELEASE_PROCESS.md).
 
 ## Project structure
 

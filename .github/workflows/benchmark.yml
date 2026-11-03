@@ -1,0 +1,53 @@
+name: Performance baseline
+
+# Repeatable 10,000-record measurement. This is not part of the per-PR gate;
+# run it manually or weekly and cite the uploaded JSON artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      records:
+        description: Records to create
+        default: '10000'
+        required: false
+      iterations:
+        description: Timed read repetitions
+        default: '5'
+        required: false
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - run: npm ci
+        working-directory: src/frontend
+      - run: npm run build
+        working-directory: src/frontend
+      - name: Build backend
+        run: go build -trimpath -buildvcs=false -o runtime/ReveriePlanner ./src/backend
+      - name: Run 10,000-record benchmark
+        run: |
+          python3 scripts/benchmark.py \
+            --records "${{ github.event.inputs.records || '10000' }}" \
+            --iterations "${{ github.event.inputs.iterations || '5' }}" \
+            --output "performance-${GITHUB_SHA}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: performance-baseline-${{ github.sha }}
+          path: performance-*.json
+          if-no-files-found: error
