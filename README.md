@@ -103,7 +103,7 @@ python scripts/benchmark.py --records 10000 --iterations 5 `
   --output release/benchmark-10000.json
 ```
 
-Measured numbers, method and limits: [performance baseline](docs/PERFORMANCE_BASELINE.md). CI coverage, deterministic packaging and the unsigned macOS scope note: [CI and release process](docs/RELEASE_PROCESS.md).
+Measured numbers, method and limits: [performance baseline](docs/PERFORMANCE_BASELINE.md). The batch record endpoint (`POST /api/db/records/batch`) is an API capability measured by the harness only — no UI or import flow calls it, so its throughput is not a product import speed-up. CI coverage, deterministic packaging and the unsigned macOS scope note: [CI and release process](docs/RELEASE_PROCESS.md).
 
 ## Project structure
 

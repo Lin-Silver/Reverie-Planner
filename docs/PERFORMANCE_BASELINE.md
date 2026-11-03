@@ -2,6 +2,8 @@
 
 Measured on 2026-11-03 with the re-runnable harness in `scripts/benchmark.py`. This is **data-layer evidence only**: it does not measure DOM rendering, virtual scrolling or the five layouts at 10k rows, so it does not close the Phase 4 "pagination/virtualization + 10k benchmark" checklist item by itself.
 
+**Scope warning — the batch endpoint is an API capability, not a user path.** `POST /api/db/records/batch` is exercised only by `scripts/benchmark.py`. Nothing in the UI calls it today: `+ New` still sends one `POST /api/db/records`, TSV paste uses `/api/db/records/bulk` (edits existing rows), CSV and database-package imports already commit their whole import in a single transaction with an `operationKey`, and Markdown import only writes pages. Its throughput therefore describes what an external bulk writer can achieve against the HTTP API; it does **not** describe the import experience in the product, and it does not make any existing import path faster.
+
 ## Environment and scope
 
 | Item | Value |
@@ -41,7 +43,19 @@ Raw report: `release/benchmark-10000.json` (gitignored). Percentiles are nearest
 | Filter + sort (actual view pipeline) | p50 **1.410 ms**, p95 **1.432 ms** |
 | SQLite storage | `planner.db` 15,237,120 B (14.53 MiB) + WAL 4,227,152 B at measurement; 15,269,888 B (14.56 MiB) after shutdown |
 
-Observed spread over four repeated 10k runs on the same machine (same script, 5 read iterations): create **148–336 records/s**, full record read p50 **136–175 ms**, schema load p50 **0.295–0.442 ms**, filter p50 **1.348–1.383 ms**. Seed throughput is the most environment-sensitive metric (antivirus/disk activity moves it by more than 2×); treat it as a range, not a fixed capacity claim.
+Observed spread over four repeated 10k runs on the same machine (same script, 5 read iterations): create **148–336 records/s**, full record read p50 **136–175 ms**, schema load p50 **0.295–0.442 ms**, filter p50 **1.348–1.383 ms**. Seed throughput is the most environment-sensitive metric (antivirus/disk activity moves it by more than 2×); treat it as a range, not a fixed capacity claim. The 148 rec/s figure was recorded while three parallel lanes were building and packaging on the same disk; a later clean protocol (one discarded warm-up, three fresh-root runs) measured **242–268 rec/s** on the same commit.
+
+### Batch write path — `POST /api/db/records/batch` (API only)
+
+Measured with `--write-mode batch --batch-size 1000` on the same machine, same protocol (warm-up discarded, 3 runs, fresh root/DB/port each):
+
+| Measurement | Result |
+| --- | --- |
+| Create 10,000 records (10 batch requests) | median **0.750 s**, **13,336 records/s**; min/max 0.737–0.877 s |
+| Per-request latency | p50 **64.6 ms** per 1,000-record batch |
+| Full record read (unchanged) | p50 **126.6–128.8 ms**; client filter p50 1.40–1.43 ms |
+
+Two honest qualifications: (1) this is **not** an import speed-up in the product — no UI or import path calls the endpoint, so no user-visible flow gets faster; (2) the earlier framing that "importing 10k records takes ~35 s" was an artifact of the benchmark seeding one record per POST, not a property of the import features. Batch creation is also not a substitute for the package/CSV import paths, which already commit once per import.
 
 ### Query plans (from the same report)
 
@@ -59,7 +73,7 @@ The record, value and property reads use the intended live/unique indexes; there
 
 - The **view/schema load is cheap** (0.33 ms, 1.3 KB), but every database open also downloads the **entire record set** (4.06 MiB at 10k) in one JSON response. That is the dominant data-layer cost (~162 ms locally) and it grows linearly with records.
 - Client-side filter and sort are **not the bottleneck** at 10k (≈1.4 ms combined for the tested nested filter + two-key sort). Network payload and DOM rendering dominate; UI render time is unmeasured, and no pagination/virtualization exists yet.
-- Record creation is one HTTP request and one SQLite transaction per record (page + record + values). At ~150–340 records/s, bulk import of tens of thousands of records through this endpoint would be slow; imports should use the existing package/import path instead.
+- Record creation through the legacy endpoint is one HTTP request and one SQLite `synchronous=FULL` commit per record (page + record + values), so it is fsync-bound at roughly 150–340 records/s depending on disk contention. That is why the batch endpoint exists. Neither number describes a product import: CSV/package imports commit once per import, and the batch endpoint is currently not wired into any UI path.
 - Storage is roughly **1.5 KB/record** for 5 scalar values plus a page, before attachments.
 
 **Checklist effect:** the harness satisfies the "measurable benchmark with 10k+ records" evidence requirement, but [DATABASE_COMPLETION_PLAN.md](DATABASE_COMPLETION_PLAN.md) Phase 4 still stays unchecked because its item also requires efficient pagination/virtualization and the UI at that scale is unverified.
