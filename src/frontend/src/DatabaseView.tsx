@@ -36,6 +36,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   const [viewId, setViewId] = useState<string>(initialViewId || '')
   const [newViewType, setNewViewType] = useState<ViewType>('table')
   const [propertyDialogOpen, setPropertyDialogOpen] = useState(false)
+  const [editingProperty, setEditingProperty] = useState<DBProperty | null>(null)
   const [trashOpen, setTrashOpen] = useState(false)
   const [filterText, setFilterText] = useState('')
   const [filterTree, setFilterTree] = useState<FilterGroup>(() => newFilterGroup())
@@ -217,6 +218,19 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
     }
   }
 
+  // Visibility toggling is a full property update: reuse the stored version so
+  // a remote rename or option edit is surfaced as a conflict instead of lost.
+  const setPropertyVisible = async (property: DBProperty, visible: boolean) => {
+    if (hasPendingEdit) { setError('Resolve the unsaved edit or bulk draft before changing property visibility.'); return }
+    try {
+      const updated = await api('/api/db/properties', { method: 'PUT', body: JSON.stringify({ ...property, visible }) }) as DBProperty
+      setDb(current => current && ({ ...current, properties: current.properties.map(p => p.id === updated.id ? updated : p) }))
+      setError('')
+    } catch (e) {
+      setError('Could not update property: ' + (e as Error).message)
+    }
+  }
+
   const applyBulkEdit = async (edits: BulkRecordEdit[]): Promise<boolean> => {
     if (failedEdit) { setError('Resolve the outstanding cell edit before applying a bulk paste.'); return false }
     try {
@@ -258,13 +272,14 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
   return (
     <div className="database-workspace">
       {trashOpen && <DatabaseTrash databaseId={databaseId} onClose={()=>setTrashOpen(false)} onRestored={()=>{void load(true)}} />}
-      {propertyDialogOpen && <DatabasePropertyDialog databaseId={databaseId} properties={props} onClose={() => setPropertyDialogOpen(false)} onCreated={() => {setPropertyDialogOpen(false);void load()}} />}
+      {propertyDialogOpen && <DatabasePropertyDialog databaseId={databaseId} properties={props} property={editingProperty || undefined} onClose={() => {setPropertyDialogOpen(false);setEditingProperty(null)}} onSaved={() => {setPropertyDialogOpen(false);setEditingProperty(null);void load(true)}} />}
       {error && <div role="alert" style={{ marginBottom: 8, color: '#dc2626' }}>{error} {failedViewConfig && <button disabled={savingView} onClick={() => void retryViewSettings()}>Retry my view settings</button>} {failedEdit && <button onClick={() => void retryFailedEdit()}>Retry my changes</button>} <button disabled={!!bulkDraft || savingView} onClick={() => { void load() }}>Reload latest</button></div>}
       <div className="database-toolbar" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <button className="btn" onClick={guardedBack}>← Back</button>
         <h2 style={{ margin: 0 }}>{db.icon} {db.title}</h2>
         <button className="btn" onClick={renameDb}>Rename</button>
-        <button className="btn" onClick={() => {if(hasPendingEdit) {setError("Resolve unsaved edit or bulk draft before changing schema");return};setPropertyDialogOpen(true)}}>+ Property</button>
+        <button className="btn" onClick={() => {if(hasPendingEdit) {setError("Resolve unsaved edit or bulk draft before changing schema");return};setEditingProperty(null);setPropertyDialogOpen(true)}}>+ Property</button>
+        {props.filter(p => !p.visible).map(p => <button className="btn quiet" key={p.id} aria-label={`Show ${p.name} property in database`} disabled={hasPendingEdit} onClick={() => void setPropertyVisible(p, true)}>Hidden: {p.name}</button>)}
         <button className="btn primary" disabled={hasPendingEdit || creatingRecord} onClick={() => void addRecord()}>+ New</button>
         <button className="btn" aria-label="Open database trash" disabled={hasPendingEdit} onClick={()=>setTrashOpen(true)}>Trash</button>
         <div style={{ flex: 1 }} />
@@ -341,7 +356,7 @@ export default function DatabaseView({ databaseId, viewId: initialViewId, onBack
           }}/>{p.name}</label>)}</div>
         <small>Choose an image attachment property for card covers. Save view settings to keep this layout.</small>
       </details>}
-      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} deleteRecord={deleteRecord} onOpenRecord={guardedOpen} columnOrder={columnOrder} setColumnOrder={setColumnOrder} hiddenColumns={hiddenColumns} setHiddenColumns={setHiddenColumns} columnWidths={columnWidths} setColumnWidths={setColumnWidths} selectedRecords={selectedRecords} setSelectedRecords={setSelectedRecords} bulkDraft={bulkDraft} setBulkDraft={setBulkDraft} bulkStartProperty={bulkStartProperty} setBulkStartProperty={setBulkStartProperty} applyBulkEdit={applyBulkEdit} refreshBulkVersions={refreshBulkVersions} bulkDisabled={!!failedEdit} />}
+      {view?.type === 'table' && <TableView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} deleteProperty={deleteProperty} onEditProperty={(p) => {if(hasPendingEdit) {setError('Resolve unsaved edit or bulk draft before changing schema');return};setEditingProperty(p);setPropertyDialogOpen(true)}} deleteRecord={deleteRecord} onOpenRecord={guardedOpen} columnOrder={columnOrder} setColumnOrder={setColumnOrder} hiddenColumns={hiddenColumns} setHiddenColumns={setHiddenColumns} columnWidths={columnWidths} setColumnWidths={setColumnWidths} selectedRecords={selectedRecords} setSelectedRecords={setSelectedRecords} bulkDraft={bulkDraft} setBulkDraft={setBulkDraft} bulkStartProperty={bulkStartProperty} setBulkStartProperty={setBulkStartProperty} applyBulkEdit={applyBulkEdit} refreshBulkVersions={refreshBulkVersions} bulkDisabled={!!failedEdit} />}
       {view?.type === 'board' && <DatabaseBoard records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} groupBy={groupBy} onOpenRecord={guardedOpen} />}
       {view?.type === 'calendar' && <CalendarView records={visibleRecords} props={props} updateRecord={safelyUpdateRecord} dateProperty={dateProperty} onOpenRecord={guardedOpen} />}
       {view?.type === 'list' && <ListView records={visibleRecords} onOpenRecord={guardedOpen} deleteRecord={deleteRecord} />}
@@ -374,8 +389,8 @@ function navigateTableCell(event: KeyboardEvent<HTMLTableCellElement>) {
   event.preventDefault()
   control.focus()
 }
-function TableView({ records, props, updateRecord, deleteProperty, deleteRecord, onOpenRecord, columnOrder, setColumnOrder, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidths, selectedRecords, setSelectedRecords, bulkDraft, setBulkDraft, bulkStartProperty, setBulkStartProperty, applyBulkEdit, refreshBulkVersions, bulkDisabled }: {
-  records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; deleteProperty: (id: string) => Promise<void>;
+function TableView({ records, props, updateRecord, deleteProperty, onEditProperty, deleteRecord, onOpenRecord, columnOrder, setColumnOrder, hiddenColumns, setHiddenColumns, columnWidths, setColumnWidths, selectedRecords, setSelectedRecords, bulkDraft, setBulkDraft, bulkStartProperty, setBulkStartProperty, applyBulkEdit, refreshBulkVersions, bulkDisabled }: {
+  records: DBRecord[]; props: DBProperty[]; updateRecord: RecordUpdate; deleteProperty: (id: string) => Promise<void>; onEditProperty: (property: DBProperty) => void;
   deleteRecord: (id: string, skipConfirmation?: boolean) => Promise<boolean>; onOpenRecord?: OpenRecord;
   columnOrder: string[]; setColumnOrder: (next: string[]) => void;
   hiddenColumns: string[]; setHiddenColumns: (next: string[]) => void;
@@ -568,6 +583,7 @@ function TableView({ records, props, updateRecord, deleteProperty, deleteRecord,
           <div style={{display:'flex',alignItems:'center',gap:4}}><span>{p.name}</span>
             <button aria-label={'Move '+p.name+' left'} disabled={index===0 || !!bulkDraft} onClick={()=>reorder(p.id,-1)}>‹</button>
             <button aria-label={'Move '+p.name+' right'} disabled={index===visibleProps.length-1 || !!bulkDraft} onClick={()=>reorder(p.id,1)}>›</button>
+            <button aria-label={'Edit '+p.name} disabled={!!bulkDraft} onClick={()=>onEditProperty(p)}>✎</button>
             {p.type!=='title'&&<button aria-label={'Delete '+p.name} disabled={!!bulkDraft} onClick={()=>{if(confirm('Move property '+p.name+' to Trash?'))void deleteProperty(p.id)}}>×</button>}
           </div>
           <input type="number" aria-label={'Width '+p.name} title={'Column width: '+p.name} min={100} max={700} step={10} disabled={!!bulkDraft} value={columnWidths[p.id]||160} onChange={e=>{
