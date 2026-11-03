@@ -2,10 +2,12 @@
 
 This drives the deployed application path (HTTP + SQLite), not a mocked array:
 
-* create N records through POST /api/db/records          (write path)
+* create N records through POST /api/db/records or the batch endpoint (write path)
 * GET /api/db/records?databaseId=...                    (full record load)
+* GET /api/db/records?databaseId=...&limit=...          (keyset cursor page)
 * GET /api/databases?id=...                             (schema/view load)
 * schema + records sequentially                        (UI load() equivalent)
+* schema + first page                                  (paged UI load)
 * client filter/sort using the real TypeScript modules  (DatabaseView path)
 * EXPLAIN QUERY PLAN for the record, value and schema reads
 
@@ -13,6 +15,12 @@ Usage (after build.bat / ./build.sh):
 
     python scripts/benchmark.py --records 10000 --iterations 5 \
         --output release/performance.json
+
+Compare a new build with an already-built baseline binary using the same script:
+
+    python scripts/benchmark.py --records 10000 --iterations 5 \
+        --binary runtime/ReveriePlanner-before.exe \
+        --write-mode single --output release/benchmark-before.json
 
 The report JSON records the host, exact commands, latency percentiles, payload
 bytes, database size and query plans. No numbers are estimated: a missing
@@ -113,8 +121,11 @@ class Api:
                     raise
 
 
-def copy_runtime(root, destination, port):
-    binary = ROOT / "runtime" / ("ReveriePlanner.exe" if IS_WINDOWS else "ReveriePlanner")
+def copy_runtime(root, destination, port, binary_override=None):
+    if binary_override is not None:
+        binary = pathlib.Path(binary_override).resolve()
+    else:
+        binary = ROOT / "runtime" / ("ReveriePlanner.exe" if IS_WINDOWS else "ReveriePlanner")
     if not binary.is_file():
         raise SystemExit(
             "Missing %s. Run build.bat (Windows) or ./build.sh (Linux/macOS) first." % binary
@@ -124,7 +135,8 @@ def copy_runtime(root, destination, port):
         raise SystemExit("Missing %s. Run npm run build in src/frontend first." % dist)
     (destination / "runtime").mkdir(parents=True, exist_ok=True)
     (destination / "config").mkdir(parents=True, exist_ok=True)
-    shutil.copy2(binary, destination / "runtime" / binary.name)
+    target_binary = destination / "runtime" / binary.name
+    shutil.copy2(binary, target_binary)
     shutil.copy2(ROOT / "config" / "providers.example.json", destination / "config" / "providers.example.json")
     shutil.copytree(dist, destination / "src" / "frontend" / "dist")
     app_config = json.loads((ROOT / "config" / "app.json").read_text(encoding="utf-8"))
@@ -132,6 +144,7 @@ def copy_runtime(root, destination, port):
     (destination / "config" / "app.json").write_text(
         json.dumps(app_config, ensure_ascii=False), encoding="utf-8"
     )
+    return target_binary
 
 
 def wait_health(port, process):
@@ -161,34 +174,65 @@ def build_schema(api, record_count):
     return schema
 
 
-def seed_records(api, database_id, properties, record_count, progress):
+def record_payload(database_id, properties, index, stages=None):
     by_name = {prop["name"]: prop["id"] for prop in properties}
-    stages = ["Backlog", "Doing", "Done"]
+    stages = stages or ["Backlog", "Doing", "Done"]
+    return {
+        "databaseId": database_id,
+        "title": "Record %05d" % index,
+        "values": {
+            by_name["Notes"]: "note-%05d" % index,
+            by_name["Score"]: index,
+            by_name["Stage"]: stages[index % len(stages)],
+            by_name["Due"]: "2026-%02d-%02d" % (1 + (index // 28) % 12, 1 + index % 28),
+            by_name["Done"]: index % 2 == 0,
+        },
+    }
+
+
+def seed_records(api, database_id, properties, record_count, progress, mode, batch_size):
+    """Seed through the real HTTP API. `single` is the pre-existing per-record
+    path and remains the apples-to-apples comparison with the old binary."""
     latencies = []
     started = time.perf_counter()
-    for index in range(record_count):
-        payload = {
-            "databaseId": database_id,
-            "title": "Record %05d" % index,
-            "values": {
-                by_name["Notes"]: "note-%05d" % index,
-                by_name["Score"]: index,
-                by_name["Stage"]: stages[index % len(stages)],
-                by_name["Due"]: "2026-%02d-%02d" % (1 + (index // 28) % 12, 1 + index % 28),
-                by_name["Done"]: index % 2 == 0,
-            },
-        }
-        before = time.perf_counter()
-        api.call("POST", "/api/db/records", payload)
-        latencies.append((time.perf_counter() - before) * 1000)
-        if progress and (index + 1) % max(1, record_count // 10) == 0:
-            elapsed = time.perf_counter() - started
-            print("  seeded %d/%d (%.1f records/s)" % (index + 1, record_count, (index + 1) / elapsed), flush=True)
+    if mode == "single":
+        for index in range(record_count):
+            payload = record_payload(database_id, properties, index)
+            before = time.perf_counter()
+            api.call("POST", "/api/db/records", payload)
+            latencies.append((time.perf_counter() - before) * 1000)
+            if progress and (index + 1) % max(1, record_count // 10) == 0:
+                elapsed = time.perf_counter() - started
+                print("  seeded %d/%d (%.1f records/s)" % (index + 1, record_count, (index + 1) / elapsed), flush=True)
+        requests = record_count
+    else:
+        for start in range(0, record_count, batch_size):
+            stop = min(record_count, start + batch_size)
+            payload = {
+                "databaseId": database_id,
+                "records": [record_payload(database_id, properties, index)
+                            for index in range(start, stop)],
+            }
+            before = time.perf_counter()
+            api.call("POST", "/api/db/records/batch", payload)
+            latencies.append((time.perf_counter() - before) * 1000)
+            if progress:
+                elapsed = time.perf_counter() - started
+                print("  seeded %d/%d (%.1f records/s)" % (stop, record_count, stop / elapsed), flush=True)
+        requests = math.ceil(record_count / batch_size)
+    seconds = time.perf_counter() - started
     return {
+        "operation": "POST /api/db/records" if mode == "single" else "POST /api/db/records/batch",
+        "mode": mode,
+        "batchSize": 1 if mode == "single" else batch_size,
         "records": record_count,
-        "seconds": round(time.perf_counter() - started, 3),
-        "recordsPerSecond": round(record_count / (time.perf_counter() - started), 2),
+        "requests": requests,
+        "seconds": round(seconds, 3),
+        "recordsPerSecond": round(record_count / seconds, 2),
+        "requestLatencyMs": summarize(latencies),
         "latencyMs": summarize(latencies),
+        "approxPerRecordMs": (sum(latencies) / record_count if mode == "single"
+                              else round(sum(latencies) / record_count, 3)),
     }
 
 
@@ -378,21 +422,27 @@ def main():
     parser.add_argument("--output", type=pathlib.Path, help="write the JSON report to this path")
     parser.add_argument("--keep", action="store_true", help="keep the temporary workspace")
     parser.add_argument("--quiet", action="store_true", help="suppress seed progress")
+    parser.add_argument("--binary", type=pathlib.Path, help="override the runtime binary (for before/after runs)")
+    parser.add_argument("--write-mode", choices=["single", "batch"], default="single",
+                        help="single = legacy POST per record; batch = POST /api/db/records/batch")
+    parser.add_argument("--batch-size", type=int, default=1000, help="records per batch request (default 1000)")
     args = parser.parse_args()
     if args.records < 1 or args.iterations < 1:
         raise SystemExit("records and iterations must be positive")
+    if args.batch_size < 1 or args.batch_size > 1000:
+        raise SystemExit("batch size must be between 1 and 1000")
 
     port = find_free_port()
     workspace = pathlib.Path(tempfile.mkdtemp(prefix="reverie-benchmark-"))
-    copy_runtime(ROOT, workspace, port)
-    binary = workspace / "runtime" / ("ReveriePlanner.exe" if IS_WINDOWS else "ReveriePlanner")
+    binary = copy_runtime(ROOT, workspace, port, args.binary)
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     process = subprocess.Popen(
         [str(binary), "--root=" + str(workspace)], cwd=tempfile.gettempdir(),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags,
     )
     api = Api(port)
-    report = {"schemaVersion": 1, "kind": "reverie-performance-baseline"}
+    report = {"schemaVersion": 1, "kind": "reverie-performance-baseline",
+              "benchmark": {"argv": sys.argv, "binary": str(pathlib.Path(args.binary).resolve()) if args.binary else "runtime default"}}
     try:
         health = wait_health(port, process)
         report["generatedAtUtc"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
@@ -404,12 +454,14 @@ def main():
         report["database"] = {"id": schema["id"], "properties": [
             {"name": prop["name"], "type": prop["type"]} for prop in schema["properties"]
         ]}
-        print("Seeding %d records through the public API..." % args.records, flush=True)
-        report["write"] = {"operation": "POST /api/db/records", **seed_records(
-            api, schema["id"], schema["properties"], args.records, not args.quiet)}
+        print("Seeding %d records through the public API (%s)..." % (args.records, args.write_mode), flush=True)
+        report["write"] = seed_records(
+            api, schema["id"], schema["properties"], args.records, not args.quiet,
+            args.write_mode, args.batch_size)
 
-        records_read, raw_records = timed_read(
+        records_read, raw_records_bytes = timed_read(
             api, "/api/db/records?databaseId=" + schema["id"], args.iterations, 2)
+        raw_records = json.loads(raw_records_bytes)
         schema_read, _ = timed_read(api, "/api/databases?id=" + schema["id"], args.iterations, 2)
         report["readRecords"] = records_read
         report["readDatabaseSchema"] = schema_read
@@ -417,7 +469,7 @@ def main():
 
         # The frontend filters and sorts this exact response in memory.
         report["clientFilter"] = run_filter_benchmark(
-            ROOT, workspace, json.loads(raw_records), schema["properties"], args.filter_iterations)
+            ROOT, workspace, raw_records, schema["properties"], args.filter_iterations)
 
         report["storage"] = storage_metrics(workspace)
     finally:
@@ -446,12 +498,19 @@ def main():
 
     print("\nPerformance baseline (%d records)" % args.records)
     write = report["write"]
-    print("  write:       %.2f records/s, %s ms p50, %s ms p95" % (
-        write["recordsPerSecond"], write["latencyMs"]["p50Ms"], write["latencyMs"]["p95Ms"]))
+    print("  write:       %.2f records/s (%s, %d requests), %s ms p50/request, %s ms p95" % (
+        write["recordsPerSecond"], write["mode"], write["requests"],
+        write["latencyMs"]["p50Ms"], write["latencyMs"]["p95Ms"]))
     for key, label in [("readRecords", "read records"), ("readDatabaseSchema", "view/schema"),
                        ("uiEquivalentLoad", "UI load")]:
-        stats = report[key]["latencyMs"]
-        print("  %-13s %s ms p50, %s ms p95" % (label, stats["p50Ms"], stats["p95Ms"]))
+        entry = report.get(key)
+        if not entry:
+            continue
+        stats = entry["latencyMs"]
+        extra = ""
+        if "payloadItems" in entry:
+            extra = " (%d items, %d bytes)" % (entry["payloadItems"], entry["payloadBytes"])
+        print("  %-13s %s ms p50, %s ms p95%s" % (label, stats["p50Ms"], stats["p95Ms"], extra))
     print("  payload:     %.2f MiB for %d records" % (
         report["readRecords"]["payloadBytes"] / (1024 * 1024), args.records))
     filter_result = report["clientFilter"]

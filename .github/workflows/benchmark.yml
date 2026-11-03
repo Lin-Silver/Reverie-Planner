@@ -1,7 +1,8 @@
 name: Performance baseline
 
-# Repeatable 10,000-record measurement. This is not part of the per-PR gate;
-# run it manually or weekly and cite the uploaded JSON artifact.
+# Repeatable 10,000-record measurement plus the executable budget gate in
+# scripts/check_performance.py. Run it manually or weekly, or on demand before
+# merging performance-sensitive changes.
 on:
   workflow_dispatch:
     inputs:
@@ -45,7 +46,10 @@ jobs:
           python3 scripts/benchmark.py \
             --records "${{ github.event.inputs.records || '10000' }}" \
             --iterations "${{ github.event.inputs.iterations || '5' }}" \
+            --write-mode batch --batch-size 1000 \
             --output "performance-${GITHUB_SHA}.json"
+      - name: Enforce performance budget
+        run: python3 scripts/check_performance.py --report "performance-${GITHUB_SHA}.json"
       - uses: actions/upload-artifact@v4
         with:
           name: performance-baseline-${{ github.sha }}
