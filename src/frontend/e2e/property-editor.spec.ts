@@ -51,6 +51,28 @@ test('property editor: rename, edit select options and toggle visibility', async
   expect(JSON.parse(saved.prop.config).options).toEqual(['Todo', 'Doing', 'Done'])
 })
 
+test('property editor: Escape closes the dialog and restores focus', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByText('Welcome back')).toBeVisible()
+  await page.getByText('New page').click()
+  await expect(page.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
+  await page.getByText('Create database').click()
+  await expect(page.getByText('+ Property')).toBeVisible({ timeout: 20000 })
+
+  await page.getByText('+ Property').click()
+  const create = page.getByRole('dialog', { name: 'New database property' })
+  await create.getByLabel('Property name').fill('Notes')
+  await create.getByRole('button', { name: 'Create property' }).click()
+  await expect(create).toBeHidden()
+
+  const trigger = page.getByRole('button', { name: 'Edit Notes' })
+  await trigger.click()
+  await expect(page.getByRole('dialog', { name: 'Edit database property' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: 'Edit database property' })).toBeHidden()
+  await expect(trigger).toBeFocused()
+})
+
 test('property editor: stale version is rejected instead of overwriting', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByText('Welcome back')).toBeVisible()

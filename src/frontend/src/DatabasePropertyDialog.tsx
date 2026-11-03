@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Dialog from './Dialog'
 
 type PropertyInfo = { id: string; databaseId?: string; name: string; type: string; config: string; position?: number; visible?: boolean; version?: number }
 type DatabaseInfo = { id: string; title: string }
@@ -110,7 +111,7 @@ export default function DatabasePropertyDialog({ databaseId, properties, propert
     } catch (e) {setError((e as Error).message)}
     finally {setSaving(false)}
   }
-  return <div role="dialog" aria-modal="true" aria-label={editing ? 'Edit database property' : 'New database property'} style={{position:'fixed',inset:0,zIndex:99,background:'rgba(0,0,0,.55)',display:'grid',placeItems:'center',padding:16}}>
+  return <Dialog label={editing ? 'Edit database property' : 'New database property'} onClose={onClose}>
     <section style={{width:'min(480px,100%)',maxHeight:'85vh',overflowY:'auto',padding:20,borderRadius:12,background:'var(--card)',border:'1px solid var(--border)',display:'grid',gap:12}}>
       <h3 style={{margin:0}}>{editing ? 'Edit database property' : 'New database property'}</h3>
       <label>Name <input aria-label="Property name" value={name} onChange={e=>setName(e.target.value)} autoFocus /></label>
@@ -154,5 +155,5 @@ export default function DatabasePropertyDialog({ databaseId, properties, propert
         <button onClick={onClose}>Cancel</button><button className="btn primary" disabled={saving} onClick={()=>{void save()}}>{saving ? (editing ? 'Saving…' : 'Creating…') : editing ? 'Save property' : 'Create property'}</button>
       </div>
     </section>
-  </div>
+  </Dialog>
 }
