@@ -45,7 +45,7 @@ export default function DatabasePropertyDialog({ databaseId, properties, propert
   const references = properties.filter(p => p.type === 'relation')
   useEffect(() => {
     let live = true
-    const relation = references.find(p => p.id === relationProperty)
+    const relation = properties.find(p => p.type === 'relation' && p.id === relationProperty)
     if (!relation) { return }
     let target = ''
     try { target = JSON.parse(relation.config).targetDatabaseId || '' } catch { return }
