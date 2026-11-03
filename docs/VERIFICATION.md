@@ -10,6 +10,10 @@ See [PROJECT_AUDIT.md](PROJECT_AUDIT.md) for scope and [PROJECT_DIRECTION.md](PR
 
 This file records concrete, SHA-specific evidence. A successful CI run proves the code tested at **that** commit only; it does not certify full Notion parity or local-machine usability.
 
+## Release lane baseline — 2026-11-03
+
+`lane/release` (based on `dev` `6e1d2e65b65cd33e825f83d45cf5972c6e67454e`) adds a repeatable benchmark, CI hardening and deterministic packaging. Local evidence only: the branch was not pushed, so there is **no remote CI run** for these changes. Local commands: `go test -count=1 ./...` passed (59.746 s, Go 1.26.0), `go vet ./...` passed, `npm run build` passed, `npm run lint` finished with 14 warnings/0 errors. The 10,000-record data-layer numbers are in [PERFORMANCE_BASELINE.md](PERFORMANCE_BASELINE.md); packaging/reproducibility hashes and the unsigned macOS blocker are in [RELEASE_PROCESS.md](RELEASE_PROCESS.md). The database checklist remains **11/35** because pagination/virtualization and UI-scale rendering are still open.
+
 ## Repository and merge boundaries
 
 - Pull request: https://github.com/Lin-Silver/Reverie-Planner/pull/2 — **Open; do not merge without independent review**.
