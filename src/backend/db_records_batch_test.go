@@ -80,9 +80,15 @@ func TestDBRecordBatchCreatesRecordsAndPages(t *testing.T) {
 	if len(stored) != len(records) {
 		t.Fatalf("stored %d records, want %d", len(stored), len(records))
 	}
-	for i, rec := range stored {
-		if rec.ID != created.IDs[i] {
-			t.Fatalf("record %d id = %s, want %s", i, rec.ID, created.IDs[i])
+	// The legacy full read does not order ties, so match by id, not position.
+	byID := map[string]DBRecord{}
+	for _, rec := range stored {
+		byID[rec.ID] = rec
+	}
+	for i, id := range created.IDs {
+		rec, ok := byID[id]
+		if !ok {
+			t.Fatalf("record %s missing from list", id)
 		}
 		if rec.PageID == "" {
 			t.Fatalf("record %d has no backing page", i)
@@ -131,6 +137,31 @@ func TestDBRecordBatchRollsBackDuplicateID(t *testing.T) {
 	records, pages := countBatchRows(t, ctx, db.ID)
 	if records != 0 || pages != 0 {
 		t.Fatalf("rollback left %d records and %d pages", records, pages)
+	}
+}
+
+func TestDBRecordBatchRetryWithSameIDsDoesNotDuplicate(t *testing.T) {
+	ctx := setupTestContext(t)
+	defer ctx.DB.Close()
+	db, propertyID := createRecordBatchTestDatabase(t, ctx)
+	payload := []map[string]any{
+		{"id": "rec_retry_a", "title": "Retry A", "values": map[string]any{propertyID: 1}},
+		{"id": "rec_retry_b", "title": "Retry B", "values": map[string]any{propertyID: 2}},
+	}
+	if first := callRecordBatch(t, ctx, db.ID, payload); first.Code != http.StatusCreated {
+		t.Fatalf("first batch: %d %s", first.Code, first.Body.String())
+	}
+	records, pages := countBatchRows(t, ctx, db.ID)
+	if records != 2 || pages != 2 {
+		t.Fatalf("first batch stored %d records and %d pages", records, pages)
+	}
+	// A retried request must not append a second copy of the same records.
+	if retry := callRecordBatch(t, ctx, db.ID, payload); retry.Code != http.StatusConflict {
+		t.Fatalf("retry: expected 409, got %d %s", retry.Code, retry.Body.String())
+	}
+	records, pages = countBatchRows(t, ctx, db.ID)
+	if records != 2 || pages != 2 {
+		t.Fatalf("retry left %d records and %d pages", records, pages)
 	}
 }
 

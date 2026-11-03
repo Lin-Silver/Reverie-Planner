@@ -75,6 +75,23 @@ func (a *AppContext) handleDBRecordsBatch(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Client-supplied IDs let an importer retry a batch. A second attempt must
+	// conflict instead of silently appending a duplicate copy.
+	for _, rec := range req.Records {
+		if rec.ID == "" {
+			continue
+		}
+		var existing int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM db_records WHERE id=?`, rec.ID).Scan(&existing); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not inspect record ids"})
+			return
+		}
+		if existing > 0 {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf("record %s already exists", rec.ID)})
+			return
+		}
+	}
+
 	pageStmt, err := tx.Prepare(`INSERT INTO pages (id, title, icon, content, workspace, created_by, version) VALUES (?,?,?,?,1,'You',1)`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not prepare batch pages"})
