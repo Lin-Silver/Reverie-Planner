@@ -30,10 +30,6 @@ async function openPageByTitle(page: any, title: string) {
   await item.click()
 }
 
-async function waitForAutosave(page: any) {
-  await page.waitForTimeout(2500)
-}
-
 async function createPageWithTitle(page: any, title: string): Promise<string> {
   await page.goto('/')
   await expect(page.getByText('Welcome back')).toBeVisible()
@@ -255,8 +251,6 @@ test('navigation: conflict on leave preserves draft and shows failure', async ({
     const pageId = await (async () => {
       await pageA.goto('/')
       await expect(pageA.getByText('Welcome back')).toBeVisible()
-      const before = await fetchPages(pageA)
-      const beforeIds = new Set(before.map((p: any) => p.id))
       await pageA.getByText('New page').click()
       await expect(pageA.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
       await pageA.locator('.page-title').fill(uniqueTitle)
@@ -328,8 +322,6 @@ test('conflict lock survives parent rerender and keeps draft', async ({ browser 
     const pageId = await (async () => {
       await pageA.goto('/')
       await expect(pageA.getByText('Welcome back')).toBeVisible()
-      const before = await fetchPages(pageA)
-      const beforeIds = new Set(before.map((p: any) => p.id))
       await pageA.getByText('New page').click()
       await expect(pageA.locator('.bn-editor')).toBeVisible({ timeout: 20000 })
       await pageA.locator('.page-title').fill(uniqueTitle)
