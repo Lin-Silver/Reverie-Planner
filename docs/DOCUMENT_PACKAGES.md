@@ -7,7 +7,7 @@ Use a workspace archive for history, trash, databases, settings and favorites.
 
 ## What travels
 
-- One selected saved page and all its descendants, titles, icons and built-in gradient covers.
+- One selected saved page and all its descendants, titles, icons and built-in gradient or local raster attachment covers.
 - Supported editor block JSON, including styled text, lists, headings, tables,
   code, quotes, local raster images and file blocks. JSON numeric precision is
   retained while references are rewritten. No Markdown conversion is involved.
@@ -22,7 +22,9 @@ The JSON envelope declares `format: "reverie-documents"`, `version`,
 `rootId`, `pages` and `assets`. Pages contain source IDs, parent IDs, title, icon
 and the editor content string. Trees without covers export as version 1.
 A tree with built-in gradient covers exports as version 2, which stores those
-gradients in the optional page `cover` field. Import accepts both versions. Assets contain source IDs, names, content types,
+gradients in the optional page `cover` field. A tree containing a local image cover uses version 3 and includes the
+image bytes, even if an ancestor outside the exported tree owns them. Import
+accepts all three versions and rewrites local covers to the copied asset IDs. Assets contain source IDs, names, content types,
 SHA-256 and base64 bytes. No paths are extracted and no URLs are fetched. An
 export reads one SQLite transaction so concurrent writes cannot mix snapshots.
 
@@ -35,7 +37,7 @@ encoded JSON/base64 download size so it cannot publish a file above the import
 request cap. An over-limit tree is refused without changing source data.
 Export and import validate limits, UTF-8, the parent tree, duplicate IDs/JSON keys,
 known format/version, supported types/URLs, asset format and checksum. Unknown
-package fields, cycles, outside-tree page links, image covers, legacy non-block text,
+package fields, cycles, outside-tree page links, remote or unbundled image covers, legacy non-block text,
 database-owned/linked pages, audio/video and remote embedded media are refused
 with a reason. Ordinary HTTP/HTTPS/mail links remain links.
 
@@ -69,5 +71,5 @@ restore and two restored starts. See DEVELOPMENT_PLAN.md for exact native CI
 results; implemented tests alone are not an acceptance claim.
 
 Typed CSV databases, reversible database/view exports, complete Notion migration,
-image cover support and broader manual accessibility remain open. This document-only
+external image cover portability and broader manual accessibility remain open. This document-only
 increment does not close the broader M2 migration/export checklist.

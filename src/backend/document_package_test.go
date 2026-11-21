@@ -218,7 +218,7 @@ func TestDocumentPackageRejectsInvalidDependenciesAndLimits(t *testing.T) {
 		},
 		func(p *documentPackage) { p.Pages[0].Content = "legacy text" },
 		func(p *documentPackage) { p.Pages[0].Content = strings.Repeat("x", (2<<20)+1) },
-		func(p *documentPackage) { p.Version = 3 },
+		func(p *documentPackage) { p.Version = 4 },
 	} {
 		var candidate documentPackage
 		json.Unmarshal(raw, &candidate)
@@ -376,5 +376,56 @@ func TestDocumentPackageRefusesSerializationExpansionBeforeExport(t *testing.T) 
 	var count int
 	if err := a.DB.QueryRow("SELECT COUNT(*) FROM pages").Scan(&count); err != nil || count != 8 {
 		t.Fatal("refused export mutated source", count, err)
+	}
+}
+
+func TestDocumentPackageLocalImageCover(t *testing.T) {
+	a := setupTestContext(t)
+	defer a.DB.Close()
+	_, source := documentFixture(t, a)
+	ctx := context.Background()
+	var imageID, textID string
+	for _, asset := range source.Assets {
+		switch asset.Name {
+		case "image.png":
+			imageID = asset.ID
+		case "notes.txt":
+			textID = asset.ID
+		}
+	}
+	if imageID == "" || textID == "" {
+		t.Fatal("fixture must include both raster and non-image assets")
+	}
+	imageURL := "/api/page-assets?id=" + imageID
+	for _, cover := range []string{"https://example.com/image.png", "/api/page-assets?id=missing", "/api/page-assets?id=" + textID} {
+		if _, err := a.DB.Exec("UPDATE pages SET cover=? WHERE id='doc-child'", cover); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.exportDocumentPackage(ctx, "doc-child"); err == nil {
+			t.Fatalf("export accepted unsupported cover %q", cover)
+		}
+	}
+	if _, err := a.DB.Exec("UPDATE pages SET cover=? WHERE id='doc-child'", imageURL); err != nil {
+		t.Fatal(err)
+	}
+	p, err := a.exportDocumentPackage(ctx, "doc-child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Version != 3 || len(p.Assets) != 1 || p.Assets[0].ID != imageID {
+		t.Fatal("cover-only asset owned outside the tree must travel with the page")
+	}
+	result, err := a.importDocumentPackage(ctx, p, "cover-digest", "document_image_cover_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy, err := a.exportDocumentPackage(ctx, result.Pages["doc-child"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(copy.Assets) != 1 || copy.Assets[0].ID == imageID ||
+		!bytes.Equal(copy.Assets[0].Data, p.Assets[0].Data) ||
+		copy.Pages[0].Cover != "/api/page-assets?id="+copy.Assets[0].ID {
+		t.Fatal("copied cover did not resolve to independent, identical image bytes")
 	}
 }

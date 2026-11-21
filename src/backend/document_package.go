@@ -238,8 +238,27 @@ func isPortableDocumentCover(cover string) bool {
 	}
 }
 
+func rewriteDocumentCover(cover string, version int, assets map[string]string, options documentRewriteOptions) (string, error) {
+	if cover == "" || (version >= 2 && isPortableDocumentCover(cover)) {
+		return cover, nil
+	}
+	if version >= 3 {
+		rewritten, err := documentReference(cover, nil, assets, true)
+		if err == nil {
+			id := strings.TrimPrefix(rewritten, "/api/page-assets?id=")
+			if options.ImageAssets == nil || options.ImageAssets[id] {
+				if options.UsedAssets != nil {
+					options.UsedAssets[id] = true
+				}
+				return rewritten, nil
+			}
+		}
+	}
+	return "", errors.New("cover must be a built-in gradient or a local raster image attachment; use a workspace archive")
+}
+
 func validateDocumentPackage(p documentPackage) error {
-	if p.Format != "reverie-documents" || (p.Version != 1 && p.Version != 2) || len(p.Pages) == 0 || len(p.Pages) > 100 || len(p.Assets) > 500 {
+	if p.Format != "reverie-documents" || (p.Version < 1 || p.Version > 3) || len(p.Pages) == 0 || len(p.Pages) > 100 || len(p.Assets) > 500 {
 		return errors.New("unsupported document package or item limit exceeded")
 	}
 	pages, assets := map[string]string{}, map[string]string{}
@@ -248,9 +267,6 @@ func validateDocumentPackage(p documentPackage) error {
 	for _, page := range p.Pages {
 		if !utf8.ValidString(page.Title) || !utf8.ValidString(page.Icon) || !utf8.ValidString(page.Content) || !archiveAttachmentID.MatchString(page.ID) || pages[page.ID] != "" || len(page.Title) > 4000 || len(page.Icon) > 256 {
 			return errors.New("invalid or duplicate document")
-		}
-		if page.Cover != "" && (p.Version != 2 || !isPortableDocumentCover(page.Cover)) {
-			return fmt.Errorf("%s: only built-in gradient covers can be transferred in a document package; use a workspace archive", page.Title)
 		}
 		pages[page.ID] = page.ID
 		parents[page.ID] = page.ParentID
@@ -286,6 +302,9 @@ func validateDocumentPackage(p documentPackage) error {
 	}
 	total = 0
 	for _, page := range p.Pages {
+		if _, err := rewriteDocumentCover(page.Cover, p.Version, assets, documentRewriteOptions{ImageAssets: images}); err != nil {
+			return fmt.Errorf("%s: %w", page.Title, err)
+		}
 		normalized, err := rewriteDocumentContent(page.Content, pages, assets, documentRewriteOptions{ImageAssets: images})
 		if err != nil {
 			return fmt.Errorf("%s: %w", page.Title, err)
@@ -346,7 +365,9 @@ func (a *AppContext) exportDocumentPackage(ctx context.Context, root string) (do
 			err = errors.New("tree includes database-owned or linked pages; use a workspace archive")
 			break
 		}
-		if page.Cover != "" {
+		if page.Cover != "" && !isPortableDocumentCover(page.Cover) {
+			p.Version = 3
+		} else if page.Cover != "" && p.Version == 1 {
 			p.Version = 2
 		}
 		if page.ID == root {
@@ -399,7 +420,11 @@ func (a *AppContext) exportDocumentPackage(ctx context.Context, root string) (do
 	}
 	referenced := map[string]bool{}
 	for _, page := range p.Pages {
-		if _, err = rewriteDocumentContent(page.Content, pageIDs, allAssets, documentRewriteOptions{UsedAssets: referenced}); err != nil {
+		options := documentRewriteOptions{UsedAssets: referenced}
+		if _, err = rewriteDocumentCover(page.Cover, p.Version, allAssets, options); err != nil {
+			return p, fmt.Errorf("%s: %w", page.Title, err)
+		}
+		if _, err = rewriteDocumentContent(page.Content, pageIDs, allAssets, options); err != nil {
 			return p, err
 		}
 	}
@@ -500,7 +525,11 @@ func (a *AppContext) importDocumentPackage(ctx context.Context, p documentPackag
 		if totalContent > maxDocumentContentBytes {
 			return result, errors.New("rewritten documents exceed 16 MiB; import a smaller tree")
 		}
-		if err = insert(result.Pages[page.ID], parent, page.Title, page.Icon, page.Cover, content); err != nil {
+		cover, e := rewriteDocumentCover(page.Cover, p.Version, assets, documentRewriteOptions{})
+		if e != nil {
+			return result, e
+		}
+		if err = insert(result.Pages[page.ID], parent, page.Title, page.Icon, cover, content); err != nil {
 			return result, err
 		}
 	}
