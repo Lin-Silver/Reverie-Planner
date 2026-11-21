@@ -25,6 +25,7 @@ type documentPackagePage struct {
 	ParentID string `json:"parentId,omitempty"`
 	Title    string `json:"title"`
 	Icon     string `json:"icon,omitempty"`
+	Cover    string `json:"cover,omitempty"`
 	Content  string `json:"content"`
 }
 type documentPackageAsset struct {
@@ -222,8 +223,23 @@ func rewriteDocumentContent(content string, pages, assets map[string]string, opt
 	return string(raw), err
 }
 
+// Match the built-in literals in src/frontend/src/pageCoverPresets.ts.
+func isPortableDocumentCover(cover string) bool {
+	switch cover {
+	case "linear-gradient(135deg,#f6d365 0%,#fda085 100%)",
+		"linear-gradient(135deg,#d7e7f4 0%,#f5e7ec 55%,#c9bfde 100%)",
+		"linear-gradient(135deg,#134e5e 0%,#71b280 100%)",
+		"linear-gradient(135deg,#355c7d 0%,#6c5b7b 50%,#c06c84 100%)",
+		"linear-gradient(135deg,#e9e4f0 0%,#dfe9f3 100%)",
+		"linear-gradient(135deg,#fc5c7d 0%,#6a82fb 100%)":
+		return true
+	default:
+		return false
+	}
+}
+
 func validateDocumentPackage(p documentPackage) error {
-	if p.Format != "reverie-documents" || p.Version != 1 || len(p.Pages) == 0 || len(p.Pages) > 100 || len(p.Assets) > 500 {
+	if p.Format != "reverie-documents" || (p.Version != 1 && p.Version != 2) || len(p.Pages) == 0 || len(p.Pages) > 100 || len(p.Assets) > 500 {
 		return errors.New("unsupported document package or item limit exceeded")
 	}
 	pages, assets := map[string]string{}, map[string]string{}
@@ -232,6 +248,9 @@ func validateDocumentPackage(p documentPackage) error {
 	for _, page := range p.Pages {
 		if !utf8.ValidString(page.Title) || !utf8.ValidString(page.Icon) || !utf8.ValidString(page.Content) || !archiveAttachmentID.MatchString(page.ID) || pages[page.ID] != "" || len(page.Title) > 4000 || len(page.Icon) > 256 {
 			return errors.New("invalid or duplicate document")
+		}
+		if page.Cover != "" && (p.Version != 2 || !isPortableDocumentCover(page.Cover)) {
+			return fmt.Errorf("%s: only built-in gradient covers can be transferred in a document package; use a workspace archive", page.Title)
 		}
 		pages[page.ID] = page.ID
 		parents[page.ID] = page.ParentID
@@ -318,14 +337,17 @@ func (a *AppContext) exportDocumentPackage(ctx context.Context, root string) (do
 	total := 0
 	for rows.Next() {
 		var page documentPackagePage
-		var cover, linked string
+		var linked string
 		var owned bool
-		if err = rows.Scan(&page.ID, &page.ParentID, &page.Title, &page.Icon, &page.Content, &cover, &linked, &owned); err != nil {
+		if err = rows.Scan(&page.ID, &page.ParentID, &page.Title, &page.Icon, &page.Content, &page.Cover, &linked, &owned); err != nil {
 			break
 		}
-		if cover != "" || linked != "" || owned {
-			err = errors.New("tree includes covers or database-owned/linked pages; use a workspace archive")
+		if linked != "" || owned {
+			err = errors.New("tree includes database-owned or linked pages; use a workspace archive")
 			break
+		}
+		if page.Cover != "" {
+			p.Version = 2
 		}
 		if page.ID == root {
 			page.ParentID = ""
@@ -457,11 +479,11 @@ func (a *AppContext) importDocumentPackage(ctx context.Context, p documentPackag
 		assets[asset.ID] = newID("pageasset")
 	}
 	now := timeNowUTC()
-	insert := func(id, parent, title, icon, content string) error {
-		_, e := tx.ExecContext(ctx, `INSERT INTO pages(id,parent_id,title,icon,content,workspace,created_by,created_at,updated_at,version) VALUES(?,?,?,?,?,1,'Import',?,?,1)`, id, nullStr(parent), title, nullStr(icon), content, now, now)
+	insert := func(id, parent, title, icon, cover, content string) error {
+		_, e := tx.ExecContext(ctx, `INSERT INTO pages(id,parent_id,title,icon,cover,content,workspace,created_by,created_at,updated_at,version) VALUES(?,?,?,?,?,?,1,'Import',?,?,1)`, id, nullStr(parent), title, nullStr(icon), nullStr(cover), content, now, now)
 		return e
 	}
-	if err = insert(result.RootID, "", "Imported documents", "", `[{"type":"paragraph","content":[]}]`); err != nil {
+	if err = insert(result.RootID, "", "Imported documents", "", "", `[{"type":"paragraph","content":[]}]`); err != nil {
 		return result, err
 	}
 	totalContent := 0
@@ -478,7 +500,7 @@ func (a *AppContext) importDocumentPackage(ctx context.Context, p documentPackag
 		if totalContent > maxDocumentContentBytes {
 			return result, errors.New("rewritten documents exceed 16 MiB; import a smaller tree")
 		}
-		if err = insert(result.Pages[page.ID], parent, page.Title, page.Icon, content); err != nil {
+		if err = insert(result.Pages[page.ID], parent, page.Title, page.Icon, page.Cover, content); err != nil {
 			return result, err
 		}
 	}

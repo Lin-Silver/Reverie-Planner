@@ -40,10 +40,28 @@ func documentFixture(t *testing.T, a *AppContext) (markdownImportResult, documen
 	}
 	return imported, p
 }
+
+const testDocumentCover = "linear-gradient(135deg,#f6d365 0%,#fda085 100%)"
+
 func TestDocumentPackageRoundtripRetryRestartAndArchive(t *testing.T) {
 	a := setupTestContext(t)
 	defer func() { a.DB.Close() }()
-	source, p := documentFixture(t, a)
+	source, legacy := documentFixture(t, a)
+	if legacy.Version != 1 {
+		t.Fatal("coverless trees must keep the legacy format")
+	}
+	if _, err := a.DB.Exec("UPDATE pages SET cover=? WHERE id='doc-child'", testDocumentCover); err != nil {
+		t.Fatal(err)
+	}
+	p, err := a.exportDocumentPackage(context.Background(), source.RootID)
+	if err != nil || p.Version != 2 {
+		t.Fatal("export with cover must use version 2", err)
+	}
+	incorrectVersion := p
+	incorrectVersion.Version = 1
+	if err := validateDocumentPackage(incorrectVersion); err == nil {
+		t.Fatal("version 1 must reject a cover")
+	}
 	if len(p.Pages) != 3 || len(p.Assets) != 3 {
 		t.Fatal("missing documents or unreferenced assets", p)
 	}
@@ -56,9 +74,9 @@ func TestDocumentPackageRoundtripRetryRestartAndArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var parent, content, icon string
-	if err = a.DB.QueryRow("SELECT parent_id,content,icon FROM pages WHERE id=?", result.Pages["doc-child"]).Scan(&parent, &content, &icon); err != nil || parent != result.Pages[source.Pages["Page.md"]] || !strings.Contains(content, "9007199254740993") || icon != "📓" {
-		t.Fatal("lost hierarchy, precision or icon", parent, content, icon, err)
+	var parent, content, icon, cover string
+	if err = a.DB.QueryRow("SELECT parent_id,content,icon,cover FROM pages WHERE id=?", result.Pages["doc-child"]).Scan(&parent, &content, &icon, &cover); err != nil || parent != result.Pages[source.Pages["Page.md"]] || !strings.Contains(content, "9007199254740993") || icon != "📓" || cover != testDocumentCover {
+		t.Fatal("lost hierarchy, precision, icon or cover", parent, content, icon, cover, err)
 	}
 	exported, err := a.exportDocumentPackage(context.Background(), result.Pages[p.RootID])
 	if err != nil {
@@ -92,7 +110,7 @@ func TestDocumentPackageRoundtripRetryRestartAndArchive(t *testing.T) {
 			t.Fatal(e)
 		}
 		before, e := rewriteDocumentContent(original.Content, mapIDs(p.Pages), assetIDs(p.Assets))
-		if e != nil || before != normalized || copy.Title != original.Title {
+		if e != nil || before != normalized || copy.Title != original.Title || copy.Cover != original.Cover {
 			t.Fatal("lossy roundtrip", original.Title, before, normalized, e)
 		}
 	}
@@ -200,7 +218,7 @@ func TestDocumentPackageRejectsInvalidDependenciesAndLimits(t *testing.T) {
 		},
 		func(p *documentPackage) { p.Pages[0].Content = "legacy text" },
 		func(p *documentPackage) { p.Pages[0].Content = strings.Repeat("x", (2<<20)+1) },
-		func(p *documentPackage) { p.Version = 2 },
+		func(p *documentPackage) { p.Version = 3 },
 	} {
 		var candidate documentPackage
 		json.Unmarshal(raw, &candidate)

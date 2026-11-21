@@ -1,5 +1,6 @@
 import {expect,test} from '@playwright/test'
 import fs from 'node:fs/promises'
+import {COVER_PRESETS} from '../src/pageCoverPresets.js'
 
 test.use({trace:'retain-on-failure',screenshot:'only-on-failure'})
 async function settings(page:import('@playwright/test').Page){
@@ -10,7 +11,7 @@ async function settings(page:import('@playwright/test').Page){
 test('Document package downloads, previews and imports a linked tree without replacing saved writing',async({page})=>{
  const blocks=[{type:'paragraph',content:[{type:'text',text:'Preserve bold writing',styles:{bold:true}}]}]
  const root=await(await page.request.post('/api/pages',{data:{title:'Transfer root '+Date.now(),workspace:true,content:JSON.stringify(blocks)}})).json()
- const child=await(await page.request.post('/api/pages',{data:{title:'Transfer child',parentId:root.id,workspace:true,content:JSON.stringify(blocks),icon:'📓'}})).json()
+ const child=await(await page.request.post('/api/pages',{data:{title:'Transfer child',parentId:root.id,workspace:true,content:JSON.stringify(blocks),icon:'📓',cover:COVER_PRESETS[0].value}})).json()
  const linked=[...blocks,{type:'paragraph',content:[{type:'link',href:'/?page='+child.id,content:[{type:'text',text:'Open copied child',styles:{}}]}]}]
  await page.request.put('/api/pages',{data:{...root,content:JSON.stringify(linked)}})
  const panel=await settings(page)
@@ -20,6 +21,7 @@ test('Document package downloads, previews and imports a linked tree without rep
  const download=await downloadEvent
  const raw=await fs.readFile((await download.path())!)
  const parsed=JSON.parse(raw.toString())
+ expect(parsed.version).toBe(2)
  expect(parsed.pages).toHaveLength(2);expect(parsed.assets).toHaveLength(0)
  expect(parsed.pages.find((p:{id:string})=>p.id===child.id).icon).toBe('📓')
  const before=(await(await page.request.get('/api/pages')).json()).length
@@ -27,6 +29,7 @@ test('Document package downloads, previews and imports a linked tree without rep
  await panel.getByRole('button',{name:'Preview document package',exact:true}).click()
  await expect(panel.getByRole('status')).toContainText('Preview ready')
  await expect(panel.getByLabel('Document package preview')).toContainText('2 documents')
+ await expect(panel.getByLabel('Document package preview')).toContainText('Cover: Dawn')
  expect((await(await page.request.get('/api/pages')).json()).length).toBe(before)
  let imported:{pages:Record<string,string>}|undefined
  await page.route('**/api/document-package?digest=*',async route=>{const response=await route.fetch();expect(response.status()).toBe(201);imported=await response.json();await route.abort('failed')},{times:1})
@@ -53,6 +56,7 @@ test('Document package downloads, previews and imports a linked tree without rep
  } finally {releaseDiscovery();await page.unrouteAll({behavior:'wait'})}
  await expect(page.getByLabel('Page title')).toHaveValue('Transfer child')
  await page.reload();await expect(page.getByLabel('Page title')).toHaveValue('Transfer child')
+ await expect(page.getByTestId('page-cover')).toBeVisible()
  expect((await(await page.request.get('/api/pages?id='+root.id)).json()).content).toBe(JSON.stringify(linked))
 })
 

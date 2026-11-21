@@ -1,6 +1,8 @@
 import {useEffect, useRef, useState} from 'react'
 
-type Source = {id:string; parentId?:string; title:string; content:string}
+import { COVER_PRESETS } from './pageCoverPresets'
+
+type Source = {id:string; parentId?:string; title:string; cover?:string; content:string}
 type Preview = {digest:string; pages:Source[]; attachments:number; attachmentBytes:number}
 export default function DocumentPackage({onImported}:{onImported:()=>Promise<void>}) {
  const [pages,setPages]=useState<Source[]>([])
@@ -50,8 +52,8 @@ export default function DocumentPackage({onImported}:{onImported:()=>Promise<voi
  }
  return <section className="archive-panel" aria-label="Document package transfer" aria-busy={!!busy}>
   <div className="section-heading"><h3>Transfer a document tree</h3><span>Editor blocks and local attachments</span></div>
-  <p>Move saved personal documents without Markdown conversion. Titles, icons, nested pages, supported editor blocks, internal links and local page attachments travel together in a readable JSON package. Import creates new IDs and a separate root.</p>
-  <p className="empty">Up to 100 pages, 2 MB per document, 16 MB total writing and 16 MB attachments; 48 MB per file. Covers, legacy plain text, database-owned or linked pages, external media and links outside the selected tree block transfer. Project membership, history, trash, favorites and databases require a complete workspace archive. Unsaved writing is not included.</p>
+  <p>Move saved personal documents without Markdown conversion. Titles, icons, built-in gradient covers, nested pages, supported editor blocks, internal links and local page attachments travel together in a readable JSON package. Import creates new IDs and a separate root.</p>
+  <p className="empty">Up to 100 pages, 2 MB per document, 16 MB total writing and 16 MB attachments; 48 MB per file. Image covers, legacy plain text, database-owned or linked pages, external media and links outside the selected tree block transfer. Project membership, history, trash, favorites and databases require a complete workspace archive. Unsaved writing is not included.</p>
   <label className="archive-file-label">Document tree to export<select aria-label="Document tree to export" value={root} disabled={!!busy} onChange={e=>setRoot(e.target.value)}><option value="">Choose a saved page</option>{pages.map(page=><option value={page.id} key={page.id}>{page.title||'Untitled'} · {page.id}</option>)}</select></label>
   <div className="row archive-actions"><button className="btn" disabled={!root||!!busy} onClick={()=>void run('export')}>{busy==='export'?'Preparing documents…':'Download document package'}</button><button className="btn quiet" disabled={!!busy} onClick={()=>{setError('');setLoadAttempt(value=>value+1)}}>Reload document choices</button></div>
   <label className="archive-file-label">Document package<input type="file" accept=".json,application/json" aria-label="Document package JSON" disabled={!!busy} onChange={e=>{
@@ -61,7 +63,10 @@ export default function DocumentPackage({onImported}:{onImported:()=>Promise<voi
    setFile(next)
   }}/></label>
   <div className="row archive-actions"><button className="btn" disabled={!file||!!busy||complete} onClick={()=>void run('preview')}>{busy==='preview'?'Reading documents…':'Preview document package'}</button>{preview&&<button className="btn primary" disabled={!!busy||complete} onClick={()=>void run('import')}>{busy==='import'?'Importing documents…':'Import document copy'}</button>}</div>
-  {preview&&<div className="archive-preview" aria-label="Document package preview"><p><strong>{preview.pages.length} {preview.pages.length===1?'document':'documents'}</strong> · {preview.attachments} attachments · {preview.attachmentBytes.toLocaleString()} attachment bytes</p><ul>{preview.pages.map(page=><li key={page.id}>{page.title||'Untitled'}{page.parentId?' · Inside '+(preview.pages.find(parent=>parent.id===page.parentId)?.title||'Untitled'):' · Tree root'}</li>)}</ul><details><summary>View preserved editor blocks</summary>{preview.pages.map(page=><div key={page.id}><h4>{page.title||'Untitled'}</h4><pre className="markdown-source">{page.content}</pre></div>)}</details></div>}
+  {preview&&<div className="archive-preview" aria-label="Document package preview"><p><strong>{preview.pages.length} {preview.pages.length===1?'document':'documents'}</strong> · {preview.attachments} attachments · {preview.attachmentBytes.toLocaleString()} attachment bytes</p><ul>{preview.pages.map(page=>{
+   const coverLabel=COVER_PRESETS.find(preset=>preset.value===page.cover)?.label
+   return <li key={page.id}>{page.title||'Untitled'}{page.parentId?' · Inside '+(preview.pages.find(parent=>parent.id===page.parentId)?.title||'Untitled'):' · Tree root'}{coverLabel && ' · Cover: '+coverLabel}</li>
+  })}</ul><details><summary>View preserved editor blocks</summary>{preview.pages.map(page=><div key={page.id}><h4>{page.title||'Untitled'}</h4><pre className="markdown-source">{page.content}</pre></div>)}</details></div>}
   {notice&&<p role="status">{notice}</p>}{error&&<p role="alert">{error} If a successful response was interrupted, retry with the same selected file to retrieve the completed copy.</p>}
  </section>
 }
