@@ -12,9 +12,11 @@ Keep the original export and a Reverie workspace archive before any migration.
   paths, duplicate/case-ambiguous entries, symlinks, encrypted/corrupt ZIPs and
   invalid text fail validation. Every regular entry is read with a bounded reader.
 - A directory named `Parent` uses `Parent.md` (or `.markdown`) as its page parent.
-  Otherwise the nearest explicit ancestor page is used; unmatched directories
-  do not generate invented content. Preview shows the exact source path and
-  parent. Each import has its own `Imported Markdown` container.
+  Other directories with Markdown descendants become empty folder pages (up to
+  100 per ZIP). This includes implied directories with no explicit ZIP entry.
+  Preview identifies generated folders and shows each page's source path and
+  parent. The client sends converted content only for the Markdown files.
+  Each import has its own `Imported Markdown` container.
 - Filename titles lose the optional trailing 32-hex Notion ID. Original paths
   remain authoritative for links. Same titles and repeated independent imports
   create distinct pages; no existing document is overwritten or merged.

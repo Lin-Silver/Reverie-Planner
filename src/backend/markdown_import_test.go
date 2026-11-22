@@ -270,3 +270,59 @@ func TestMarkdownImportHTTPPreviewDigestAndRetry(t *testing.T) {
 		t.Fatal("unexpected page count", count)
 	}
 }
+
+func TestMarkdownImportPreservesUnmatchedFolders(t *testing.T) {
+	a := setupTestContext(t)
+	defer a.DB.Close()
+	ctx := context.Background()
+	raw := markdownTestZIP(t, map[string]string{
+		"Notes/Topic.md":            "# Topic",
+		"Notes/Topic/Deep/Child.md": "# Child",
+		"Assets/readme.txt":         "attachment only",
+	})
+	preview, err := previewMarkdownZIP(ctx, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Pages) != 4 {
+		t.Fatalf("want two notes and two folders, got %+v", preview.Pages)
+	}
+	blocks := []markdownBlocks{
+		markdownTestBlocks("Notes/Topic.md", "Topic writing"),
+		markdownTestBlocks("Notes/Topic/Deep/Child.md", "Child writing"),
+	}
+	const key = "markdown_folder_test_123"
+	forged := append(append([]markdownBlocks{}, blocks...), markdownTestBlocks("Notes/", "forged content"))
+	if _, err := a.importMarkdown(ctx, preview, forged, key); err == nil {
+		t.Fatal("folder content must not come from the client")
+	}
+	result, err := a.importMarkdown(ctx, preview, blocks, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range []struct {
+		path, title, parent, writing string
+	}{
+		{"Notes/", "Notes", result.RootID, ""},
+		{"Notes/Topic.md", "Topic", result.Pages["Notes/"], "Topic writing"},
+		{"Notes/Topic/Deep/", "Deep", result.Pages["Notes/Topic.md"], ""},
+		{"Notes/Topic/Deep/Child.md", "Child", result.Pages["Notes/Topic/Deep/"], "Child writing"},
+	} {
+		var title, parent, content string
+		err := a.DB.QueryRow("SELECT title,parent_id,content FROM pages WHERE id=?", result.Pages[page.path]).Scan(&title, &parent, &content)
+		if err != nil || title != page.title || parent != page.parent || !strings.Contains(content, page.writing) {
+			t.Fatalf("unexpected copy of %q: title=%q parent=%q content=%q error=%v", page.path, title, parent, content, err)
+		}
+		if page.writing == "" && content != `[{"type":"paragraph","content":[]}]` {
+			t.Fatalf("folder %q acquired content: %s", page.path, content)
+		}
+	}
+	retry, err := a.importMarkdown(ctx, preview, blocks, key)
+	if err != nil || retry.Pages["Notes/"] != result.Pages["Notes/"] || retry.RootID != result.RootID {
+		t.Fatal("retry failed to preserve folder IDs", err)
+	}
+	tooDeep := markdownTestZIP(t, map[string]string{strings.Repeat("x/", maxMarkdownFolders+1) + "Page.md": "text"})
+	if _, err := previewMarkdownZIP(ctx, tooDeep); err == nil || !strings.Contains(err.Error(), "generated folder page limit") {
+		t.Fatalf("expected folder bound, got %v", err)
+	}
+}

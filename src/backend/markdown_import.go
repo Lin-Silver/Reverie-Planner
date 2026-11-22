@@ -24,6 +24,7 @@ const maxMarkdownZIPBytes = 16 << 20
 const maxMarkdownExpandedBytes = 16 << 20
 const maxMarkdownPageBytes = 1 << 20
 const maxMarkdownPages = 100
+const maxMarkdownFolders = 100
 const maxMarkdownEntries = 500
 
 var notionTitleSuffix = regexp.MustCompile(` [a-fA-F0-9]{32}$`)
@@ -34,6 +35,7 @@ type markdownSource struct {
 	Title      string `json:"title"`
 	ParentPath string `json:"parentPath,omitempty"`
 	Markdown   string `json:"markdown"`
+	Folder     bool   `json:"folder,omitempty"`
 }
 type markdownPreview struct {
 	Digest   string           `json:"digest"`
@@ -123,10 +125,7 @@ func previewMarkdownZIP(ctx context.Context, raw []byte) (markdownPreview, error
 		if !utf8.Valid(data) || bytes.Contains(data, []byte{0}) {
 			return out, fmt.Errorf("Markdown must be UTF-8 text: %s", name)
 		}
-		title := notionTitleSuffix.ReplaceAllString(strings.TrimSuffix(path.Base(name), path.Ext(name)), "")
-		if strings.TrimSpace(title) == "" {
-			title = "Untitled"
-		}
+		title := markdownImportTitle(strings.TrimSuffix(path.Base(name), path.Ext(name)))
 		out.Pages = append(out.Pages, markdownSource{Path: name, Title: title, Markdown: strings.TrimPrefix(string(data), "\ufeff")})
 		if len(out.Pages) > maxMarkdownPages {
 			return out, errors.New("ZIP exceeds 100 Markdown page limit")
@@ -135,29 +134,48 @@ func previewMarkdownZIP(ctx context.Context, raw []byte) (markdownPreview, error
 	if len(out.Pages) == 0 {
 		return out, errors.New("ZIP contains no Markdown pages")
 	}
+	// Explicit pages are keyed by the same stem as their companion folder.
+	parentPaths := map[string]string{}
+	for _, page := range out.Pages {
+		stem := strings.TrimSuffix(page.Path, path.Ext(page.Path))
+		if _, exists := parentPaths[stem]; exists {
+			return out, fmt.Errorf("ambiguous Markdown page: %s", stem)
+		}
+		parentPaths[stem] = page.Path
+	}
+	folders := []markdownSource{}
+	for _, page := range out.Pages {
+		for dir := path.Dir(page.Path); dir != "."; dir = path.Dir(dir) {
+			if _, exists := parentPaths[dir]; exists {
+				// Its ancestors will be covered by the explicit page or were
+				// already walked when this folder entry was added.
+				break
+			}
+			if len(folders) == maxMarkdownFolders {
+				return out, errors.New("ZIP exceeds 100 generated folder page limit")
+			}
+			folderPath := dir + "/"
+			parentPaths[dir] = folderPath
+			folders = append(folders, markdownSource{Path: folderPath, Title: markdownImportTitle(path.Base(dir)), Folder: true})
+		}
+	}
+	out.Pages = append(out.Pages, folders...)
+	for i := range out.Pages {
+		page := &out.Pages[i]
+		page.ParentPath = parentPaths[path.Dir(strings.TrimSuffix(page.Path, "/"))]
+	}
 	sort.Slice(out.Pages, func(i, j int) bool { return out.Pages[i].Path < out.Pages[j].Path })
 	sort.Strings(out.Blockers)
 	sort.Slice(out.Assets, func(i, j int) bool { return out.Assets[i].Path < out.Assets[j].Path })
-	// A directory corresponds to its sibling page (the Notion Markdown layout).
-	// Otherwise use the nearest explicit ancestor page; the source path is always
-	// shown in preview. No guessed/synthetic page content is generated.
-	stems := map[string]string{}
-	for _, p := range out.Pages {
-		stem := strings.TrimSuffix(p.Path, path.Ext(p.Path))
-		if _, ok := stems[stem]; ok {
-			return out, fmt.Errorf("ambiguous Markdown page: %s", stem)
-		}
-		stems[stem] = p.Path
-	}
-	for i, p := range out.Pages {
-		for dir := path.Dir(p.Path); dir != "."; dir = path.Dir(dir) {
-			if parent, ok := stems[dir]; ok {
-				out.Pages[i].ParentPath = parent
-				break
-			}
-		}
-	}
 	return out, nil
+}
+
+func markdownImportTitle(name string) string {
+	title := notionTitleSuffix.ReplaceAllString(name, "")
+	if strings.TrimSpace(title) == "" {
+		return "Untitled"
+	}
+	return title
 }
 
 // Only stored editor blocks are rewritten. No raw HTML is rendered, remote
@@ -280,9 +298,6 @@ func convertMarkdownPages(preview markdownPreview, converted []markdownBlocks, i
 	if len(preview.Blockers) > 0 {
 		return nil, errors.New("unsupported package files must be resolved before importing")
 	}
-	if len(converted) != len(preview.Pages) {
-		return nil, errors.New("converted page count does not match preview")
-	}
 	contents := map[string]json.RawMessage{}
 	for _, p := range converted {
 		if _, exists := contents[p.Path]; exists {
@@ -292,6 +307,10 @@ func convertMarkdownPages(preview markdownPreview, converted []markdownBlocks, i
 	}
 	documents := map[string]string{}
 	for _, p := range preview.Pages {
+		if p.Folder {
+			documents[p.Path] = `[{"type":"paragraph","content":[]}]`
+			continue
+		}
 		content, ok := contents[p.Path]
 		if !ok {
 			return nil, fmt.Errorf("missing converted page: %s", p.Path)
@@ -301,6 +320,10 @@ func convertMarkdownPages(preview markdownPreview, converted []markdownBlocks, i
 			return nil, fmt.Errorf("%s: %w", p.Path, err)
 		}
 		documents[p.Path] = value
+		delete(contents, p.Path)
+	}
+	if len(contents) != 0 {
+		return nil, errors.New("converted pages include paths absent from the Markdown sources")
 	}
 	return documents, nil
 }
