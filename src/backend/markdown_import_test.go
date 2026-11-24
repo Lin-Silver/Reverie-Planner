@@ -326,3 +326,92 @@ func TestMarkdownImportPreservesUnmatchedFolders(t *testing.T) {
 		t.Fatalf("expected folder bound, got %v", err)
 	}
 }
+
+// Both explicit entries and implicit ancestors must describe one portable tree.
+func TestMarkdownZIPRejectsAmbiguousDirectoryTrees(t *testing.T) {
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  string
+	}{
+		{"implicit case collision", map[string]string{"Notes/A.md": "a", "notes/B.md": "b"}, "case-ambiguous ZIP path"},
+		{"nested case collision", map[string]string{"Notes/Deep/A.md": "a", "Notes/deep/B.md": "b"}, "case-ambiguous ZIP path"},
+		{"explicit directory case collision", map[string]string{"Notes/": "", "notes/B.md": "b"}, "case-ambiguous ZIP path"},
+		{"file ancestor", map[string]string{"Notes.txt": "file", "Notes.txt/B.md": "b"}, "ZIP file/directory conflict"},
+		{"attachment ancestor", map[string]string{"Page.md": "text", "assets.txt": "file", "assets.txt/photo.txt": "attachment"}, "ZIP file/directory conflict"},
+		{"case-insensitive page stems", map[string]string{"Notes.md": "a", "notes.markdown": "b"}, "ambiguous Markdown page"},
+		{"page folder mismatch", map[string]string{"Notes.md": "a", "notes/B.md": "b"}, "case-ambiguous Markdown page/folder"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// ZIP order is unspecified; neither order may permit an ambiguous tree.
+			for i := 0; i < 5; i++ {
+				_, err := previewMarkdownZIP(context.Background(), markdownTestZIP(t, tc.files))
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("expected %q, got %v", tc.want, err)
+				}
+			}
+		})
+	}
+	// Explicit directories, implied descendants and matching companion pages
+	// remain valid, including shared directory prefixes.
+	preview, err := previewMarkdownZIP(context.Background(), markdownTestZIP(t, map[string]string{
+		"Notes/": "", "Notes.md": "parent", "Notes/A.md": "a", "Notes/Deep/B.md": "b", "Notes/Deep/C.md": "c",
+	}))
+	if err != nil || len(preview.Pages) != 5 {
+		t.Fatalf("valid directory tree rejected: %+v, %v", preview.Pages, err)
+	}
+	parents := map[string]string{}
+	for _, page := range preview.Pages {
+		parents[page.Path] = page.ParentPath
+	}
+	if parents["Notes/A.md"] != "Notes.md" || parents["Notes/Deep/"] != "Notes.md" || parents["Notes/Deep/B.md"] != "Notes/Deep/" || parents["Notes/Deep/C.md"] != "Notes/Deep/" {
+		t.Fatalf("valid hierarchy changed: %+v", parents)
+	}
+}
+
+func TestMarkdownAmbiguousTreeHTTPRejectsWithoutWrites(t *testing.T) {
+	a := setupTestContext(t)
+	defer a.DB.Close()
+	raw := markdownTestZIP(t, map[string]string{"Notes/A.md": "a", "notes/B.md": "b"})
+	preview := httptest.NewRecorder()
+	a.handleMarkdownImport(preview, httptest.NewRequest("POST", "/api/import/markdown-preview", bytes.NewReader(raw)))
+	if preview.Code != 400 || !strings.Contains(preview.Body.String(), "case-ambiguous ZIP path") {
+		t.Fatal(preview.Code, preview.Body.String())
+	}
+	var buffer bytes.Buffer
+	form := multipart.NewWriter(&buffer)
+	file, err := form.CreateFormFile("file", "ambiguous.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = file.Write(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err = form.WriteField("blocks", "[]"); err != nil {
+		t.Fatal(err)
+	}
+	if err = form.WriteField("operationKey", "ambiguous_tree_123456"); err != nil {
+		t.Fatal(err)
+	}
+	if err = form.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/api/import/markdown", &buffer)
+	req.Header.Set("Content-Type", form.FormDataContentType())
+	response := httptest.NewRecorder()
+	a.handleMarkdownImport(response, req)
+	if response.Code != 400 || !strings.Contains(response.Body.String(), "case-ambiguous ZIP path") {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	for _, query := range []string{
+		"SELECT count(*) FROM pages",
+		"SELECT count(*) FROM page_assets",
+		"SELECT count(*) FROM app_state WHERE key LIKE 'markdown_import:%'",
+	} {
+		var count int
+		if err := a.DB.QueryRow(query).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("rejected package mutated state: %s: %d, %v", query, count, err)
+		}
+	}
+}

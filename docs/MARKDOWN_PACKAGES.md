@@ -10,7 +10,10 @@ Keep the original export and a Reverie workspace archive before any migration.
   1 MiB expanded per Markdown page, 8 MiB per attachment, 16 MiB compressed and expanded for the package.
 - No extraction to user paths. Absolute paths, dot traversal, backslashes, drive
   paths, duplicate/case-ambiguous entries, symlinks, encrypted/corrupt ZIPs and
-  invalid text fail validation. Every regular entry is read with a bounded reader.
+  invalid text fail validation. Implicit ancestor directories are checked too;
+  case-conflicting folder spellings, file/directory collisions, differently cased
+  companion page/folder names, and ambiguous Markdown stems are rejected rather
+  than split into inconsistent pages. Every regular entry is read with a bounded reader.
 - A directory named `Parent` uses `Parent.md` (or `.markdown`) as its page parent.
   Other directories with Markdown descendants become empty folder pages (up to
   100 per ZIP). This includes implied directories with no explicit ZIP entry.
@@ -95,3 +98,8 @@ restarts. Existing browser assertions remain unchanged.
 
 The development plan records exact local/native results; implementation or a
 collected screenshot alone is not cross-platform/manual accessibility acceptance.
+
+The portable-tree validation regression exercises ambiguous implicit/explicit directories,
+file/ancestor collisions, case-conflicting page stems and companion folders, HTTP
+preview/commit rejection without database writes, and browser rejection followed
+by a corrected folder import. These are test additions, not a native CI pass claim.

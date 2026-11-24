@@ -66,6 +66,27 @@ func previewMarkdownZIP(ctx context.Context, raw []byte) (markdownPreview, error
 		return out, errors.New("ZIP exceeds 500 entry limit")
 	}
 	seen := map[string]bool{}
+	// Register implicit ancestors too: ZIPs need not contain directory entries.
+	// A single portable tree cannot have differently cased paths or a file
+	// occupying a directory used by another entry.
+	type zipPathNode struct {
+		name      string
+		directory bool
+	}
+	nodes := map[string]zipPathNode{}
+	registerPath := func(name string, directory bool) error {
+		key := strings.ToLower(name)
+		if previous, exists := nodes[key]; exists {
+			if previous.name != name {
+				return fmt.Errorf("case-ambiguous ZIP path: %s and %s", previous.name, name)
+			}
+			if previous.directory != directory {
+				return fmt.Errorf("ZIP file/directory conflict: %s", name)
+			}
+		}
+		nodes[key] = zipPathNode{name: name, directory: directory}
+		return nil
+	}
 	var expanded uint64
 	for _, file := range zr.File {
 		if err = ctx.Err(); err != nil {
@@ -80,6 +101,14 @@ func previewMarkdownZIP(ctx context.Context, raw []byte) (markdownPreview, error
 			return out, fmt.Errorf("duplicate or case-ambiguous ZIP path: %s", name)
 		}
 		seen[key] = true
+		if err = registerPath(name, file.FileInfo().IsDir()); err != nil {
+			return out, err
+		}
+		for dir := path.Dir(name); dir != "."; dir = path.Dir(dir) {
+			if err = registerPath(dir, true); err != nil {
+				return out, err
+			}
+		}
 		if file.Mode() & ^(file.Mode().Perm()) != 0 && !file.FileInfo().IsDir() {
 			return out, fmt.Errorf("non-regular ZIP entry: %s", name)
 		}
@@ -136,11 +165,17 @@ func previewMarkdownZIP(ctx context.Context, raw []byte) (markdownPreview, error
 	}
 	// Explicit pages are keyed by the same stem as their companion folder.
 	parentPaths := map[string]string{}
+	pageStems := map[string]bool{}
 	for _, page := range out.Pages {
 		stem := strings.TrimSuffix(page.Path, path.Ext(page.Path))
-		if _, exists := parentPaths[stem]; exists {
+		key := strings.ToLower(stem)
+		if pageStems[key] {
 			return out, fmt.Errorf("ambiguous Markdown page: %s", stem)
 		}
+		if node, exists := nodes[key]; exists && node.directory && node.name != stem {
+			return out, fmt.Errorf("case-ambiguous Markdown page/folder: %s and %s", stem, node.name)
+		}
+		pageStems[key] = true
 		parentPaths[stem] = page.Path
 	}
 	folders := []markdownSource{}
