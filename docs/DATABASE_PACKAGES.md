@@ -10,7 +10,12 @@ conversion is required. Existing data is never matched, merged or overwritten.
 Version 1 (`format: reverie-database`) supports one live database, 1–32 properties,
 1–32 independent views and 0–1,000 live records in at most 16 MiB of UTF-8 JSON.
 Properties support Title, Text, Number, Checkbox, Date, URL and Email with empty
-configuration. Names, types, visibility and strictly increasing positions travel.
+configuration. Version 2 adds Select and Multi-select with optional ordered string
+choices (`config` is the original JSON configuration string). Scalar-only exports
+remain version 1; version 2 requires at least one choice field. Unknown choice
+configuration, duplicate option names/keys, invalid value types and unconfigured
+nonempty values (when choices are defined) are rejected. Empty options follow
+the existing editor's unrestricted-choice semantics. Names, types, visibility and strictly increasing positions travel.
 Scalar validation follows the CSV subset; numbers use ordinary floating-point
 precision. Null, absent, empty text, zero and false remain distinct where stored.
 
@@ -22,7 +27,7 @@ group/date selectors and Gallery property settings. Every property reference is
 validated and rewritten structurally. A literal property ID inside free text is
 never replaced. Unknown view settings are blockers rather than guessed extensions.
 
-Relationships, formulas, rollups, select metadata, configured properties,
+Relationships, formulas, rollups, other configured properties,
 attachments, nested backing-page children, covers, linked backing pages and
 outside-package links are refused with a reason. Record documents with images or
 files require a full workspace archive. Trash, history, timestamps/versions,
@@ -64,7 +69,7 @@ invalid input/dependency, digest, provider-canary and fault-injected transaction
 regressions. Browser tests cover actual download → preview → lost-response retry
 → rendered multiline cells → reload, plus malformed input and 390px keyboard
 confirmation. These are implemented checks; see DEVELOPMENT_PLAN.md for actual
-SHA-matched native results. Full Notion migration, assets/advanced properties,
+SHA-matched native results. Full Notion migration, assets/relations/formulas,
 10,000-record scale and manual accessibility/platform acceptance remain open.
 
 Native acceptance: source `ba43477778c234f2e12538aa984d018b7bf7492c`,
@@ -73,3 +78,9 @@ Linux, Windows and macOS each passed 12/12 migration browser tests and 82/82 ful
 browser tests, backend/build checks and the extended native restart/archive/CLI
 restore/two-restored-start/package workflow. Original snapshot assertions remain.
 Manual platform and assistive-technology acceptance are separate open work.
+
+Version 2 adds regressions for configured choice fields, option ordering, null and
+empty arrays, remapped board/filter references, restart/archive/receipt retention,
+rejected invalid choice metadata and transactional readback rollback. Browser
+coverage exercises actual saved choice fields → download → preview → copy →
+reload and independent record editing. Native acceptance for version 2 is pending.

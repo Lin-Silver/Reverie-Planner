@@ -375,3 +375,158 @@ func TestDatabasePackageMalformedReferencesAndLimits(t *testing.T) {
 		}
 	}
 }
+
+// Version 2 retains configured choices and their order through a live copy,
+// retry, restart and workspace archive. Version 1 remains scalar-only.
+func TestDatabasePackageSelectRoundtrip(t *testing.T) {
+	a := setupTestContext(t)
+	defer func() { a.DB.Close() }()
+	source, raw := databaseTransferFixture(t, a)
+	p, err := decodeDatabasePackage(raw)
+	if err != nil || p.Version != 1 {
+		t.Fatal("scalar compatibility", err)
+	}
+	p.Version = 2
+	p.Properties = append(p.Properties,
+		databasePackageProperty{ID: "status_source", Name: "Status", Type: "select", Position: p.Properties[len(p.Properties)-1].Position+1, Visible: true, Config: `{"options":["Done","Todo","(empty)","猫"]}`},
+		databasePackageProperty{ID: "tags_source", Name: "Tags", Type: "multi_select", Position: p.Properties[len(p.Properties)-1].Position+2, Visible: false, Config: `{"options":["a,b","猫","Todo"]}`},
+	)
+	p.Records[0].Values["status_source"] = json.RawMessage(`"Done"`)
+	p.Records[0].Values["tags_source"] = json.RawMessage(`["猫","a,b"]`)
+	p.Records[1].Values["status_source"] = json.RawMessage(`null`)
+	p.Records[1].Values["tags_source"] = json.RawMessage(`[]`)
+	p.Views = append(p.Views, databasePackageView{Name: "Status board", Type: "board", Position: p.Views[len(p.Views)-1].Position+1, Config: `{"groupBy":"status_source","filterTree":{"kind":"group","join":"and","children":[{"kind":"rule","propertyId":"tags_source","operator":"contains","value":"猫"}]}}`})
+	raw, err = json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err = decodeDatabasePackage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, key := databasePackageDigest(raw), "select_roundtrip_receipt_12345"
+	copy, err := a.importDatabasePackage(context.Background(), p, digest, key)
+	if err != nil || copy.DatabaseID == source.DatabaseID {
+		t.Fatal("copy failed", err)
+	}
+	check := func(a *AppContext) {
+		t.Helper()
+		raw, err := a.exportDatabasePackage(context.Background(), copy.DatabaseID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q, err := decodeDatabasePackage(raw)
+		if err != nil || q.Version != 2 || len(q.Properties) != len(p.Properties) {
+			t.Fatal("v2 re-export failed", err)
+		}
+		status, tags := q.Properties[len(q.Properties)-2], q.Properties[len(q.Properties)-1]
+		if status.ID == "status_source" || tags.ID == "tags_source" || status.Config != p.Properties[len(p.Properties)-2].Config || tags.Config != p.Properties[len(p.Properties)-1].Config || tags.Visible {
+			t.Fatal("choices or metadata changed", status, tags)
+		}
+		for i, expected := range p.Records {
+			for oldID, newID := range map[string]string{"status_source": status.ID, "tags_source": tags.ID} {
+				if !bytes.Equal(q.Records[i].Values[newID], expected.Values[oldID]) {
+					t.Fatal("choice value changed", i, oldID, string(q.Records[i].Values[newID]))
+				}
+			}
+		}
+		cfg, err := rewritePackageView(p.Views[len(p.Views)-1], map[string]string{"status_source": status.ID, "tags_source": tags.ID})
+		if err != nil || q.Views[len(q.Views)-1].Config != cfg {
+			t.Fatal("choice view not remapped", err)
+		}
+		retry, err := a.importDatabasePackage(context.Background(), p, digest, key)
+		if err != nil || retry != copy {
+			t.Fatal("retry duplicated copy", err)
+		}
+	}
+	check(a)
+	a.DB.Close()
+	a.DB, err = initializeDatabase(a.RootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(a)
+	archive, err := a.createWorkspaceArchive(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := restoreWorkspaceArchive(context.Background(), archive, filepath.Join(t.TempDir(), "restored"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := initializeDatabase(restored.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	check(&AppContext{DB: db, RootPath: restored.Root})
+	original, err := a.exportDatabasePackage(context.Background(), source.DatabaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeDatabasePackage(original)
+	if err != nil || decoded.Version != 1 {
+		t.Fatal("source changed", err)
+	}
+}
+
+func TestDatabasePackageSelectRejectsInvalidConfigAndValues(t *testing.T) {
+	a := setupTestContext(t)
+	defer a.DB.Close()
+	_, raw := databaseTransferFixture(t, a)
+	for _, tc := range []struct {
+		name, kind, config, value string
+		version                   int
+	}{
+		{"old format", "select", `{"options":["A"]}`, `"A"`, 1},
+		{"unknown config", "select", `{"options":["A"],"color":"red"}`, `"A"`, 2},
+		{"duplicate config keys", "select", `{"options":["A"],"options":["B"]}`, `"A"`, 2},
+		{"duplicate options", "select", `{"options":["A","A"]}`, `"A"`, 2},
+		{"null config", "select", `null`, `"A"`, 2},
+		{"null options", "select", `{"options":null}`, `"A"`, 2},
+		{"empty option", "select", `{"options":[""]}`, `""`, 2},
+		{"wrong select type", "select", `{"options":["A"]}`, `["A"]`, 2},
+		{"unknown choice", "select", `{"options":["A"]}`, `"B"`, 2},
+		{"wrong multi type", "multi_select", `{"options":["A"]}`, `"A"`, 2},
+		{"wrong multi item", "multi_select", `{"options":["A"]}`, `[1]`, 2},
+		{"unknown multi choice", "multi_select", `{"options":["A"]}`, `["A","B"]`, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := decodeDatabasePackage(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.Version = tc.version
+			p.Properties = append(p.Properties, databasePackageProperty{ID: "choice", Name: "Choice", Type: tc.kind, Position: p.Properties[len(p.Properties)-1].Position+1, Visible: true, Config: tc.config})
+			p.Records[0].Values["choice"] = json.RawMessage(tc.value)
+			if _, err := a.importDatabasePackage(context.Background(), p, "invalid_select_digest", "invalid_select_receipt_12345"); err == nil {
+				t.Fatal("invalid configured choice accepted")
+			}
+		})
+	}
+	var count int
+	if err := a.DB.QueryRow("SELECT count(*) FROM databases").Scan(&count); err != nil || count != 1 {
+		t.Fatal("invalid choices wrote data", count, err)
+	}
+	// Even a silent storage rewrite of options must abort the transaction.
+	p, err := decodeDatabasePackage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Version = 2
+	p.Properties = append(p.Properties, databasePackageProperty{ID: "choice", Name: "Choice", Type: "select", Position: p.Properties[len(p.Properties)-1].Position+1, Visible: true, Config: `{"options":["A"]}`})
+	p.Records[0].Values["choice"] = json.RawMessage(`"A"`)
+	if _, err := a.DB.Exec(`CREATE TRIGGER corrupt_choice AFTER INSERT ON db_properties WHEN NEW.type='select' BEGIN UPDATE db_properties SET config='{}' WHERE id=NEW.id; END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.importDatabasePackage(context.Background(), p, "corrupt_choice_digest", "corrupt_choice_receipt_12345"); err == nil {
+		t.Fatal("changed configuration committed")
+	}
+	if err := a.DB.QueryRow("SELECT count(*) FROM databases").Scan(&count); err != nil || count != 1 {
+		t.Fatal("failed choice import survived", count, err)
+	}
+	var receipts int
+	if err := a.DB.QueryRow("SELECT count(*) FROM app_state WHERE key LIKE 'database_package:%'").Scan(&receipts); err != nil || receipts != 0 {
+		t.Fatal("failed choice receipt survived", receipts, err)
+	}
+}

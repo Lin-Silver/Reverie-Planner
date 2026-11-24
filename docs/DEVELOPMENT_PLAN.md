@@ -323,3 +323,23 @@ field and removal checkbox; the corrected test uses the exact accessible name.
 Unchanged legacy entries with older defaults are retained while another provider
 is edited. The follow-up commit updates documentation only; it does not close the
 remaining Notion migration, 10,000-record performance or manual release gates.
+
+## 2026-11-24 — Configured choice database transfer (M2)
+
+Starting checkpoint: `5885ce889c73f475cf07529d057141fde4f113e1`,
+[CI 45351730285](https://github.com/Lin-Silver/Reverie-Planner/actions/runs/45351730285)
+in progress when reviewed; Linux/macOS backend, vet, build and lint had passed.
+The preceding Markdown path validation increment rejects ambiguous implicit and
+explicit directory trees and adds no-write/repair regressions.
+
+Database package version 2 now supports select/multi_select definitions, ordered
+options and values, existing view reference remapping and transactional schema
+readback. Scalar-only version 1 remains supported and exported unchanged. Preview
+shows choice options and unambiguous arrays. New synthetic backend tests cover
+roundtrip, restart, archive, retry, invalid config/value rejection and rollback;
+new browser coverage exercises real choice fields, download, preview, copy,
+reload and independent editing. These are implemented tests, not a pass claim.
+Native verification of this increment is pending its own exact source SHA.
+No real historical backups or provider credentials are used. M2 remains open for
+attachments, advanced dependency fields, integrated Notion ZIP and complete
+reversible export; M3–M5 acceptance gates are unchanged. Do not promote main.

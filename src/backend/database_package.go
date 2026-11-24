@@ -25,6 +25,7 @@ type databasePackageProperty struct {
 	Type     string `json:"type"`
 	Position int    `json:"position"`
 	Visible  bool   `json:"visible"`
+	Config   string `json:"config,omitempty"`
 }
 type databasePackageView struct {
 	Name     string `json:"name"`
@@ -173,8 +174,42 @@ func rewritePackageView(view databasePackageView, ids map[string]string) (string
 	return string(result), nil
 }
 
+// Version 1 remains the original scalar-only wire contract. Version 2 adds
+// select option metadata without changing the meaning of any scalar field.
+func packagePropertyConfig(prop databasePackageProperty) string {
+	if prop.Config == "" {
+		return "{}"
+	}
+	return prop.Config
+}
+
+func validatePackageSelectConfig(config string) error {
+	if err := validatePropertyDefinition("select", config); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(config), &fields); err != nil || fields == nil {
+		return errors.New("select configuration must be an object")
+	}
+	for key, raw := range fields {
+		if key != "options" {
+			return fmt.Errorf("unsupported select configuration %q; use a workspace archive", key)
+		}
+		var options []string
+		if err := json.Unmarshal(raw, &options); err != nil || options == nil {
+			return errors.New("select options must be a string array")
+		}
+		for _, option := range options {
+			if strings.ContainsRune(option, '\x00') {
+				return errors.New("select options must not contain NUL")
+			}
+		}
+	}
+	return nil
+}
+
 func validateDatabasePackage(p databasePackage) error {
-	if p.Format != "reverie-database" || p.Version != 1 {
+	if p.Format != "reverie-database" || (p.Version != 1 && p.Version != 2) {
 		return errors.New("unsupported database package format/version")
 	}
 	if len(p.Properties) < 1 || len(p.Properties) > 32 || len(p.Views) < 1 || len(p.Views) > 32 || p.Records == nil || len(p.Records) > 1000 {
@@ -188,6 +223,8 @@ func validateDatabasePackage(p databasePackage) error {
 	}
 	ids := map[string]string{}
 	kinds := map[string]string{}
+	configs := map[string]string{}
+	hasSelect := false
 	titles := 0
 	for index, prop := range p.Properties {
 		if index > 0 && prop.Position <= p.Properties[index-1].Position {
@@ -200,11 +237,26 @@ func validateDatabasePackage(p databasePackage) error {
 		case "title":
 			titles++
 		case "text", "number", "checkbox", "date", "url", "email":
+		case "select", "multi_select":
+			if p.Version != 2 {
+				return errors.New("select fields require database package version 2")
+			}
+			if err := validatePackageSelectConfig(packagePropertyConfig(prop)); err != nil {
+				return fmt.Errorf("property %q: %w", prop.Name, err)
+			}
+			hasSelect = true
 		default:
 			return fmt.Errorf("unsupported property type %q; use a workspace archive", prop.Type)
 		}
+		if prop.Type != "select" && prop.Type != "multi_select" && prop.Config != "" {
+			return errors.New("configured scalar properties require a workspace archive")
+		}
 		ids[prop.ID] = prop.ID
 		kinds[prop.ID] = prop.Type
+		configs[prop.ID] = packagePropertyConfig(prop)
+	}
+	if p.Version == 2 && !hasSelect {
+		return errors.New("unsupported database package: version 2 requires a select field")
 	}
 	if titles != 1 {
 		return errors.New("package requires exactly one title property")
@@ -254,6 +306,23 @@ func validateDatabasePackage(p databasePackage) error {
 			case "checkbox":
 				if _, ok := value.(bool); !ok {
 					return errors.New("checkbox must be boolean")
+				}
+			case "select", "multi_select":
+				if err := validatePropertyValue(kind, value); err != nil {
+					return err
+				}
+				if err := validateConfiguredPropertyValue(kind, configs[id], value); err != nil {
+					return err
+				}
+				if label, ok := value.(string); ok && strings.ContainsRune(label, '\x00') {
+					return errors.New("select values must not contain NUL")
+				}
+				if labels, ok := value.([]any); ok {
+					for _, label := range labels {
+						if strings.ContainsRune(label.(string), '\x00') {
+							return errors.New("select values must not contain NUL")
+						}
+					}
 				}
 			default:
 				s, ok := value.(string)
@@ -354,11 +423,20 @@ func (a *AppContext) exportDatabasePackage(ctx context.Context, id string) ([]by
 	}
 	for _, prop := range db.Properties {
 		budget += len(prop.ID) + len(prop.Name) + len(prop.Config)
-		var cfg map[string]any
-		if json.Unmarshal([]byte(prop.Config), &cfg) != nil || cfg == nil || len(cfg) != 0 {
-			return nil, errors.New("configured properties require a workspace archive")
+		field := databasePackageProperty{ID: prop.ID, Name: prop.Name, Type: prop.Type, Position: prop.Position, Visible: prop.Visible}
+		if prop.Type == "select" || prop.Type == "multi_select" {
+			p.Version = 2
+			field.Config = prop.Config
+			if err := validatePackageSelectConfig(packagePropertyConfig(field)); err != nil {
+				return nil, fmt.Errorf("property %q: %w", prop.Name, err)
+			}
+		} else {
+			var cfg map[string]any
+			if json.Unmarshal([]byte(prop.Config), &cfg) != nil || cfg == nil || len(cfg) != 0 {
+				return nil, errors.New("configured properties require a workspace archive")
+			}
 		}
-		p.Properties = append(p.Properties, databasePackageProperty{prop.ID, prop.Name, prop.Type, prop.Position, prop.Visible})
+		p.Properties = append(p.Properties, field)
 	}
 	for _, view := range db.Views {
 		budget += len(view.Config) + len(view.Name)
@@ -512,7 +590,7 @@ func (a *AppContext) importDatabasePackage(ctx context.Context, p databasePackag
 		return result, err
 	}
 	for _, prop := range p.Properties {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO db_properties(id,database_id,name,type,config,position,visible,version) VALUES(?,?,?,?,'{}',?,?,1)`, properties[prop.ID], result.DatabaseID, prop.Name, prop.Type, prop.Position, prop.Visible); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO db_properties(id,database_id,name,type,config,position,visible,version) VALUES(?,?,?,?,?,?,?,1)`, properties[prop.ID], result.DatabaseID, prop.Name, prop.Type, packagePropertyConfig(prop), prop.Position, prop.Visible); err != nil {
 			return result, err
 		}
 	}
@@ -571,7 +649,7 @@ func (a *AppContext) importDatabasePackage(ctx context.Context, p databasePackag
 		found := false
 		for _, q := range actual.Properties {
 			if q.ID == properties[prop.ID] {
-				found = q.Name == prop.Name && q.Type == prop.Type && q.Config == "{}" && q.Position == prop.Position && q.Visible == prop.Visible
+				found = q.Name == prop.Name && q.Type == prop.Type && q.Config == packagePropertyConfig(prop) && q.Position == prop.Position && q.Visible == prop.Visible
 			}
 		}
 		if !found {

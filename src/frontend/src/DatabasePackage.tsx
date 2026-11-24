@@ -1,7 +1,15 @@
 import {useEffect, useRef, useState} from 'react'
 
-type Property = {id:string;name:string;type:string;visible:boolean}
+type Property = {id:string;name:string;type:string;visible:boolean;config?:string}
 type Preview = {digest:string;title:string;properties:Property[];views:{name:string;type:string}[];records:number;sample:{page:{title:string};values:Record<string,unknown>}[]}
+function choiceOptions(property:Property):string[] {
+ if(property.type!=='select'&&property.type!=='multi_select')return []
+ try{const config=JSON.parse(property.config||'{}') as {options?:string[]};return config.options||[]}catch{return []}
+}
+function sampleValue(value:unknown):string {
+ if(value===null||value===undefined)return '∅ (empty)'
+ return Array.isArray(value)?JSON.stringify(value):String(value)
+}
 export default function DatabasePackage({onImported}:{onImported:()=>Promise<void>}) {
  const [databases,setDatabases]=useState<{id:string;title:string}[]>([])
  const [selected,setSelected]=useState('')
@@ -52,7 +60,7 @@ export default function DatabasePackage({onImported}:{onImported:()=>Promise<voi
  return <section className="archive-panel database-transfer" aria-label="Database package transfer" aria-busy={!!busy} data-input={inputMode} onPointerDown={()=>setInputMode('pointer')} onKeyDown={()=>setInputMode('keyboard')}>
   <div className="section-heading"><h3>Transfer a database</h3><span>Typed records and independent views</span></div>
   <p>Move a saved database as a readable JSON file. Field types, display order, visibility, record writing and supported view settings stay together. Preview before creating an independent copy.</p>
-  <details><summary>Supported content and limits</summary><p>Up to 1,000 live records, 32 fields, 32 views and 16 MB per file. Title, Text, Number, Checkbox, Date, URL and Email fields with default configuration are supported. Relations, formulas, select fields, attachments, nested pages, covers and unknown view settings block export. Only links between included backing pages travel. History, trash, project membership and linked pages elsewhere stay in the original workspace. Use a full workspace archive for them. Unsaved writing is not included.</p></details>
+  <details><summary>Supported content and limits</summary><p>Up to 1,000 live records, 32 fields, 32 views and 16 MB per file. Title, Text, Number, Checkbox, Date, URL and Email fields with default configuration are supported, as are Select and Multi-select with ordered choices (version 2). Relations, formulas, other configured fields, attachments, nested pages, covers and unknown view settings block export. Only links between included backing pages travel. History, trash, project membership and linked pages elsewhere stay in the original workspace. Use a full workspace archive for them. Unsaved writing is not included.</p></details>
   <h4>Download a saved database</h4>
   <label className="archive-file-label">Database to export<select aria-label="Database to export" value={selected} disabled={!!busy} onChange={e=>setSelected(e.target.value)}><option value="">Choose a saved database</option>{databases.map(database=><option key={database.id} value={database.id}>{database.title} · {database.id}</option>)}</select></label>
   <div className="row archive-actions"><button className="btn" disabled={!selected||!!busy} onClick={()=>void run('export')}>{busy==='export'?'Preparing database…':'Download database package'}</button><button className="btn quiet" disabled={!!busy} onClick={()=>{setError('');setLoadAttempt(value=>value+1)}}>Reload database choices</button></div>
@@ -65,7 +73,7 @@ export default function DatabasePackage({onImported}:{onImported:()=>Promise<voi
    setFile(next)
   }}/></label>
   <div className="row archive-actions"><button className="btn" disabled={!file||!!busy||complete} onClick={()=>void run('preview')}>{busy==='preview'?'Reading database…':'Preview database package'}</button>{preview&&<button className="btn primary" disabled={!!busy||complete} onClick={()=>void run('import')}>{busy==='import'?'Importing database…':'Import database copy'}</button>}</div>
-  {preview&&<div className="archive-preview" aria-label="Database package preview"><h4>{preview.title}</h4><p><strong>{preview.records} records</strong> · {preview.properties.length} fields · {preview.views.length} views</p><ul>{preview.properties.map(property=><li key={property.id}>{property.name} · {property.type}{property.visible?'':' · hidden'}</li>)}</ul><p>Views: {preview.views.map(view=>`${view.name} (${view.type})`).join(', ')}</p><div className="csv-sample" tabIndex={0} role="region" aria-label="Database package sample"><table><caption>First {preview.sample.length} records</caption><thead><tr>{preview.properties.map(property=><th scope="col" key={property.id}>{property.name}</th>)}</tr></thead><tbody>{preview.sample.map((record,index)=><tr key={index}>{preview.properties.map(property=><td key={property.id}>{property.type==='title'?record.page.title:record.values[property.id]===null||record.values[property.id]===undefined?'∅ (empty)':String(record.values[property.id])}</td>)}</tr>)}</tbody></table></div></div>}
+  {preview&&<div className="archive-preview" aria-label="Database package preview"><h4>{preview.title}</h4><p><strong>{preview.records} records</strong> · {preview.properties.length} fields · {preview.views.length} views</p><ul>{preview.properties.map(property=><li key={property.id}>{property.name} · {property.type}{property.visible?'':' · hidden'}{choiceOptions(property).length>0&&<span> · Options: {choiceOptions(property).map(option=>JSON.stringify(option)).join(', ')}</span>}</li>)}</ul><p>Views: {preview.views.map(view=>`${view.name} (${view.type})`).join(', ')}</p><div className="csv-sample" tabIndex={0} role="region" aria-label="Database package sample"><table><caption>First {preview.sample.length} records</caption><thead><tr>{preview.properties.map(property=><th scope="col" key={property.id}>{property.name}</th>)}</tr></thead><tbody>{preview.sample.map((record,index)=><tr key={index}>{preview.properties.map(property=><td key={property.id}>{property.type==='title'?record.page.title:sampleValue(record.values[property.id])}</td>)}</tr>)}</tbody></table></div></div>}
   <p className="transfer-status" role="status" tabIndex={-1} ref={status}>{busy==='export'?'Preparing the saved database…':busy==='preview'?'Checking fields, records and view references…':busy==='import'?'Creating the independent copy…':notice||'Choose a database to download, or a package to preview.'}</p>{error&&<p role="alert">{error}{!complete&&' If an import response was interrupted, retry with the same selected file to retrieve the completed copy.'}</p>}
  </section>
 }
