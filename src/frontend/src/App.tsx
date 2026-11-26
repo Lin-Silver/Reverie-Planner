@@ -16,6 +16,7 @@ type Provider = { id: string; label: string; provider: string; baseURL: string; 
 type TaskDraft = { projectId: string; title: string; description: string; status: TaskStatus; priority: Priority; dueDate: string; assignee: string }
 type ChatMessage = { role: 'user' | 'assistant'; content: string; id: string }
 type Page = { id: string; projectId?: string; workspace: boolean; parentId?: string; linkedDatabaseId?: string; linkedViewId?: string; title: string; icon?: string; cover?: string; content: string; version?: number; createdBy: string; createdAt: string; updatedAt: string }
+type Template = { id: string; name: string; title: string; icon: string; content: string }
 type Cycle = { id: string; projectId: string; name: string; description?: string; startDate?: string; endDate?: string; status: string; createdAt: string }
 type Module = { id: string; projectId: string; name: string; description?: string; status: string; lead?: string; startDate?: string; endDate?: string; createdAt: string }
 type Notification = { id: string; title: string; body?: string; type: string; read: boolean; createdAt: string }
@@ -55,6 +56,7 @@ export default function App() {
   const [pages, setPages] = useState<Page[]>([])
   const [favorites, setFavorites] = useState<string[]>([])
   const [recent, setRecent] = useState<string[]>([])
+  const [templates, setTemplates] = useState<Template[]>([])
   const [cycles, setCycles] = useState<Cycle[]>([])
   const [modules, setModules] = useState<Module[]>([])
   const [intake, setIntake] = useState<IntakeItem[]>([])
@@ -194,7 +196,7 @@ export default function App() {
 
   const refresh = async () => {
     try {
-      const [pr, tk, ov, pv, pg, cy, mo, it, nt, sk, dr, an, ws, mb, fav, rec] = await Promise.all([
+      const [pr, tk, ov, pv, pg, cy, mo, it, nt, sk, dr, an, ws, mb, fav, rec, tpl] = await Promise.all([
         apiFetch<Project[]>('/api/projects'),
         apiFetch<Task[]>('/api/tasks'),
         apiFetch<Overview>('/api/overview'),
@@ -211,10 +213,11 @@ export default function App() {
         apiFetch<any[]>('/api/members'),
         apiFetch<{ ids: string[] }>('/api/pages/favorites'),
         apiFetch<{ ids: string[] }>('/api/pages/recent'),
+        apiFetch<{ templates: Template[] }>('/api/templates'),
       ])
       setProjects(pr); setTasks(tk); setOverview(ov); setProviders(pv)
       setPages(pg); setCycles(cy); setModules(mo); setIntake(it); setNotifications(nt); setStickies(sk); setDrafts(dr); setAnalytics(an); setWorkspaces(ws); setMembers(mb)
-      setFavorites(fav.ids || []); setRecent(rec.ids || [])
+      setFavorites(fav.ids || []); setRecent(rec.ids || []); setTemplates(tpl.templates || [])
       setSelectedProvider((c) => c || pv.find((p) => p.enabled)?.id || pv[0]?.id || '')
       setError('')
     } catch (e) { setError((e as Error).message) }
@@ -330,6 +333,23 @@ export default function App() {
   }
   const clearRecent = async () => {
     try { const r = await apiFetch<{ ids: string[] }>('/api/pages/recent', { method: 'DELETE' }); setRecent(r.ids || []) } catch (e) { setError((e as Error).message) }
+  }
+  const createPageFromTemplate = async (tpl: Template) => {
+    try {
+      const created = await apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title: tpl.title || tpl.name, icon: tpl.icon || '', content: tpl.content || '', workspace: true, createdBy: 'You' }) })
+      await refresh()
+      setSelectedPage(created.id)
+      await openPageEditor(created)
+    } catch (e) { setError((e as Error).message) }
+  }
+  const savePageAsTemplate = async () => {
+    if (!pageEditor) return
+    const name = window.prompt('Template name', pageEditor.title || 'Template')
+    if (!name) return
+    try {
+      await apiFetch('/api/templates', { method: 'POST', body: JSON.stringify({ name, title: pageDraft.title || pageEditor.title || name, icon: pageEditor.icon || '', content: pageDraft.content || pageEditor.content }) })
+      await refresh()
+    } catch (e) { setError((e as Error).message) }
   }
 
   const createCycle = async () => {
@@ -510,6 +530,16 @@ export default function App() {
         }
         return roots.map((p) => renderNode(p, 0))
       })()}
+      <div className="nav-section">Templates</div>
+      <div data-testid="templates-section">
+        {templates.length === 0 && <div className="empty" style={{ padding: '4px 8px', fontSize: 12 }}>No templates yet</div>}
+        {templates.map((tpl) => (
+          <div key={tpl.id} className="side-link" data-testid="template-item" onClick={() => createPageFromTemplate(tpl)}>
+            <span style={{ marginRight: 4 }}>{tpl.icon || '📄'}</span>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tpl.name}</span>
+          </div>
+        ))}
+      </div>
       <div className="nav-section">AI</div>
       <div className={`nav-item ${view === 'assistant' ? 'active' : ''}`} onClick={() => setView('assistant')}>🤖 Assistant</div>
       <div className={`nav-item ${view === 'settings' ? 'active' : ''}`} onClick={() => setView('settings')}>⚙️ Settings</div>
@@ -562,6 +592,7 @@ export default function App() {
           </div>
           <div className="row">
             {pageEditor && <button className="btn" data-testid="favorite-toggle" onClick={() => toggleFavorite(pageEditor.id)}>{favorites.includes(pageEditor.id) ? '★ Favorited' : '☆ Favorite'}</button>}
+            {pageEditor && <button className="btn" data-testid="save-template" onClick={savePageAsTemplate}>Save as template</button>}
             {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
             {pageEditor && <button className="btn" onClick={async () => {
               try {
