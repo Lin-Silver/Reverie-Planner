@@ -1333,7 +1333,7 @@ func (a *AppContext) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost {
 		var payload map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		if err := decodeJSONBody(r, &payload); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid settings payload")
 			return
 		}
@@ -1372,7 +1372,7 @@ func (a *AppContext) handleProviderSettings(w http.ResponseWriter, r *http.Reque
 	}
 	if r.Method == http.MethodPost {
 		var inputs []providerInput
-		if err := json.NewDecoder(r.Body).Decode(&inputs); err != nil {
+		if err := decodeJSONBody(r, &inputs); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid provider payload")
 			return
 		}
@@ -1426,7 +1426,7 @@ func (a *AppContext) handleAIPing(w http.ResponseWriter, r *http.Request) {
 		ProviderID string     `json:"providerId"`
 		Provider   AIProvider `json:"provider"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid connection test payload")
 		return
 	}
@@ -1878,11 +1878,11 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 }
 
 func decodeJSONRequest(r *http.Request, target any) (map[string]json.RawMessage, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, (4<<20)+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxJSONBodyBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(body) > 4<<20 {
+	if len(body) > maxJSONBodyBytes {
 		return nil, errors.New("request body is too large")
 	}
 	fields := make(map[string]json.RawMessage)

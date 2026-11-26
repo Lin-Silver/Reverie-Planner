@@ -54,5 +54,6 @@ The suite uses real SQLite-backed HTTP requests and browser interaction, not moc
 - More complete bidirectional relation, person/file and rollup lifecycle, formula dependency semantics and deletion policy.
 - Complete view arrangement, Gallery cover configuration, accessibility/responsive audits and linked-view independence.
 - Backup/restore compatibility across every historic migration and full manual Windows user testing; CI only is insufficient.
+- API JSON normalization now also covers the previously raw `handleSettings`, `handleProviderSettings` and `handleAIPing` decode paths (duplicate keys, trailing values and wrong top-level shapes rejected before writes), and the migration-created indexes are guarded by `EXPLAIN QUERY PLAN` tests; synthetic v6/v7 upgrade coverage was enriched (nested pages, database content, attachment bytes). Real historical v6/v7 production backup acceptance remains blocked on owner-supplied fixtures and is not yet verified.
 
 The broader feature checklist and exact required exit criteria remain in [DATABASE_COMPLETION_PLAN.md](DATABASE_COMPLETION_PLAN.md). **PR #2 is not yet approved for merge.**
