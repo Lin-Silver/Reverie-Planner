@@ -53,6 +53,8 @@ export default function App() {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [providers, setProviders] = useState<Provider[]>([])
   const [pages, setPages] = useState<Page[]>([])
+  const [favorites, setFavorites] = useState<string[]>([])
+  const [recent, setRecent] = useState<string[]>([])
   const [cycles, setCycles] = useState<Cycle[]>([])
   const [modules, setModules] = useState<Module[]>([])
   const [intake, setIntake] = useState<IntakeItem[]>([])
@@ -192,7 +194,7 @@ export default function App() {
 
   const refresh = async () => {
     try {
-      const [pr, tk, ov, pv, pg, cy, mo, it, nt, sk, dr, an, ws, mb] = await Promise.all([
+      const [pr, tk, ov, pv, pg, cy, mo, it, nt, sk, dr, an, ws, mb, fav, rec] = await Promise.all([
         apiFetch<Project[]>('/api/projects'),
         apiFetch<Task[]>('/api/tasks'),
         apiFetch<Overview>('/api/overview'),
@@ -207,9 +209,12 @@ export default function App() {
         apiFetch<any>('/api/analytics'),
         apiFetch<any[]>('/api/workspaces'),
         apiFetch<any[]>('/api/members'),
+        apiFetch<{ ids: string[] }>('/api/pages/favorites'),
+        apiFetch<{ ids: string[] }>('/api/pages/recent'),
       ])
       setProjects(pr); setTasks(tk); setOverview(ov); setProviders(pv)
       setPages(pg); setCycles(cy); setModules(mo); setIntake(it); setNotifications(nt); setStickies(sk); setDrafts(dr); setAnalytics(an); setWorkspaces(ws); setMembers(mb)
+      setFavorites(fav.ids || []); setRecent(rec.ids || [])
       setSelectedProvider((c) => c || pv.find((p) => p.enabled)?.id || pv[0]?.id || '')
       setError('')
     } catch (e) { setError((e as Error).message) }
@@ -305,11 +310,26 @@ export default function App() {
       setPageDatabaseId(found ? found.id : '')
       setPageDatabaseViewId(openedFull?.linkedViewId || '')
     } catch {}
+    if (openedId) void recordRecent(openedId)
     setView('page')
   }
   const deletePage = async (id: string) => {
     if (!confirm('Delete this page?')) return
     try { await apiFetch('/api/pages', { method: 'DELETE', body: JSON.stringify({ id }) }); setView('home'); await refresh() } catch (e) { setError((e as Error).message) }
+  }
+
+  const recordRecent = async (id: string) => {
+    try { const r = await apiFetch<{ ids: string[] }>('/api/pages/recent', { method: 'POST', body: JSON.stringify({ id }) }); setRecent(r.ids || []) } catch {}
+  }
+  const toggleFavorite = async (id: string) => {
+    try {
+      const isFav = favorites.includes(id)
+      const r = await apiFetch<{ ids: string[] }>(`/api/pages/favorites${isFav ? `?id=${encodeURIComponent(id)}` : ''}`, { method: isFav ? 'DELETE' : 'POST', body: isFav ? undefined : JSON.stringify({ id }) })
+      setFavorites(r.ids || [])
+    } catch (e) { setError((e as Error).message) }
+  }
+  const clearRecent = async () => {
+    try { const r = await apiFetch<{ ids: string[] }>('/api/pages/recent', { method: 'DELETE' }); setRecent(r.ids || []) } catch (e) { setError((e as Error).message) }
   }
 
   const createCycle = async () => {
@@ -417,6 +437,41 @@ export default function App() {
       <div className="nav-section">Knowledge</div>
       <div className={`nav-item ${view === 'stickies' ? 'active' : ''}`} onClick={() => setView('stickies')}>📌 Stickies</div>
       <div className={`nav-item ${view === 'drafts' ? 'active' : ''}`} onClick={() => setView('drafts')}>📝 Drafts</div>
+      {favorites.length > 0 && (
+        <>
+          <div className="nav-section">Favorites</div>
+          <div data-testid="favorites-section">
+            {favorites.map((id) => {
+              const p = pages.find((x) => x.id === id)
+              if (!p) return null
+              return (
+                <div key={id} className={`tree-item ${selectedPage === id ? 'active' : ''}`} onClick={() => { setSelectedPage(id); openPageEditor(p) }}>
+                  <span style={{ marginRight: 4 }}>{p.icon || '📄'}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+      {recent.length > 0 && (
+        <>
+          <div className="nav-section">Recent</div>
+          <div data-testid="recent-section">
+            {recent.map((id) => {
+              const p = pages.find((x) => x.id === id)
+              if (!p) return null
+              return (
+                <div key={id} className={`tree-item ${selectedPage === id ? 'active' : ''}`} onClick={() => { setSelectedPage(id); openPageEditor(p) }}>
+                  <span style={{ marginRight: 4 }}>{p.icon || '📄'}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
+                </div>
+              )
+            })}
+            <button className="btn" data-testid="clear-recent" style={{ padding: '0 6px', fontSize: 11, marginTop: 4 }} onClick={clearRecent}>Clear</button>
+          </div>
+        </>
+      )}
       <div className="nav-section">Pages</div>
       {(() => {
         const roots = pages.filter((p) => p.workspace && !p.parentId)
@@ -506,6 +561,7 @@ export default function App() {
             })()}
           </div>
           <div className="row">
+            {pageEditor && <button className="btn" data-testid="favorite-toggle" onClick={() => toggleFavorite(pageEditor.id)}>{favorites.includes(pageEditor.id) ? '★ Favorited' : '☆ Favorite'}</button>}
             {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
             {pageEditor && <button className="btn" onClick={async () => {
               try {
