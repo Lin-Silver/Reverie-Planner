@@ -445,7 +445,7 @@ export default function App() {
               const p = pages.find((x) => x.id === id)
               if (!p) return null
               return (
-                <div key={id} className={`tree-item ${selectedPage === id ? 'active' : ''}`} onClick={() => { setSelectedPage(id); openPageEditor(p) }}>
+                <div key={id} className={`side-link ${selectedPage === id ? 'active' : ''}`} onClick={() => { setSelectedPage(id); openPageEditor(p) }}>
                   <span style={{ marginRight: 4 }}>{p.icon || '📄'}</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
                 </div>
@@ -462,7 +462,7 @@ export default function App() {
               const p = pages.find((x) => x.id === id)
               if (!p) return null
               return (
-                <div key={id} className={`tree-item ${selectedPage === id ? 'active' : ''}`} onClick={() => { setSelectedPage(id); openPageEditor(p) }}>
+                <div key={id} className={`side-link ${selectedPage === id ? 'active' : ''}`} onClick={() => { setSelectedPage(id); openPageEditor(p) }}>
                   <span style={{ marginRight: 4 }}>{p.icon || '📄'}</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</span>
                 </div>
