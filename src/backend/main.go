@@ -235,6 +235,7 @@ func main() {
 	mux.HandleFunc("/api/pages/move", ctx.handlePageMove)
 	mux.HandleFunc("/api/pages/favorites", ctx.handlePageFavorites)
 	mux.HandleFunc("/api/pages/recent", ctx.handlePageRecent)
+	mux.HandleFunc("/api/templates", ctx.handleTemplates)
 	mux.HandleFunc("/api/pages", ctx.handlePages)
 	mux.HandleFunc("/api/comments", ctx.handleComments)
 	mux.HandleFunc("/api/activity", ctx.handleActivity)
