@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,14 +25,14 @@ type DBProperty struct {
 }
 
 type DBRecord struct {
-	ID         string            `json:"id"`
-	DatabaseID string            `json:"databaseId"`
-	Title      string            `json:"title"`
-	PageID     string            `json:"pageId,omitempty"`
-	Values     map[string]any    `json:"values,omitempty"`
-	Version    int               `json:"version"`
-	CreatedAt  string            `json:"createdAt"`
-	UpdatedAt  string            `json:"updatedAt"`
+	ID         string         `json:"id"`
+	DatabaseID string         `json:"databaseId"`
+	Title      string         `json:"title"`
+	PageID     string         `json:"pageId,omitempty"`
+	Values     map[string]any `json:"values,omitempty"`
+	Version    int            `json:"version"`
+	CreatedAt  string         `json:"createdAt"`
+	UpdatedAt  string         `json:"updatedAt"`
 }
 
 type DBView struct {
@@ -45,15 +46,15 @@ type DBView struct {
 }
 
 type Database struct {
-	ID        string       `json:"id"`
-	PageID    string       `json:"pageId"`
-	Title     string       `json:"title"`
-	Icon      string       `json:"icon"`
+	ID         string       `json:"id"`
+	PageID     string       `json:"pageId"`
+	Title      string       `json:"title"`
+	Icon       string       `json:"icon"`
 	Properties []DBProperty `json:"properties"`
-	Views     []DBView     `json:"views"`
-	Version   int          `json:"version"`
-	CreatedAt string       `json:"createdAt"`
-	UpdatedAt string       `json:"updatedAt"`
+	Views      []DBView     `json:"views"`
+	Version    int          `json:"version"`
+	CreatedAt  string       `json:"createdAt"`
+	UpdatedAt  string       `json:"updatedAt"`
 }
 
 func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +75,10 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rows, err := a.DB.Query(`SELECT id, page_id, title, icon, version, created_at, updated_at FROM databases WHERE deleted_at IS NULL ORDER BY created_at ASC`)
-		if err != nil { writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		type rawDB struct {
 			d       Database
 			icon    sql.NullString
@@ -84,7 +88,11 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 		var raws []rawDB
 		for rows.Next() {
 			var r rawDB
-			if err := rows.Scan(&r.d.ID, &r.d.PageID, &r.d.Title, &r.icon, &r.d.Version, &r.created, &r.updated); err != nil { rows.Close(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+			if err := rows.Scan(&r.d.ID, &r.d.PageID, &r.d.Title, &r.icon, &r.d.Version, &r.created, &r.updated); err != nil {
+				rows.Close()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
 			raws = append(raws, r)
 		}
 		if err := rows.Err(); err != nil {
@@ -100,15 +108,24 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 			d.CreatedAt = r.created
 			d.UpdatedAt = r.updated
 			d.Properties, err = a.listProperties(d.ID)
-			if err != nil { writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+			if err != nil {
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
 			d.Views, err = a.listViews(d.ID)
-			if err != nil { writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
+			if err != nil {
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
 			out = append(out, d)
 		}
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var d Database
-		if _, err := decodeJSONRequest(r, &d); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
+		if _, err := decodeJSONRequest(r, &d); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid request JSON"})
+			return
+		}
 		if d.Title == "" {
 			d.Title = "Untitled database"
 		}
@@ -185,35 +202,64 @@ func (a *AppContext) handleDatabases(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		var d Database
 		if _, err := decodeJSONRequest(r, &d); err != nil {
-            writeJSON(w,400,map[string]string{"error":"invalid request JSON"});return
-        }
-		if d.ID=="" || d.Version<=0 || d.Title=="" {
-            writeJSON(w,400,map[string]string{"error":"id, version and title are required"});return
-        }
-		now:=time.Now().UTC().Format(time.RFC3339)
-        tx,err:=a.DB.Begin()
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        defer tx.Rollback()
-        result,err:=tx.Exec(`UPDATE databases SET title=?,icon=?,version=version+1,updated_at=?
-            WHERE id=? AND version=? AND deleted_at IS NULL`,d.Title,nullStr(d.Icon),now,d.ID,d.Version)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        changed,err:=result.RowsAffected()
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        if changed!=1 {writeJSON(w,409,map[string]string{"error":"version conflict"});return}
-        // The database title and its backing page title are one logical edit.
-        pageResult,err:=tx.Exec(`UPDATE pages SET title=?,updated_at=?,version=version+1
-            WHERE id=(SELECT page_id FROM databases WHERE id=?)`,d.Title,now,d.ID)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        pageChanged,err:=pageResult.RowsAffected()
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        if pageChanged!=1 {writeJSON(w,409,map[string]string{"error":"database backing page missing"});return}
-        // Materialize the full response before committing. A failed database,
-        // property or view readback must roll back both this rename and the
-        // backing-page version change rather than return 500 after a commit.
-        out,err:=readDatabaseInTx(tx,d.ID)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":"could not read updated database"});return}
-        if err:=tx.Commit();err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        writeJSON(w,200,out)
+			writeJSON(w, 400, map[string]string{"error": "invalid request JSON"})
+			return
+		}
+		if d.ID == "" || d.Version <= 0 || d.Title == "" {
+			writeJSON(w, 400, map[string]string{"error": "id, version and title are required"})
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		tx, err := a.DB.Begin()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		defer tx.Rollback()
+		result, err := tx.Exec(`UPDATE databases SET title=?,icon=?,version=version+1,updated_at=?
+            WHERE id=? AND version=? AND deleted_at IS NULL`, d.Title, nullStr(d.Icon), now, d.ID, d.Version)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if changed != 1 {
+			writeJSON(w, 409, map[string]string{"error": "version conflict"})
+			return
+		}
+		// The database title and its backing page title are one logical edit.
+		pageResult, err := tx.Exec(`UPDATE pages SET title=?,updated_at=?,version=version+1
+            WHERE id=(SELECT page_id FROM databases WHERE id=?)`, d.Title, now, d.ID)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		pageChanged, err := pageResult.RowsAffected()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if pageChanged != 1 {
+			writeJSON(w, 409, map[string]string{"error": "database backing page missing"})
+			return
+		}
+		// Materialize the full response before committing. A failed database,
+		// property or view readback must roll back both this rename and the
+		// backing-page version change rather than return 500 after a commit.
+		out, err := readDatabaseInTx(tx, d.ID)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not read updated database"})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, out)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
 		if id == "" {
@@ -295,9 +341,13 @@ func (a *AppContext) getDatabase(id string) (Database, error) {
 	d.CreatedAt = created
 	d.UpdatedAt = updated
 	d.Properties, err = a.listProperties(d.ID)
-	if err != nil { return d, err }
+	if err != nil {
+		return d, err
+	}
 	d.Views, err = a.listViews(d.ID)
-	if err != nil { return d, err }
+	if err != nil {
+		return d, err
+	}
 	return d, nil
 }
 
@@ -373,11 +423,15 @@ func (a *AppContext) listProperties(dbID string) ([]DBProperty, error) {
 	for rows.Next() {
 		var p DBProperty
 		var visible int
-		if err := rows.Scan(&p.ID, &p.DatabaseID, &p.Name, &p.Type, &p.Config, &p.Position, &visible, &p.Version); err != nil { return nil, err }
+		if err := rows.Scan(&p.ID, &p.DatabaseID, &p.Name, &p.Type, &p.Config, &p.Position, &visible, &p.Version); err != nil {
+			return nil, err
+		}
 		p.Visible = visible == 1
 		out = append(out, p)
 	}
-	if err := rows.Err(); err != nil { return nil, err }
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -390,10 +444,14 @@ func (a *AppContext) listViews(dbID string) ([]DBView, error) {
 	out := []DBView{}
 	for rows.Next() {
 		var v DBView
-		if err := rows.Scan(&v.ID, &v.DatabaseID, &v.Name, &v.Type, &v.Config, &v.Position, &v.Version); err != nil { return nil, err }
+		if err := rows.Scan(&v.ID, &v.DatabaseID, &v.Name, &v.Type, &v.Config, &v.Position, &v.Version); err != nil {
+			return nil, err
+		}
 		out = append(out, v)
 	}
-	if err := rows.Err(); err != nil { return nil, err }
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -401,16 +459,24 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 	switch r.Method {
 	case http.MethodPost:
 		var p DBProperty
-		if _, err := decodeJSONRequest(r, &p); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
+		if _, err := decodeJSONRequest(r, &p); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid request JSON"})
+			return
+		}
 		p.Name = strings.TrimSpace(p.Name)
 		if p.DatabaseID == "" || p.Name == "" {
-            writeJSON(w,400,map[string]string{"error":"databaseId and name required"});return
-        }
-        var active int
-        if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",p.DatabaseID).Scan(&active);err!=nil {
-            writeJSON(w,500,map[string]string{"error":err.Error()});return
-        }
-        if active!=1 {writeJSON(w,404,map[string]string{"error":"database not found"});return}
+			writeJSON(w, 400, map[string]string{"error": "databaseId and name required"})
+			return
+		}
+		var active int
+		if err := a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL", p.DatabaseID).Scan(&active); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if active != 1 {
+			writeJSON(w, 404, map[string]string{"error": "database not found"})
+			return
+		}
 		if p.Type == "" {
 			p.Type = "text"
 		}
@@ -426,7 +492,10 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		if p.Config == "" {
 			p.Config = "{}"
 		}
-		if err := validatePropertyDefinition(p.Type, p.Config); err != nil { writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
+		if err := validatePropertyDefinition(p.Type, p.Config); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
 		// Computed references are validated inside the schema write transaction below.
 		// Pre-transaction checks could race with a property deletion or retarget.
 		// Owner/target validation, position reservation and insertion must be
@@ -497,7 +566,10 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 201, created)
 	case http.MethodPut:
 		var p DBProperty
-		if _, err := decodeJSONRequest(r, &p); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
+		if _, err := decodeJSONRequest(r, &p); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid request JSON"})
+			return
+		}
 		if p.ID == "" || p.Version <= 0 {
 			writeJSON(w, 400, map[string]string{"error": "id and version required"})
 			return
@@ -524,9 +596,17 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, 400, map[string]string{"error": "property databaseId does not match its owner"})
 			return
 		}
-		if currentType != p.Type { writeJSON(w, 400, map[string]string{"error": "changing a property type requires a data migration"}); return }
-		if currentType == "title" && !p.Visible { writeJSON(w, 400, map[string]string{"error": "title property must remain visible"}); return }
-		if p.Config == "" { p.Config = "{}" }
+		if currentType != p.Type {
+			writeJSON(w, 400, map[string]string{"error": "changing a property type requires a data migration"})
+			return
+		}
+		if currentType == "title" && !p.Visible {
+			writeJSON(w, 400, map[string]string{"error": "title property must remain visible"})
+			return
+		}
+		if p.Config == "" {
+			p.Config = "{}"
+		}
 		// The required title property is not creatable through this endpoint,
 		// but its existing config still needs the same JSON integrity checks.
 		if currentType == "title" {
@@ -546,7 +626,10 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		// Validate existing values and update the schema in one transaction. This
 		// includes values on soft-deleted records, which may later be restored.
 		tx, err := a.DB.Begin()
-		if err != nil { writeJSON(w, 500, map[string]string{"error": "could not begin property update"}); return }
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not begin property update"})
+			return
+		}
 		defer tx.Rollback()
 		if currentType == "relation" {
 			activeTarget, err := relationTargetActiveInTx(tx, p.Config)
@@ -565,13 +648,25 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		}
 		if (currentType == "select" || currentType == "multi_select") && p.Config != currentConfig {
 			compatible, err := validateSelectOptionChange(tx, p.ID, currentType, p.Config)
-			if err != nil { writeJSON(w, 500, map[string]string{"error": "could not inspect existing property values"}); return }
-			if !compatible { writeJSON(w, 409, map[string]string{"error": "property options conflict with existing record values"}); return }
+			if err != nil {
+				writeJSON(w, 500, map[string]string{"error": "could not inspect existing property values"})
+				return
+			}
+			if !compatible {
+				writeJSON(w, 409, map[string]string{"error": "property options conflict with existing record values"})
+				return
+			}
 		}
 		if currentType == "relation" && p.Config != currentConfig {
 			compatible, err := validateRelationTargetChange(tx, p.ID, currentConfig, p.Config)
-			if err != nil { writeJSON(w, 500, map[string]string{"error": "could not inspect existing relation values"}); return }
-			if !compatible { writeJSON(w, 409, map[string]string{"error": "relation target conflicts with existing record values"}); return }
+			if err != nil {
+				writeJSON(w, 500, map[string]string{"error": "could not inspect existing relation values"})
+				return
+			}
+			if !compatible {
+				writeJSON(w, 409, map[string]string{"error": "relation target conflicts with existing record values"})
+				return
+			}
 		}
 		res, err := tx.Exec(`UPDATE db_properties SET name=?, type=?, config=?, visible=?, version=version+1
 			WHERE id=? AND database_id=? AND version=? AND deleted_at IS NULL AND database_id IN (SELECT id FROM databases WHERE deleted_at IS NULL)`,
@@ -582,7 +677,7 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			writeJSON(w,500,map[string]string{"error":"could not verify property update"})
+			writeJSON(w, 500, map[string]string{"error": "could not verify property update"})
 			return
 		}
 		if n != 1 {
@@ -593,11 +688,14 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 		var out DBProperty
 		var vis int
 		if err := tx.QueryRow(`SELECT id, database_id, name, type, config, position, visible, version FROM db_properties WHERE id=?`, p.ID).Scan(&out.ID, &out.DatabaseID, &out.Name, &out.Type, &out.Config, &out.Position, &vis, &out.Version); err != nil {
-			writeJSON(w,500,map[string]string{"error":"could not read updated property"})
+			writeJSON(w, 500, map[string]string{"error": "could not read updated property"})
 			return
 		}
 		out.Visible = vis == 1
-		if err := tx.Commit(); err != nil { writeJSON(w, 500, map[string]string{"error": "could not commit property update"}); return }
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not commit property update"})
+			return
+		}
 		writeJSON(w, 200, out)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
@@ -689,10 +787,10 @@ func (a *AppContext) handleDBProperties(w http.ResponseWriter, r *http.Request) 
 // readWritableDBRecordForUpdate checks both record and parent tombstones
 // against the transaction's SQLite snapshot, not a stale pre-write lookup.
 func readWritableDBRecordForUpdate(tx *sql.Tx, id string) (databaseID, title string, err error) {
-    err = tx.QueryRow(`SELECT r.database_id, r.title FROM db_records r
+	err = tx.QueryRow(`SELECT r.database_id, r.title FROM db_records r
         JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL
         WHERE r.id=? AND r.deleted_at IS NULL`, id).Scan(&databaseID, &title)
-    return
+	return
 }
 
 func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
@@ -704,45 +802,110 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var active int
-        if err:=a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",dbID).Scan(&active);err!=nil {
-            writeJSON(w,500,map[string]string{"error":err.Error()});return
-        }
-        if active!=1 {writeJSON(w,404,map[string]string{"error":"database not found"});return}
-        rows,err := a.DB.Query(`SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE database_id=? AND deleted_at IS NULL ORDER BY created_at ASC`, dbID)
-		if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+		if err := a.DB.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL", dbID).Scan(&active); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if active != 1 {
+			writeJSON(w, 404, map[string]string{"error": "database not found"})
+			return
+		}
+		limitStr := r.URL.Query().Get("limit")
+		offsetStr := r.URL.Query().Get("offset")
+		paginated := limitStr != ""
+		limit := 0
+		offset := 0
+		if paginated {
+			parsed, perr := strconv.Atoi(limitStr)
+			if perr != nil || parsed <= 0 {
+				writeJSON(w, 400, map[string]string{"error": "invalid limit"})
+				return
+			}
+			limit = parsed
+			if offsetStr != "" {
+				parsedOff, oerr := strconv.Atoi(offsetStr)
+				if oerr != nil || parsedOff < 0 {
+					writeJSON(w, 400, map[string]string{"error": "invalid offset"})
+					return
+				}
+				offset = parsedOff
+			}
+		}
+		query := `SELECT id, database_id, title, page_id, version, created_at, updated_at FROM db_records WHERE database_id=? AND deleted_at IS NULL ORDER BY created_at ASC`
+		queryArgs := []any{dbID}
+		if paginated {
+			query += " LIMIT ? OFFSET ?"
+			queryArgs = append(queryArgs, limit, offset)
+		}
+		rows, err := a.DB.Query(query, queryArgs...)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		type rawRec struct {
-			rec    DBRecord
-			pageID sql.NullString
+			rec              DBRecord
+			pageID           sql.NullString
 			created, updated string
 		}
 		var raws []rawRec
 		for rows.Next() {
 			var r rawRec
-			if err:=rows.Scan(&r.rec.ID, &r.rec.DatabaseID, &r.rec.Title, &r.pageID, &r.rec.Version, &r.created, &r.updated);err!=nil {rows.Close();writeJSON(w,500,map[string]string{"error":err.Error()});return}
+			if err := rows.Scan(&r.rec.ID, &r.rec.DatabaseID, &r.rec.Title, &r.pageID, &r.rec.Version, &r.created, &r.updated); err != nil {
+				rows.Close()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
 			raws = append(raws, r)
 		}
-		if err:=rows.Err();err!=nil {rows.Close();writeJSON(w,500,map[string]string{"error":err.Error()});return}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		rows.Close()
-		fields,err:=a.listProperties(dbID)
-		if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-		valueIndex,err:=a.recordValuesForDatabase(dbID)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+		fields, err := a.listProperties(dbID)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		valueIndex, err := a.recordValuesForDatabase(dbID)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		out := []DBRecord{}
 		for _, r := range raws {
 			rec := r.rec
 			rec.PageID = r.pageID.String
 			rec.CreatedAt = r.created
 			rec.UpdatedAt = r.updated
-			rec.Values=valueIndex[rec.ID]
-            if rec.Values==nil {rec.Values=map[string]any{}}
+			rec.Values = valueIndex[rec.ID]
+			if rec.Values == nil {
+				rec.Values = map[string]any{}
+			}
 			appendDBSystemValues(rec.Values, fields, rec)
-			if err:=a.appendComputedValues(fields,&rec);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
+			if err := a.appendComputedValues(fields, &rec); err != nil {
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
 			out = append(out, rec)
+		}
+		if paginated {
+			var total int
+			if err := a.DB.QueryRow("SELECT COUNT(*) FROM db_records WHERE database_id=? AND deleted_at IS NULL", dbID).Scan(&total); err != nil {
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, 200, map[string]any{"records": out, "total": total, "limit": limit, "offset": offset})
+			return
 		}
 		writeJSON(w, 200, out)
 	case http.MethodPost:
 		var rec DBRecord
-		if _, err := decodeJSONRequest(r, &rec); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
+		if _, err := decodeJSONRequest(r, &rec); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid request JSON"})
+			return
+		}
 		if rec.DatabaseID == "" {
 			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
 			return
@@ -763,12 +926,18 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-        var active int
-        if err:=tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL",rec.DatabaseID).Scan(&active);err!=nil {
-            tx.Rollback();writeJSON(w,500,map[string]string{"error":err.Error()});return
-        }
-        if active!=1 {tx.Rollback();writeJSON(w,404,map[string]string{"error":"database not found"});return}
-        _, err = tx.Exec(`INSERT INTO db_records (id, database_id, title, page_id, version, created_at, updated_at) VALUES (?,?,?,?,1,?,?)`, rec.ID, rec.DatabaseID, rec.Title, nullStr(rec.PageID), now, now)
+		var active int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM databases WHERE id=? AND deleted_at IS NULL", rec.DatabaseID).Scan(&active); err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if active != 1 {
+			tx.Rollback()
+			writeJSON(w, 404, map[string]string{"error": "database not found"})
+			return
+		}
+		_, err = tx.Exec(`INSERT INTO db_records (id, database_id, title, page_id, version, created_at, updated_at) VALUES (?,?,?,?,1,?,?)`, rec.ID, rec.DatabaseID, rec.Title, nullStr(rec.PageID), now, now)
 		if err != nil {
 			tx.Rollback()
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -840,12 +1009,15 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 201, created)
 	case http.MethodPut:
 		var body struct {
-			ID       string         `json:"id"`
-			Title    string         `json:"title"`
-			Values   map[string]any `json:"values"`
-			Version  int            `json:"version"`
+			ID      string         `json:"id"`
+			Title   string         `json:"title"`
+			Values  map[string]any `json:"values"`
+			Version int            `json:"version"`
 		}
-		if _, err := decodeJSONRequest(r, &body); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
+		if _, err := decodeJSONRequest(r, &body); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid request JSON"})
+			return
+		}
 		if body.ID == "" || body.Version <= 0 {
 			writeJSON(w, 400, map[string]string{"error": "id and version required"})
 			return
@@ -862,7 +1034,11 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		dbID, previousTitle, err := readWritableDBRecordForUpdate(tx, body.ID)
 		if err != nil {
 			tx.Rollback()
-			if errors.Is(err, sql.ErrNoRows) { writeJSON(w,404,map[string]string{"error":"record not found"}) } else { writeJSON(w,500,map[string]string{"error":err.Error()}) }
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, 404, map[string]string{"error": "record not found"})
+			} else {
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+			}
 			return
 		}
 		// version check on record
@@ -873,42 +1049,82 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		n, err := res.RowsAffected()
-		if err != nil { tx.Rollback(); writeJSON(w,500,map[string]string{"error":err.Error()}); return }
+		if err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		if n == 0 {
 			tx.Rollback()
 			writeJSON(w, 409, map[string]string{"error": "version conflict"})
 			return
 		}
 		// validate property ownership and values
-		type propDefinition struct { kind, config string }
-        definitions := map[string]propDefinition{}
-        propRows, err := tx.Query(`SELECT id, type, config FROM db_properties WHERE database_id=? AND deleted_at IS NULL`, dbID)
-        if err != nil { tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
-        for propRows.Next() {
-            var pid, ptype, cfg string
-            if err := propRows.Scan(&pid, &ptype, &cfg); err != nil { propRows.Close(); tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
-            definitions[pid] = propDefinition{kind: ptype, config: cfg}
-        }
-        if err := propRows.Err(); err != nil { propRows.Close(); tx.Rollback(); writeJSON(w, 500, map[string]string{"error": err.Error()}); return }
-        propRows.Close()
-        for propID, val := range body.Values {
-            def, ok := definitions[propID]
+		type propDefinition struct{ kind, config string }
+		definitions := map[string]propDefinition{}
+		propRows, err := tx.Query(`SELECT id, type, config FROM db_properties WHERE database_id=? AND deleted_at IS NULL`, dbID)
+		if err != nil {
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		for propRows.Next() {
+			var pid, ptype, cfg string
+			if err := propRows.Scan(&pid, &ptype, &cfg); err != nil {
+				propRows.Close()
+				tx.Rollback()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			definitions[pid] = propDefinition{kind: ptype, config: cfg}
+		}
+		if err := propRows.Err(); err != nil {
+			propRows.Close()
+			tx.Rollback()
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		propRows.Close()
+		for propID, val := range body.Values {
+			def, ok := definitions[propID]
 			if !ok {
 				tx.Rollback()
 				writeJSON(w, 400, map[string]string{"error": "unknown property"})
 				return
 			}
-			if def.kind=="title" {tx.Rollback();writeJSON(w,400,map[string]string{"error":"title must be changed through record title"});return}
+			if def.kind == "title" {
+				tx.Rollback()
+				writeJSON(w, 400, map[string]string{"error": "title must be changed through record title"})
+				return
+			}
 			if err := validatePropertyValue(def.kind, val); err != nil {
 				tx.Rollback()
 				writeJSON(w, 400, map[string]string{"error": err.Error()})
 				return
 			}
-			if err := validateConfiguredPropertyValue(def.kind, def.config, val); err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
-			if err := validateDBReferenceValue(tx,def.kind,def.config,val); err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": err.Error()}); return }
-            if def.kind=="file" {if err:=validateDBFileReferences(tx,body.ID,val);err!=nil{tx.Rollback();writeJSON(w,400,map[string]string{"error":err.Error()});return}}
+			if err := validateConfiguredPropertyValue(def.kind, def.config, val); err != nil {
+				tx.Rollback()
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
+				return
+			}
+			if err := validateDBReferenceValue(tx, def.kind, def.config, val); err != nil {
+				tx.Rollback()
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
+				return
+			}
+			if def.kind == "file" {
+				if err := validateDBFileReferences(tx, body.ID, val); err != nil {
+					tx.Rollback()
+					writeJSON(w, 400, map[string]string{"error": err.Error()})
+					return
+				}
+			}
 			vb, err := json.Marshal(val)
-			if err != nil { tx.Rollback(); writeJSON(w, 400, map[string]string{"error": "invalid property value"}); return }
+			if err != nil {
+				tx.Rollback()
+				writeJSON(w, 400, map[string]string{"error": "invalid property value"})
+				return
+			}
 			// upsert
 			var exists int
 			if err := tx.QueryRow(`SELECT COUNT(*) FROM db_values WHERE record_id=? AND property_id=?`, body.ID, propID).Scan(&exists); err != nil {
@@ -930,17 +1146,37 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if body.Title!="" && body.Title!=previousTitle {
-            pageRes,err:=tx.Exec("UPDATE pages SET title=?,updated_at=?,version=version+1 WHERE id=(SELECT page_id FROM db_records WHERE id=?)",body.Title,now,body.ID)
-            if err!=nil {tx.Rollback();writeJSON(w,500,map[string]string{"error":err.Error()});return}
-            count,err:=pageRes.RowsAffected()
-            if err!=nil {tx.Rollback();writeJSON(w,500,map[string]string{"error":err.Error()});return}
-            if count!=1 {tx.Rollback();writeJSON(w,409,map[string]string{"error":"linked record page missing"});return}
-        } else {
-            var exists int
-            if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=(SELECT page_id FROM db_records WHERE id=?)",body.ID).Scan(&exists);err!=nil {tx.Rollback();writeJSON(w,500,map[string]string{"error":err.Error()});return}
-            if exists!=1 {tx.Rollback();writeJSON(w,409,map[string]string{"error":"linked record page missing"});return}
-        }
+		if body.Title != "" && body.Title != previousTitle {
+			pageRes, err := tx.Exec("UPDATE pages SET title=?,updated_at=?,version=version+1 WHERE id=(SELECT page_id FROM db_records WHERE id=?)", body.Title, now, body.ID)
+			if err != nil {
+				tx.Rollback()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			count, err := pageRes.RowsAffected()
+			if err != nil {
+				tx.Rollback()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			if count != 1 {
+				tx.Rollback()
+				writeJSON(w, 409, map[string]string{"error": "linked record page missing"})
+				return
+			}
+		} else {
+			var exists int
+			if err := tx.QueryRow("SELECT COUNT(*) FROM pages WHERE id=(SELECT page_id FROM db_records WHERE id=?)", body.ID).Scan(&exists); err != nil {
+				tx.Rollback()
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			if exists != 1 {
+				tx.Rollback()
+				writeJSON(w, 409, map[string]string{"error": "linked record page missing"})
+				return
+			}
+		}
 		// Build the complete response (including computed values) before commit.
 		// An unreadable record, page, property or rollup must not publish the edit.
 		rec, err := readDBRecordInTx(tx, body.ID, body.Title != "" && body.Title != previousTitle)
@@ -956,7 +1192,10 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, rec)
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		if id == "" { writeJSON(w,400,map[string]string{"error":"id required"}); return }
+		if id == "" {
+			writeJSON(w, 400, map[string]string{"error": "id required"})
+			return
+		}
 		// Version is optional for existing API clients, but the browser sends it
 		// so a stale tab cannot silently delete another tab's newer edits.
 		expectedVersion, versionErr := parseOptionalDeleteVersion(r)
@@ -965,31 +1204,56 @@ func (a *AppContext) handleDBRecords(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tx, err := a.DB.Begin()
-		if err != nil { writeJSON(w,500,map[string]string{"error":err.Error()}); return }
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		defer tx.Rollback()
 		var targetDatabaseID string
 		var currentVersion int
 		if err := tx.QueryRow(`SELECT r.database_id, r.version FROM db_records r
 			JOIN databases d ON d.id=r.database_id AND d.deleted_at IS NULL
 			WHERE r.id=? AND r.deleted_at IS NULL`, id).Scan(&targetDatabaseID, &currentVersion); err != nil {
-			if errors.Is(err,sql.ErrNoRows) { writeJSON(w,404,map[string]string{"error":"record not found"}) } else { writeJSON(w,500,map[string]string{"error":err.Error()}) }
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, 404, map[string]string{"error": "record not found"})
+			} else {
+				writeJSON(w, 500, map[string]string{"error": err.Error()})
+			}
 			return
 		}
 		if expectedVersion != 0 && currentVersion != expectedVersion {
-			writeJSON(w,409,map[string]string{"error":"record changed; reload latest before deleting"})
+			writeJSON(w, 409, map[string]string{"error": "record changed; reload latest before deleting"})
 			return
 		}
 		// A live source record must never retain a dangling relation to this
 		// record. Restrict deletion rather than silently rewriting user values.
 		blocked, err := hasIncomingActiveRelation(tx, id, targetDatabaseID)
-		if err != nil { writeJSON(w,500,map[string]string{"error":"could not inspect incoming relations"}); return }
-		if blocked { writeJSON(w,409,map[string]string{"error":"record is referenced by another record; remove relations first"}); return }
-		result, err := tx.Exec("UPDATE db_records SET deleted_at=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id,currentVersion)
-		if err != nil { writeJSON(w,500,map[string]string{"error":err.Error()}); return }
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not inspect incoming relations"})
+			return
+		}
+		if blocked {
+			writeJSON(w, 409, map[string]string{"error": "record is referenced by another record; remove relations first"})
+			return
+		}
+		result, err := tx.Exec("UPDATE db_records SET deleted_at=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL", time.Now().UTC().Format(time.RFC3339), id, currentVersion)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		changed, err := result.RowsAffected()
-		if err != nil { writeJSON(w,500,map[string]string{"error":err.Error()}); return }
-		if changed!=1 { writeJSON(w,409,map[string]string{"error":"record changed during deletion"}); return }
-		if err := tx.Commit(); err != nil { writeJSON(w,500,map[string]string{"error":err.Error()}); return }
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if changed != 1 {
+			writeJSON(w, 409, map[string]string{"error": "record changed during deletion"})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
 		w.WriteHeader(204)
 	default:
 		w.WriteHeader(405)
@@ -1007,64 +1271,91 @@ func (a *AppContext) getDBRecord(id string) (DBRecord, error) {
 	rec.PageID = pageID.String
 	rec.CreatedAt = created
 	rec.UpdatedAt = updated
-	rec.Values,err = a.recordValues(rec.ID)
-    if err!=nil {return rec,err}
-	fields,err:=a.listProperties(rec.DatabaseID)
-	if err!=nil {return rec,err}
-	appendDBSystemValues(rec.Values,fields,rec)
-	if err:=a.appendComputedValues(fields,&rec);err!=nil {return rec,err}
+	rec.Values, err = a.recordValues(rec.ID)
+	if err != nil {
+		return rec, err
+	}
+	fields, err := a.listProperties(rec.DatabaseID)
+	if err != nil {
+		return rec, err
+	}
+	appendDBSystemValues(rec.Values, fields, rec)
+	if err := a.appendComputedValues(fields, &rec); err != nil {
+		return rec, err
+	}
 	return rec, nil
 }
 
-func (a *AppContext) recordValues(recordID string) (map[string]any,error) {
-    out:=map[string]any{}
-    rows,err:=a.DB.Query("SELECT v.property_id,v.value FROM db_values v JOIN db_properties p ON p.id=v.property_id AND p.deleted_at IS NULL WHERE v.record_id=?",recordID)
-    if err!=nil{return nil,err}
-    defer rows.Close()
-    for rows.Next(){
-        var propertyID,raw string
-        if err:=rows.Scan(&propertyID,&raw);err!=nil{return nil,err}
-        var value any
-        if err:=json.Unmarshal([]byte(raw),&value);err!=nil{return nil,fmt.Errorf("invalid stored JSON for property %s: %w",propertyID,err)}
-        out[propertyID]=value
-    }
-    if err:=rows.Err();err!=nil{return nil,err}
-    return out,nil
+func (a *AppContext) recordValues(recordID string) (map[string]any, error) {
+	out := map[string]any{}
+	rows, err := a.DB.Query("SELECT v.property_id,v.value FROM db_values v JOIN db_properties p ON p.id=v.property_id AND p.deleted_at IS NULL WHERE v.record_id=?", recordID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var propertyID, raw string
+		if err := rows.Scan(&propertyID, &raw); err != nil {
+			return nil, err
+		}
+		var value any
+		if err := json.Unmarshal([]byte(raw), &value); err != nil {
+			return nil, fmt.Errorf("invalid stored JSON for property %s: %w", propertyID, err)
+		}
+		out[propertyID] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
-
 
 // Read values in one indexed join rather than one query per record. The
 // database has a single SQLite connection; all rows close before related
 // rollup computations execute.
-func (a *AppContext) recordValuesForDatabase(databaseID string) (map[string]map[string]any,error) {
-    rows,err:=a.DB.Query(`SELECT dv.record_id,dv.property_id,dv.value
+func (a *AppContext) recordValuesForDatabase(databaseID string) (map[string]map[string]any, error) {
+	rows, err := a.DB.Query(`SELECT dv.record_id,dv.property_id,dv.value
         FROM db_records dr
         JOIN db_values dv ON dv.record_id=dr.id
         JOIN db_properties dp ON dp.id=dv.property_id AND dp.deleted_at IS NULL
-        WHERE dr.database_id=? AND dr.deleted_at IS NULL`,databaseID)
-    if err!=nil{return nil,err}
-    defer rows.Close()
-    output:=map[string]map[string]any{}
-    for rows.Next() {
-        var recordID,propertyID,raw string
-        if err:=rows.Scan(&recordID,&propertyID,&raw);err!=nil{return nil,err}
-        var value any
-        if err:=json.Unmarshal([]byte(raw),&value);err!=nil{return nil,fmt.Errorf("corrupt property %s of record %s: %w",propertyID,recordID,err)}
-        if output[recordID]==nil{output[recordID]=map[string]any{}}
-        output[recordID][propertyID]=value
-    }
-    if err:=rows.Err();err!=nil{return nil,err}
-    return output,nil
+        WHERE dr.database_id=? AND dr.deleted_at IS NULL`, databaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	output := map[string]map[string]any{}
+	for rows.Next() {
+		var recordID, propertyID, raw string
+		if err := rows.Scan(&recordID, &propertyID, &raw); err != nil {
+			return nil, err
+		}
+		var value any
+		if err := json.Unmarshal([]byte(raw), &value); err != nil {
+			return nil, fmt.Errorf("corrupt property %s of record %s: %w", propertyID, recordID, err)
+		}
+		if output[recordID] == nil {
+			output[recordID] = map[string]any{}
+		}
+		output[recordID][propertyID] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return output, nil
 }
 
 func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var v DBView
-		if _, err := decodeJSONRequest(r, &v); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
+		if _, err := decodeJSONRequest(r, &v); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid request JSON"})
+			return
+		}
 		if v.DatabaseID == "" {
-            writeJSON(w,400,map[string]string{"error":"databaseId required"});return
-        }
+			writeJSON(w, 400, map[string]string{"error": "databaseId required"})
+			return
+		}
 		if v.Name == "" {
 			v.Name = "View"
 		}
@@ -1128,13 +1419,21 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 201, created)
 	case http.MethodPut:
 		var v DBView
-		if _, err := decodeJSONRequest(r, &v); err != nil { writeJSON(w, 400, map[string]string{"error":"invalid request JSON"}); return }
+		if _, err := decodeJSONRequest(r, &v); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid request JSON"})
+			return
+		}
 		if v.ID == "" || v.Version <= 0 {
 			writeJSON(w, 400, map[string]string{"error": "id and version required"})
 			return
 		}
-		if v.Config == "" {v.Config="{}"}
-        if err:=validateDBViewConfig(v.Type,v.Config);err!=nil {writeJSON(w,400,map[string]string{"error":err.Error()});return}
+		if v.Config == "" {
+			v.Config = "{}"
+		}
+		if err := validateDBViewConfig(v.Type, v.Config); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
 		// Keep the versioned update and response readback in one transaction.
 		// A readback failure must not leave a committed change that the client
 		// only knows as an HTTP 500 (and may then retry with a stale version).
@@ -1168,39 +1467,71 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, 200, v)
 	case http.MethodDelete:
-        id:=r.URL.Query().Get("id")
-        if id == "" { writeJSON(w, http.StatusBadRequest, map[string]string{"error": "view id required"}); return }
-        // Preserve legacy versionless DELETE callers, but reject stale
-        // browser views so another tab's renamed/configured view survives.
-        expectedVersion, parseErr := parseOptionalDeleteVersion(r)
-        if parseErr != nil {
-            writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid view version"})
-            return
-        }
-        tx,err:=a.DB.Begin()
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        defer tx.Rollback()
-        var dbID string
-        var currentVersion int
-        if err:=tx.QueryRow("SELECT v.database_id,v.version FROM db_views v JOIN databases d ON d.id=v.database_id AND d.deleted_at IS NULL WHERE v.id=? AND v.deleted_at IS NULL",id).Scan(&dbID,&currentVersion);err!=nil {
-            if err==sql.ErrNoRows {writeJSON(w,404,map[string]string{"error":"view not found"})} else {writeJSON(w,500,map[string]string{"error":"could not inspect view"})}
-            return
-        }
-        if expectedVersion!=0 && expectedVersion!=currentVersion {
-            writeJSON(w,409,map[string]string{"error":"view changed; reload latest before deleting"});return
-        }
-        var refs int
-        if err:=tx.QueryRow("SELECT COUNT(*) FROM pages WHERE linked_view_id=?",id).Scan(&refs);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        if refs!=0 {writeJSON(w,409,map[string]string{"error":"linked view is still used by pages"});return}
-        var total int
-        if err:=tx.QueryRow("SELECT COUNT(*) FROM db_views WHERE database_id=? AND deleted_at IS NULL",dbID).Scan(&total);err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        if total<=1 {writeJSON(w,409,map[string]string{"error":"cannot remove last database view"});return}
-        deleted,err:=tx.Exec("UPDATE db_views SET deleted_at=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL",time.Now().UTC().Format(time.RFC3339),id,currentVersion)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        count,err:=deleted.RowsAffected()
-        if err!=nil || count!=1 {writeJSON(w,409,map[string]string{"error":"view changed during deletion"});return}
-        if err:=tx.Commit();err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-        w.WriteHeader(204)
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "view id required"})
+			return
+		}
+		// Preserve legacy versionless DELETE callers, but reject stale
+		// browser views so another tab's renamed/configured view survives.
+		expectedVersion, parseErr := parseOptionalDeleteVersion(r)
+		if parseErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid view version"})
+			return
+		}
+		tx, err := a.DB.Begin()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		defer tx.Rollback()
+		var dbID string
+		var currentVersion int
+		if err := tx.QueryRow("SELECT v.database_id,v.version FROM db_views v JOIN databases d ON d.id=v.database_id AND d.deleted_at IS NULL WHERE v.id=? AND v.deleted_at IS NULL", id).Scan(&dbID, &currentVersion); err != nil {
+			if err == sql.ErrNoRows {
+				writeJSON(w, 404, map[string]string{"error": "view not found"})
+			} else {
+				writeJSON(w, 500, map[string]string{"error": "could not inspect view"})
+			}
+			return
+		}
+		if expectedVersion != 0 && expectedVersion != currentVersion {
+			writeJSON(w, 409, map[string]string{"error": "view changed; reload latest before deleting"})
+			return
+		}
+		var refs int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM pages WHERE linked_view_id=?", id).Scan(&refs); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if refs != 0 {
+			writeJSON(w, 409, map[string]string{"error": "linked view is still used by pages"})
+			return
+		}
+		var total int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM db_views WHERE database_id=? AND deleted_at IS NULL", dbID).Scan(&total); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if total <= 1 {
+			writeJSON(w, 409, map[string]string{"error": "cannot remove last database view"})
+			return
+		}
+		deleted, err := tx.Exec("UPDATE db_views SET deleted_at=?,version=version+1 WHERE id=? AND version=? AND deleted_at IS NULL", time.Now().UTC().Format(time.RFC3339), id, currentVersion)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		count, err := deleted.RowsAffected()
+		if err != nil || count != 1 {
+			writeJSON(w, 409, map[string]string{"error": "view changed during deletion"})
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		w.WriteHeader(204)
 	case http.MethodGet:
 		dbID := r.URL.Query().Get("databaseId")
 		if dbID == "" {
@@ -1218,9 +1549,12 @@ func (a *AppContext) handleDBViews(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "database not found"})
 			return
 		}
-		vs,err:=a.listViews(dbID)
-        if err!=nil {writeJSON(w,500,map[string]string{"error":err.Error()});return}
-		writeJSON(w,200,vs)
+		vs, err := a.listViews(dbID)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, vs)
 	default:
 		w.WriteHeader(405)
 	}
@@ -1331,7 +1665,9 @@ func (a *AppContext) handleDBLinkedView(w http.ResponseWriter, r *http.Request) 
 }
 
 func validatePropertyValue(propType string, val any) error {
-    if propType=="created_time" || propType=="last_edited_time" || propType=="formula" || propType=="rollup" { return fmt.Errorf("computed property is read-only") }
+	if propType == "created_time" || propType == "last_edited_time" || propType == "formula" || propType == "rollup" {
+		return fmt.Errorf("computed property is read-only")
+	}
 	if val == nil {
 		return nil
 	}
@@ -1373,131 +1709,200 @@ func validatePropertyValue(propType string, val any) error {
 			}
 		}
 	case "url", "email", "text", "title", "person":
-        if _, ok := val.(string); !ok { return fmt.Errorf("invalid %s value", propType) }
-    case "file":
-        values,ok:=val.([]any);if !ok{return fmt.Errorf("file references must be an array")}
-        for _,v:=range values{if _,ok:=v.(string);!ok{return fmt.Errorf("invalid file ID")}}
-    case "relation":
-        values,ok:=val.([]any); if !ok {return fmt.Errorf("relation must be an array of IDs")}
-        for _,v:=range values {if _,ok:=v.(string);!ok{return fmt.Errorf("invalid relation ID")}}
-    case "created_time","last_edited_time":
-        return fmt.Errorf("system timestamp is read-only")
-    default:
-        return fmt.Errorf("unsupported property type: %s", propType)
-    }
-    return nil
+		if _, ok := val.(string); !ok {
+			return fmt.Errorf("invalid %s value", propType)
+		}
+	case "file":
+		values, ok := val.([]any)
+		if !ok {
+			return fmt.Errorf("file references must be an array")
+		}
+		for _, v := range values {
+			if _, ok := v.(string); !ok {
+				return fmt.Errorf("invalid file ID")
+			}
+		}
+	case "relation":
+		values, ok := val.([]any)
+		if !ok {
+			return fmt.Errorf("relation must be an array of IDs")
+		}
+		for _, v := range values {
+			if _, ok := v.(string); !ok {
+				return fmt.Errorf("invalid relation ID")
+			}
+		}
+	case "created_time", "last_edited_time":
+		return fmt.Errorf("system timestamp is read-only")
+	default:
+		return fmt.Errorf("unsupported property type: %s", propType)
+	}
+	return nil
 }
 
 func validateConfiguredPropertyValue(kind, config string, val any) error {
-    if val == nil { return nil }
-    if kind == "email" && val != "" {
-        input := val.(string)
-        addr, err := mail.ParseAddress(input)
-        if err != nil || addr.Address != input { return fmt.Errorf("invalid email address") }
-    }
-    if kind == "url" && val != "" {
-        u, err := url.Parse(val.(string))
-        if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" { return fmt.Errorf("invalid URL") }
-    }
-    if kind == "select" || kind == "multi_select" {
-        var def struct { Options []string `json:"options"` }
-        if err := json.Unmarshal([]byte(config), &def); err != nil { return fmt.Errorf("invalid select property config") }
-        if len(def.Options) == 0 { return nil }
-        allowed := map[string]bool{}
-        for _, option := range def.Options { allowed[option] = true }
-        check := func(v string) error { if v == "" || allowed[v] { return nil }; return fmt.Errorf("option %q is not configured", v) }
-        if kind == "select" { return check(val.(string)) }
-        for _, x := range val.([]any) { if err := check(x.(string)); err != nil { return err } }
-    }
-    return nil
+	if val == nil {
+		return nil
+	}
+	if kind == "email" && val != "" {
+		input := val.(string)
+		addr, err := mail.ParseAddress(input)
+		if err != nil || addr.Address != input {
+			return fmt.Errorf("invalid email address")
+		}
+	}
+	if kind == "url" && val != "" {
+		u, err := url.Parse(val.(string))
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("invalid URL")
+		}
+	}
+	if kind == "select" || kind == "multi_select" {
+		var def struct {
+			Options []string `json:"options"`
+		}
+		if err := json.Unmarshal([]byte(config), &def); err != nil {
+			return fmt.Errorf("invalid select property config")
+		}
+		if len(def.Options) == 0 {
+			return nil
+		}
+		allowed := map[string]bool{}
+		for _, option := range def.Options {
+			allowed[option] = true
+		}
+		check := func(v string) error {
+			if v == "" || allowed[v] {
+				return nil
+			}
+			return fmt.Errorf("option %q is not configured", v)
+		}
+		if kind == "select" {
+			return check(val.(string))
+		}
+		for _, x := range val.([]any) {
+			if err := check(x.(string)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // Plain property types do not currently interpret their config, but they
 // must not persist malformed or ambiguous JSON that a future schema editor
 // could reinterpret. Keep valid object metadata intact for compatibility.
 func validatePlainPropertyConfig(config string) error {
-    if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
-        return fmt.Errorf("invalid property configuration: %w", err)
-    }
-    var object map[string]json.RawMessage
-    if err := json.Unmarshal([]byte(config), &object); err != nil || object == nil {
-        return fmt.Errorf("property config must be a JSON object")
-    }
-    return nil
+	if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+		return fmt.Errorf("invalid property configuration: %w", err)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(config), &object); err != nil || object == nil {
+		return fmt.Errorf("property config must be a JSON object")
+	}
+	return nil
 }
 
 func validatePropertyDefinition(kind, config string) error {
-    switch kind {
-    case "text", "number", "checkbox", "date", "email", "url", "person", "file", "created_time", "last_edited_time":
-        return validatePlainPropertyConfig(config)
-    case "formula":
-        _,err:=parseFormulaDefinition(config);return err
-    case "rollup":
-        _,err:=parseRollupDefinition(config);return err
-    case "relation":
-        // Ambiguous relation targets must never enter persisted schema.
-        if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
-            return fmt.Errorf("invalid relation configuration: %w", err)
-        }
-        var v struct { TargetDatabaseID string `json:"targetDatabaseId"` }
-        if err:=json.Unmarshal([]byte(config),&v);err!=nil || v.TargetDatabaseID=="" {return fmt.Errorf("relation targetDatabaseId required")}
-        return nil
-    case "select", "multi_select":
-        if config == "" { return nil }
-        // Duplicate keys (including nested ones) make persisted option rules
-        // ambiguous under encoding/json last-key-wins semantics.
-        if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
-            return fmt.Errorf("invalid select configuration: %w", err)
-        }
-        var cfg map[string]json.RawMessage
-        if err := json.Unmarshal([]byte(config), &cfg); err != nil { return fmt.Errorf("invalid options JSON") }
-        if raw, ok := cfg["options"]; ok {
-            var options []string
-            if err := json.Unmarshal(raw, &options); err != nil { return fmt.Errorf("options must be a string array") }
-            seen := map[string]bool{}
-            for _, option := range options {
-                if option == "" || seen[option] { return fmt.Errorf("options must be unique nonempty strings") }
-                seen[option] = true
-            }
-        }
-        return nil
-    default:
-        return fmt.Errorf("unsupported property type: %s", kind)
-    }
+	switch kind {
+	case "text", "number", "checkbox", "date", "email", "url", "person", "file", "created_time", "last_edited_time":
+		return validatePlainPropertyConfig(config)
+	case "formula":
+		_, err := parseFormulaDefinition(config)
+		return err
+	case "rollup":
+		_, err := parseRollupDefinition(config)
+		return err
+	case "relation":
+		// Ambiguous relation targets must never enter persisted schema.
+		if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+			return fmt.Errorf("invalid relation configuration: %w", err)
+		}
+		var v struct {
+			TargetDatabaseID string `json:"targetDatabaseId"`
+		}
+		if err := json.Unmarshal([]byte(config), &v); err != nil || v.TargetDatabaseID == "" {
+			return fmt.Errorf("relation targetDatabaseId required")
+		}
+		return nil
+	case "select", "multi_select":
+		if config == "" {
+			return nil
+		}
+		// Duplicate keys (including nested ones) make persisted option rules
+		// ambiguous under encoding/json last-key-wins semantics.
+		if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+			return fmt.Errorf("invalid select configuration: %w", err)
+		}
+		var cfg map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(config), &cfg); err != nil {
+			return fmt.Errorf("invalid options JSON")
+		}
+		if raw, ok := cfg["options"]; ok {
+			var options []string
+			if err := json.Unmarshal(raw, &options); err != nil {
+				return fmt.Errorf("options must be a string array")
+			}
+			seen := map[string]bool{}
+			for _, option := range options {
+				if option == "" || seen[option] {
+					return fmt.Errorf("options must be unique nonempty strings")
+				}
+				seen[option] = true
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported property type: %s", kind)
+	}
 }
 
-
-func validateDBViewConfig(kind,config string) error {
-    switch kind {
-    case "table","board","calendar","list","gallery":
-    default:return fmt.Errorf("unsupported database view type: %s",kind)
-    }
-    if len(config)>64*1024{return fmt.Errorf("view config exceeds 64KB")}
-    // Reject ambiguous view settings, including duplicate keys inside nested
-    // filter/sort/layout objects. JSON unmarshalling otherwise keeps the last
-    // value and can silently change the meaning of a persisted view.
-    if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
-        return fmt.Errorf("invalid view configuration: %w", err)
-    }
-    var body map[string]json.RawMessage
-    if err:=json.Unmarshal([]byte(config),&body);err!=nil{return fmt.Errorf("view config must be a JSON object: %w",err)}
-    if body==nil{return fmt.Errorf("view config must be an object")}
-    if err := validateDBPresentationConfig(body); err != nil { return err }
-    if raw,ok:=body["sortRules"];ok{
-        var rules []struct {
-            PropertyID string `json:"propertyId"`
-            Direction string `json:"direction"`
-        }
-        if err:=json.Unmarshal(raw,&rules);err!=nil || rules==nil{return fmt.Errorf("sortRules must be a non-null array")}
-        if len(rules)>5{return fmt.Errorf("sortRules exceeds five fields")}
-        seen:=map[string]bool{}
-        for _,rule:=range rules{
-            if rule.PropertyID=="" || len(rule.PropertyID)>128 || seen[rule.PropertyID] {
-                return fmt.Errorf("sortRules propertyIds must be nonempty and unique")
-            }
-            if rule.Direction!="asc" && rule.Direction!="desc" {return fmt.Errorf("sortRules direction must be asc or desc")}
-            seen[rule.PropertyID]=true
-        }
-    }
-    return nil
+func validateDBViewConfig(kind, config string) error {
+	switch kind {
+	case "table", "board", "calendar", "list", "gallery":
+	default:
+		return fmt.Errorf("unsupported database view type: %s", kind)
+	}
+	if len(config) > 64*1024 {
+		return fmt.Errorf("view config exceeds 64KB")
+	}
+	// Reject ambiguous view settings, including duplicate keys inside nested
+	// filter/sort/layout objects. JSON unmarshalling otherwise keeps the last
+	// value and can silently change the meaning of a persisted view.
+	if err := rejectDuplicateJSONKeys([]byte(config)); err != nil {
+		return fmt.Errorf("invalid view configuration: %w", err)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(config), &body); err != nil {
+		return fmt.Errorf("view config must be a JSON object: %w", err)
+	}
+	if body == nil {
+		return fmt.Errorf("view config must be an object")
+	}
+	if err := validateDBPresentationConfig(body); err != nil {
+		return err
+	}
+	if raw, ok := body["sortRules"]; ok {
+		var rules []struct {
+			PropertyID string `json:"propertyId"`
+			Direction  string `json:"direction"`
+		}
+		if err := json.Unmarshal(raw, &rules); err != nil || rules == nil {
+			return fmt.Errorf("sortRules must be a non-null array")
+		}
+		if len(rules) > 5 {
+			return fmt.Errorf("sortRules exceeds five fields")
+		}
+		seen := map[string]bool{}
+		for _, rule := range rules {
+			if rule.PropertyID == "" || len(rule.PropertyID) > 128 || seen[rule.PropertyID] {
+				return fmt.Errorf("sortRules propertyIds must be nonempty and unique")
+			}
+			if rule.Direction != "asc" && rule.Direction != "desc" {
+				return fmt.Errorf("sortRules direction must be asc or desc")
+			}
+			seen[rule.PropertyID] = true
+		}
+	}
+	return nil
 }
