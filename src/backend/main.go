@@ -24,7 +24,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const appVersion = "0.0.1"
+const appVersion = "1.0.0"
 
 var defaultProjects = []Project{
 	{ID: "proj-galaxy", Name: "Galaxy Launch", Description: "Pre-launch work for the next release cycle.", Status: "active", Owner: "Raiden", Color: "purple"},

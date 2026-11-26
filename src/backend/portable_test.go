@@ -36,7 +36,7 @@ func TestWorkspaceLocationsContainNoCredentials(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &data); err != nil {
 		t.Fatal(err)
 	}
-	if len(data) != 5 || data["version"] != "0.0.1" || data["attachments"] != filepath.Join(app.RootPath, "data", "attachments") {
+	if len(data) != 5 || data["version"] != "1.0.0" || data["attachments"] != filepath.Join(app.RootPath, "data", "attachments") {
 		t.Fatalf("unexpected workspace metadata: %v", data)
 	}
 }

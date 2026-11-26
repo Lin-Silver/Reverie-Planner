@@ -1,8 +1,8 @@
-# Reverie Planner V0.0.1
+# Reverie Planner V1.0.0
 
 Reverie Planner aims to replace Notion for a personal, local-first workspace: nested documents, a block editor, structured databases, multiple views, search and project planning in one app. Core workflows must work offline without an AI provider or a cloud account. The Go service persists data in SQLite; the React interface uses a loopback-only HTTP API.
 
-**Status: development preview, not complete Notion parity.** Pages, project/task planning and a substantial database subsystem are implemented. Import/export, templates, full property/view management, advanced relations, large-data performance and accessibility acceptance remain unfinished. Do not treat a green build as completion of the product.
+**Status: v1.0.0 release candidate.** Pages, project/task planning and a substantial database subsystem are implemented, with Markdown import/export, templates, favorites/recent pages, server-side record pagination and a documented 10k-record benchmark. Advanced reciprocal relations, full view/property management polish, large-table UI virtualization and manual accessibility/platform acceptance remain open; do not treat a green build as completion of every release gate. See docs/RELEASE_V1.0.0.md for known limitations.
 
 See [product direction and release gates](docs/PROJECT_DIRECTION.md), [branch audit and fixes](docs/PROJECT_AUDIT.md), [feature matrix](docs/PRODUCT_PARITY_MATRIX.md) and [database completion checklist](docs/DATABASE_COMPLETION_PLAN.md).
 

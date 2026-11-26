@@ -18,8 +18,8 @@ Reverie Planner vs Notion (UI/UX) and Plane (project management). Baseline: inte
 | Table/Board/Calendar/List/Gallery | Partial | E2E verified | Board and Calendar drag/drop persist data; table column sizing/reordering/hiding, keyboard cell editing; List/Gallery record links. Gallery property selection and local attachment cover selection; no timeline view |
 | Properties/filter/sort/relations | Partial | Partially verified | Typed field schema, nested AND/OR filters, configurable select/date/number, formulas and relation rollups, scoped file attachment and version validation; more complex relation/formula behaviors and spreadsheet editing remain |
 | Search | Partial | Implemented | Global search across projects/tasks/pages |
-| Shortcuts & templates | Partial | Verified | Ctrl+K command palette works; templates remain unavailable |
-| Import/export & portability | Missing | Planned | Notion/Markdown import/export and macOS packaging need implementation and acceptance |
+| Shortcuts & templates | Implemented | Verified | Ctrl+K command palette; templates (save page as template, create from template) |
+| Import/export & portability | Partial | Implemented | Markdown import/export for pages; favorites/recent pages; Notion import and macOS packaging still pending |
 
 ## Plane
 

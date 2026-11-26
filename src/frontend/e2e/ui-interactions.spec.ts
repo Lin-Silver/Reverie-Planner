@@ -43,7 +43,7 @@ test('portable workspace settings shows local paths and creates a database snaps
   await page.goto('/')
   await page.locator('.nav-item').filter({hasText:'Settings'}).click()
   const panel=page.getByRole('region',{name:'Portable workspace'})
-  await expect(panel).toContainText('v0.0.1')
+  await expect(panel).toContainText('v1.0.0')
   await expect(panel).toContainText('planner.db')
   await panel.getByRole('button',{name:'Create database snapshot',exact:true}).click()
   await expect(panel.getByRole('status')).toContainText('Database snapshot created')
