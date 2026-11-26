@@ -5,6 +5,7 @@ import type { FormEvent } from 'react'
 import './App.css'
 
 const PageEditor = lazy(() => import('./PageEditor'))
+import { blocksToMarkdown, markdownToBlocks } from './markdown'
 
 type ProjectStatus = 'active' | 'planning' | 'paused' | 'archived'
 type TaskStatus = 'todo' | 'in_progress' | 'done' | 'blocked'
@@ -351,6 +352,31 @@ export default function App() {
       await refresh()
     } catch (e) { setError((e as Error).message) }
   }
+  const importFileRef = useRef<HTMLInputElement>(null)
+  const exportMarkdown = () => {
+    if (!pageEditor) return
+    let blocks: any[] = []
+    try { const parsed = JSON.parse(pageEditor.content); if (Array.isArray(parsed)) blocks = parsed } catch { blocks = [{ type: 'paragraph', content: [{ type: 'text', text: pageEditor.content || '', styles: {} }] }] }
+    const md = blocksToMarkdown(blocks as any)
+    const blob = new Blob([md], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = (pageDraft.title || 'page').replace(/[^\w.-]+/g, '_') + '.md'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  const importMarkdownFile = async (file: File) => {
+    try {
+      const text = await file.text()
+      const blocks = markdownToBlocks(text)
+      const title = file.name.replace(/\.md$/i, '') || 'Imported'
+      const created = await apiFetch<Page>('/api/pages', { method: 'POST', body: JSON.stringify({ title, content: JSON.stringify(blocks), workspace: true, createdBy: 'You' }) })
+      await refresh()
+      setSelectedPage(created.id)
+      await openPageEditor(created)
+    } catch (e) { setError((e as Error).message) }
+  }
 
   const createCycle = async () => {
     const name = window.prompt('Cycle name')
@@ -593,6 +619,9 @@ export default function App() {
           <div className="row">
             {pageEditor && <button className="btn" data-testid="favorite-toggle" onClick={() => toggleFavorite(pageEditor.id)}>{favorites.includes(pageEditor.id) ? '★ Favorited' : '☆ Favorite'}</button>}
             {pageEditor && <button className="btn" data-testid="save-template" onClick={savePageAsTemplate}>Save as template</button>}
+            {pageEditor && <button className="btn" data-testid="export-md" onClick={exportMarkdown}>Export .md</button>}
+            {pageEditor && <button className="btn" data-testid="import-md" onClick={() => importFileRef.current?.click()}>Import .md</button>}
+            <input ref={importFileRef} data-testid="import-input" type="file" accept=".md,text/markdown" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void importMarkdownFile(f); e.target.value = '' }} />
             {pageEditor && <button className="btn" onClick={() => deletePage(pageEditor.id)}>Delete</button>}
             {pageEditor && <button className="btn" onClick={async () => {
               try {
